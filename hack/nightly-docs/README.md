@@ -178,8 +178,9 @@ build when evaluating a pilot.
 
 ## Setup
 
-- This repository needs its own `ome-runner-cpu` runners: the ones registered
-  to ome-projects/ome do not serve it.
+- `ome-runner-cpu` is one runner scale set registered to the ome-projects
+  organization and shared with ome-projects/ome. The organization's Default
+  runner group must allow public repositories and include this repository.
 - Scheduled nightly runs, and maintenance sweeps that start on their own, run
   only while the repository variable `NIGHTLY_DOCS_ENABLED` is `true`. Leave it
   unset until the runners exist and a manual `dry_run` has passed. Manual
