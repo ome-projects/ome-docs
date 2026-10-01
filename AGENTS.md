@@ -34,10 +34,11 @@ Run `pnpm lint && pnpm check && pnpm test && pnpm build` before submitting.
 
 ## Checks that use OME's code
 
-`.github/workflows/website.yml` checks out ome-projects/ome at the commit in `ome.ref` and runs its tools against this repository:
+`.github/workflows/website.yml` checks out ome-projects/ome at the commit in `ome.ref` and checks this repository against it:
 
 - **YAML examples** — every `yaml` block in a page is checked against OME's CRDs. Fix a failing example; `check=skip` is only for the cases the Writing docs page lists.
 - **API reference** — `src/lib/content/reference/api/ome.v1beta1.md` is generated from the Go types in `pkg/apis/ome/v1beta1` of ome-projects/ome. Never edit it by hand. To change it, change the doc comments there, then move `ome.ref` and regenerate the page. CONTRIBUTING.md has the commands.
+- **Tutorial fixtures** — the tutorials listed in `src/lib/docs/examples.test.ts` show the files in `config/samples/docs` of ome-projects/ome, and each titled block must match its file exactly. To change one, change the file there, then move `ome.ref` and update the block. `pnpm test` skips this check unless `OME_REPO` names an OME checkout: `OME_REPO=../ome pnpm test`.
 
 The docs describe OME's `main` branch. Check every field, default, flag and output against the code in ome-projects/ome, not against the Hugo pages.
 

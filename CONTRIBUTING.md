@@ -29,14 +29,15 @@ pnpm lint && pnpm check && pnpm test && pnpm build
 
 `pnpm test` also checks every page's links, the navigation and `redirects.json`. `pnpm format` fixes formatting.
 
-The Website workflow runs these checks on every pull request, along with two checks that need OME's Go code.
+The Website workflow runs these checks on every pull request, along with three checks that need a checkout of OME.
 
 ## Checks that use OME's code
 
 - **YAML examples.** Every `yaml` block in a page is checked against OME's CRDs.
 - **API reference.** `src/lib/content/reference/api/ome.v1beta1.md` is generated from the Go types in OME. Don't edit it by hand. To change it, change the doc comments in ome-projects/ome.
+- **Tutorial fixtures.** Some tutorials walk through the files in `config/samples/docs` of ome-projects/ome, which OME's own tests load. Each of those files appears in its tutorial as a titled block, and the block has to match the file exactly. `src/lib/docs/examples.test.ts` lists the tutorials and their files. To change one, change the file in ome-projects/ome first.
 
-Both run against ome-projects/ome at the commit in `ome.ref`. Because that commit is pinned, a change in OME doesn't affect pull requests here until someone moves the pin.
+All three run against ome-projects/ome at the commit in `ome.ref`. Because that commit is pinned, a change in OME doesn't affect pull requests here until someone moves the pin.
 
 To run the YAML check yourself, check out ome-projects/ome at that commit next to this repository:
 
@@ -44,6 +45,12 @@ To run the YAML check yourself, check out ome-projects/ome at that commit next t
 (cd ../ome && make envtest &&
   KUBEBUILDER_ASSETS="$(bin/setup-envtest use "$(sed -n 's/^ENVTEST_K8S_VERSION = //p' Makefile)" -p path)" \
     go run ./hack/docs-examples -content "$OLDPWD/src/lib/content")
+```
+
+`pnpm test` skips the fixture check unless `OME_REPO` names that checkout:
+
+```bash
+OME_REPO=../ome pnpm test
 ```
 
 ### Move the pin
@@ -67,7 +74,7 @@ Move it when a page documents something newer than the pinned commit, or when OM
 
    `GOTOOLCHAIN` builds genref with OME's Go version. A genref built with Go older than 1.24 writes no page and reports no error.
 
-4. Commit `ome.ref` and the page together. The workflow then checks the YAML examples against the new commit's CRDs.
+4. Commit `ome.ref` and the page together. The workflow then checks the YAML examples against the new commit's CRDs, and the tutorials against its fixtures.
 
 ## Commits and pull requests
 

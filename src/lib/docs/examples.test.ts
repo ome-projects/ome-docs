@@ -1,10 +1,16 @@
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 // These tutorials expose the same files that the Go admission tests load.
 // Keep the copyable YAML tied to those fixtures instead of validating a
 // different example from the one the reader actually sees.
+//
+// The fixtures are config/samples/docs in ome-projects/ome. Set OME_REPO to
+// a checkout of it to run these tests; without it they are skipped. The
+// Website workflow runs them against the commit in ome.ref.
+const omeRepo = process.env.OME_REPO ?? '';
+
 const workflows = [
 	{
 		fixture: 'omenative-http',
@@ -48,13 +54,11 @@ const workflows = [
 	}
 ];
 
-describe.each(workflows)('$page fixtures', ({ fixture, page, files }) => {
+describe.skipIf(!omeRepo).each(workflows)('$page fixtures', ({ fixture, page, files }) => {
 	const markdown = readFileSync(new URL(`../content/${page}`, import.meta.url), 'utf8');
 
 	it.each(files)('embeds the checked %s fixture exactly once', (filename) => {
-		const path = fileURLToPath(
-			new URL(`../../../../config/samples/docs/${fixture}/${filename}`, import.meta.url)
-		);
+		const path = join(omeRepo, 'config', 'samples', 'docs', fixture, filename);
 		const expected = readFileSync(path, 'utf8').trim();
 		const blocks = [
 			...markdown.matchAll(/^```(?:yaml|json) title="([^"]+)"\r?\n([\s\S]*?)^```\s*$/gm)

@@ -1,9 +1,9 @@
 name: Website
 
-# Three jobs need the Go code in ome-projects/ome. The examples and apiref
-# jobs check it out at the commit in ome.ref, so an API change there can't
-# break a pull request here; a pull request that moves ome.ref also
-# regenerates the API reference. The drift job reads OME's main branch.
+# Four jobs read ome-projects/ome. The examples, fixtures and apiref jobs
+# check it out at the commit in ome.ref, so a change there can't break a
+# pull request here; a pull request that moves ome.ref also regenerates the
+# API reference. The drift job reads OME's main branch.
 
 on:
   pull_request:
@@ -90,6 +90,48 @@ jobs:
       - name: Check YAML examples against the CRDs
         working-directory: ome
         run: go run ./hack/docs-examples -content "$GITHUB_WORKSPACE/docs/src/lib/content"
+
+  fixtures:
+    name: Tutorials match OME's fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: docs
+          persist-credentials: false
+      - name: Read the pinned OME commit
+        id: ome
+        run: |
+          ref="$(tr -d '[:space:]' < docs/ome.ref)"
+          if ! printf '%s\n' "$ref" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error title=ome.ref::ome.ref must hold one full commit SHA of ome-projects/ome."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v6
+        with:
+          repository: ome-projects/ome
+          ref: ${{ steps.ome.outputs.ref }}
+          path: ome
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: docs/.node-version
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: docs
+      - name: Compare the tutorials with OME's fixtures
+        # The fixtures are config/samples/docs in ome-projects/ome. The site
+        # job has no OME checkout, so pnpm test skips this file there.
+        working-directory: docs
+        env:
+          OME_REPO: ${{ github.workspace }}/ome
+        run: pnpm exec vitest run src/lib/docs/examples.test.ts
 
   apiref:
     name: API reference is current
