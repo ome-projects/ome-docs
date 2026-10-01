@@ -3,11 +3,12 @@
 	import HomeMetricValue from '$lib/components/HomeMetricValue.svelte';
 	import SectionLabel from '$lib/components/SectionLabel.svelte';
 
-	// Fixed in code so website/ doesn't depend on the rest of the repo. The recipe
-	// count and families come from config/runtimes until the recipes repository
-	// exists; recheck them against it then. The strategies are the rollout group
-	// strategies in pkg/apis/ome/v1beta1 (rolling, blue-green, canary), and the
-	// command count is the AddCommand calls in pkg/cli/root.go.
+	// Fixed in code, so the site doesn't read ome-projects/ome when it builds.
+	// The paths below are in that repository. The recipe count and families
+	// come from config/runtimes until the recipes repository exists; recheck
+	// them against it then. The strategies are the rollout group strategies in
+	// pkg/apis/ome/v1beta1 (rolling, blue-green, canary), and the command count
+	// is the AddCommand calls in pkg/cli/root.go.
 	const metrics = [
 		{
 			title: 'RUNTIME RECIPES',

@@ -5,7 +5,7 @@
 	import { scrollReveal } from '$lib/actions/scrollReveal';
 	import PlusMark from '$lib/components/PlusMark.svelte';
 	import SectionLabel from '$lib/components/SectionLabel.svelte';
-	import { repoUrl, site } from '$lib/config/site';
+	import { docsRepoUrl, site } from '$lib/config/site';
 
 	const panelMotion = { duration: 320, easing: cubicOut };
 
@@ -13,7 +13,7 @@
 	// ADOPTERS.md at the repo root is the list of record; keep the two in step.
 	// While this list is empty, the block invites adopters to add themselves.
 	const adopters: readonly { name: string; href?: string }[] = [];
-	const adoptersUrl = `${repoUrl}/blob/${site.branch}/ADOPTERS.md`;
+	const adoptersUrl = `${docsRepoUrl}/blob/${site.branch}/ADOPTERS.md`;
 
 	// Each body is checked against the code that does what it says; recheck
 	// them when OMENative, the model agent, runtime selection, accelerator

@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # npm dependencies of the site
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'saturday'
+    ignore:
+      # The site runs on Node 22, and @types/node follows the runtime's
+      # major version.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+
+  # GitHub Actions
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'saturday'

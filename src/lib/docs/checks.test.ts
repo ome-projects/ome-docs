@@ -99,7 +99,7 @@ describe('checkRedirects', () => {
 			'redirects.json entry "concepts/a": "old" must be a Hugo page path ending in .md',
 			'redirects.json entry "concepts/b.md": "new" page concepts/gone.md does not exist',
 			'redirects.json entry "concepts/b.md": "old" appears more than once',
-			'redirects.json entry "concepts/b.md": concepts/written.md is written, so set "rewrittenFrom" to the 8-character hash of the last commit that changed the old page (git log -1 --abbrev=8 --format=%h HEAD -- site/content/en/docs/concepts/b.md)',
+			'redirects.json entry "concepts/b.md": concepts/written.md is written, so set "rewrittenFrom" to the 8-character hash of the last commit that changed the old page (in a clone of ome-projects/ome: git log -1 --abbrev=8 --format=%h HEAD -- site/content/en/docs/concepts/b.md)',
 			'redirects.json entry "concepts/c.md": concepts/draft.md is a draft, so "rewrittenFrom" must be null',
 			'redirects.json entry "concepts/d.md": "rewrittenFrom" must be a commit SHA'
 		]);

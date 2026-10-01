@@ -71,10 +71,9 @@ export interface ImageContext extends LinkContext {
 export function resolveImage(src: string, { path, basePath, assetExists }: ImageContext): string {
 	if (!src.startsWith('/images/')) {
 		throw new Error(
-			`${path}: image "${src}" must be a path under /images/ (website/static/images); external images aren't allowed`
+			`${path}: image "${src}" must be a path under /images/ (static/images); external images aren't allowed`
 		);
 	}
-	if (!assetExists(src))
-		throw new Error(`${path}: image "${src}" does not exist in website/static`);
+	if (!assetExists(src)) throw new Error(`${path}: image "${src}" does not exist in static`);
 	return `${basePath}${src}`;
 }
