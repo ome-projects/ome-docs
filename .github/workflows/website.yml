@@ -1,0 +1,199 @@
+name: Website
+
+# Three jobs need the Go code in ome-projects/ome. The examples and apiref
+# jobs check it out at the commit in ome.ref, so an API change there can't
+# break a pull request here; a pull request that moves ome.ref also
+# regenerates the API reference. The drift job reads OME's main branch.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-${{ github.event.pull_request.number || github.ref }}
+  # A new push to a pull request replaces its running checks. Pushes to
+  # main don't cancel each other.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  site:
+    name: Lint, check, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Lint and test run before check, which generates worker-configuration.d.ts.
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm check
+      - run: pnpm build
+
+  examples:
+    name: YAML examples and hack tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: docs
+          persist-credentials: false
+      - name: Read the pinned OME commit
+        id: ome
+        run: |
+          ref="$(tr -d '[:space:]' < docs/ome.ref)"
+          if ! printf '%s\n' "$ref" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error title=ome.ref::ome.ref must hold one full commit SHA of ome-projects/ome."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v6
+        with:
+          repository: ome-projects/ome
+          ref: ${{ steps.ome.outputs.ref }}
+          path: ome
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ome/go.mod
+          cache: true
+          cache-dependency-path: ome/go.sum
+      - name: Set up envtest
+        # The go test step and the examples check share these binaries.
+        working-directory: ome
+        run: |
+          make envtest
+          version="$(sed -n 's/^ENVTEST_K8S_VERSION = //p' Makefile)"
+          if [ -z "$version" ]; then
+            echo "::error::Couldn't read ENVTEST_K8S_VERSION from OME's Makefile."
+            exit 1
+          fi
+          assets="$(bin/setup-envtest use "$version" -p path)"
+          echo "KUBEBUILDER_ASSETS=$assets" >> "$GITHUB_ENV"
+      - name: Test the hack programs
+        working-directory: ome
+        run: go test ./hack/docs-examples/... ./hack/docs-drift/...
+      - name: Check YAML examples against the CRDs
+        working-directory: ome
+        run: go run ./hack/docs-examples -content "$GITHUB_WORKSPACE/docs/src/lib/content"
+
+  apiref:
+    name: API reference is current
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: docs
+          persist-credentials: false
+      - name: Read the pinned OME commit
+        id: ome
+        run: |
+          ref="$(tr -d '[:space:]' < docs/ome.ref)"
+          if ! printf '%s\n' "$ref" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error title=ome.ref::ome.ref must hold one full commit SHA of ome-projects/ome."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v6
+        with:
+          repository: ome-projects/ome
+          ref: ${{ steps.ome.outputs.ref }}
+          path: ome
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ome/go.mod
+          cache: true
+          cache-dependency-path: ome/go.sum
+      - name: Regenerate the API reference
+        # genref finds its templates in the working directory and has to run
+        # inside OME's Go module.
+        working-directory: ome
+        run: |
+          make genref
+          cd hack/genref/website
+          ../../../bin/genref -c ../config.yaml -o "$RUNNER_TEMP/apiref"
+          # genref logs a package or template error and still exits 0.
+          if [ ! -s "$RUNNER_TEMP/apiref/ome.v1beta1.md" ]; then
+            echo "::error title=API reference::genref wrote no page; see its log above."
+            exit 1
+          fi
+      - name: Compare the committed page
+        run: |
+          page=src/lib/content/reference/api/ome.v1beta1.md
+          if ! diff -u "docs/$page" "$RUNNER_TEMP/apiref/ome.v1beta1.md" > "$RUNNER_TEMP/apiref.diff"; then
+            head -n 200 "$RUNNER_TEMP/apiref.diff"
+            echo "::error title=API reference::$page doesn't match ome-projects/ome at the commit in ome.ref. Regenerate it there with the commands of the step above, built with Go 1.24 or newer, and commit the page."
+            exit 1
+          fi
+
+  drift:
+    name: Drift report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The nightly docs bot changes site/ in ome-projects/ome every day, so
+    # drift is expected until launch. The report is information, not a gate.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: docs
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: ome-projects/ome
+          # The report compares site/ history since each rewrite, so it
+          # reads main with its full history, not the commit in ome.ref.
+          ref: main
+          fetch-depth: 0
+          path: ome
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ome/go.mod
+          cache: true
+          cache-dependency-path: ome/go.sum
+      - name: Report drift between OME's site/ and this site
+        # A built binary keeps docs-drift's exit status; go run turns every
+        # failure into 1.
+        run: |
+          go build -C ome -o "$RUNNER_TEMP/docs-drift" ./hack/docs-drift
+          set +e
+          # docs-drift resolves -new and -redirects against -repo.
+          "$RUNNER_TEMP/docs-drift" -repo ome -new ../docs/src/lib/content -redirects ../docs/redirects.json > drift.txt 2>&1
+          status=$?
+          set -e
+          cat drift.txt
+          {
+            echo '## Docs drift'
+            echo
+            case "$status" in
+              0) cat drift.txt ;;
+              1) echo 'Content PRs should fold these changes in and move `rewrittenFrom` forward.'
+                 echo
+                 echo '```text'
+                 cat drift.txt
+                 echo '```' ;;
+              *) echo 'The drift report failed to run; see the job log.' ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -eq 1 ]; then
+            echo "::warning title=Docs drift::site/ in ome-projects/ome changed since some pages were rewritten; see the job summary."
+          fi
+          # Drift (1) is reported; only a failure to run (2) marks the job failed.
+          [ "$status" -le 1 ]
