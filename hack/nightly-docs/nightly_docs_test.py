@@ -157,6 +157,34 @@ class GitGuardTests(unittest.TestCase):
     def git(self, *args):
         return subprocess.check_output(["git", *args], text=True, stderr=subprocess.DEVNULL).strip()
 
+    def code_repo(self):
+        """Create the separate OME checkout that documentation revisions pin."""
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        code = Path(directory.name)
+
+        def git(*args):
+            return subprocess.check_output(["git", "-C", str(code), *args], text=True,
+                                           stderr=subprocess.DEVNULL).strip()
+
+        git("init", "-q")
+        git("config", "user.name", "Test")
+        git("config", "user.email", "test@users.noreply.github.com")
+        (code / "pkg").mkdir()
+        (code / "pkg/example.go").write_text("package example\n")
+        git("add", ".")
+        git("commit", "-qm", "Add example")
+        env = patch.dict(os.environ, {"NIGHTLY_DOCS_CODE": str(code)})
+        env.start()
+        self.addCleanup(env.stop)
+        return code, git
+
+    def pin(self, value):
+        Path(docs.CODE_REF).write_text(value + "\n")
+        self.git("add", docs.CODE_REF)
+        self.git("commit", "-qm", "Pin OME")
+        return self.git("rev-parse", "HEAD")
+
     def test_noop_does_not_publish(self):
         self.assertFalse(docs.validate_diff(self.item, self.base))
 
@@ -246,11 +274,9 @@ class GitGuardTests(unittest.TestCase):
         self.assertEqual(self.path.read_text(), "Updated documentation.\n")
 
     def test_planner_gets_source_patches_without_shell_tools(self):
-        Path("pkg").mkdir()
-        Path("pkg/example.go").write_text("package example\n")
-        self.git("add", "pkg/example.go")
-        self.git("commit", "-qm", "Add example")
-        source = self.git("rev-parse", "HEAD")
+        _, code_git = self.code_repo()
+        source = code_git("rev-parse", "HEAD")
+        base = self.pin(source)
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(docs, "existing_prs", return_value=[]), \
                 patch.object(discovery, "previous_pending", return_value=[]), \
@@ -258,15 +284,37 @@ class GitGuardTests(unittest.TestCase):
             output = Path(directory) / "context.json"
             docs.prepare("test/repo", output)
             context = json.loads(output.read_text())
-            self.assertEqual(context["base_sha"], source)
+            self.assertEqual(context["base_sha"], base)
+            self.assertEqual(context["code_sha"], source)
+            self.assertEqual(context["code_repo"], "ome-projects/ome")
             self.assertEqual(context["max_prs"], 100)
-            self.assertTrue(any(line.startswith(source) for line in context["code_history"]))
+            # The history to document is OME's, never this repository's commits.
+            self.assertEqual([line.split()[0] for line in context["code_history"]], [source])
             patch_file = Path(context["source_diffs"]) / f"{source}.patch"
             self.assertIn("+package example", patch_file.read_text())
 
+    def test_code_checkout_follows_the_pin_of_each_documentation_revision(self):
+        code, code_git = self.code_repo()
+        first = code_git("rev-parse", "HEAD")
+        (code / "pkg/example.go").write_text("package newer\n")
+        code_git("commit", "-qam", "Change example")
+        second = code_git("rev-parse", "HEAD")
+        old_base, new_base = self.pin(first), self.pin(second)
+        self.assertEqual(docs.checkout_code(old_base), first)
+        self.assertEqual(code_git("rev-parse", "HEAD"), first)
+        self.assertEqual((code / "pkg/example.go").read_text(), "package example\n")
+        self.assertEqual(docs.checkout_code(new_base), second)
+        self.assertEqual((code / "pkg/example.go").read_text(), "package newer\n")
+
+    def test_pin_must_be_one_full_commit_sha(self):
+        self.code_repo()
+        for value in ["main", "abc1234", "", "a" * 40 + "\n" + "b" * 40]:
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "full OME commit SHA"):
+                docs.code_sha(self.pin(value))
+
     def test_bundle_cannot_replace_guard_or_install_git_hook(self):
         for path in ["hack/nightly-docs/nightly_docs.py", ".git/hooks/pre-push",
-                     ".git/config", docs.DOC_ROOT + "../../../../.git/config"]:
+                     ".git/config", docs.DOC_ROOT + "../../../.git/config", docs.CODE_REF]:
             with self.subTest(path=path), self.assertRaisesRegex(ValueError, "allowlist"):
                 docs.import_bundle(self.item, self.base, self.bundle({str(self.path): "Changed\n", path: "payload"}))
             self.assertEqual(self.path.read_text(), "Original documentation.\n")
@@ -327,7 +375,7 @@ class GitGuardTests(unittest.TestCase):
         self.assertIn("Signed-off-by: github-actions[bot]", self.git("log", "-1", "--format=%B"))
         self.assertEqual(len(calls), 1)
         self.assertIn(self.item["key"], calls[0][1])
-        self.assertIn(self.item["source_sha"], calls[0][1])
+        self.assertIn("https://github.com/ome-projects/ome/commit/" + self.item["source_sha"], calls[0][1])
 
     def test_retry_recovers_matching_branch_without_rewriting_it(self):
         self.origin()

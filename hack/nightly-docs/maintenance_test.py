@@ -18,18 +18,26 @@ def pull():
     item = m.docs.validate_item(proposal())
     return {"number": 7, "state": "open", "draft": False, "user": {"login": "github-actions[bot]"},
             "title": item["title"], "body": f"{m.docs.MARKER}{item['key']} -->",
-            "head": {"sha": "b" * 40, "ref": item["branch"], "repo": {"full_name": "ome-projects/ome"}},
-            "base": {"sha": "a" * 40, "ref": "main", "repo": {"full_name": "ome-projects/ome"}}}
+            "head": {"sha": "b" * 40, "ref": item["branch"], "repo": {"full_name": "ome-projects/ome-docs"}},
+            "base": {"sha": "a" * 40, "ref": "main", "repo": {"full_name": "ome-projects/ome-docs"}}}
 
 
 class PolicyTests(unittest.TestCase):
     def setUp(self):
-        env = patch.dict(os.environ, {"GITHUB_REPOSITORY": "ome-projects/ome"})
+        env = patch.dict(os.environ, {"GITHUB_REPOSITORY": "ome-projects/ome-docs",
+                                      "NIGHTLY_DOCS_CODE": "/nonexistent/ome"})
         env.start()
         self.addCleanup(env.stop)
         base = patch.object(m, 'current_base', return_value='a' * 40)
         base.start()
         self.addCleanup(base.stop)
+
+    def test_only_the_documentation_repository_is_supported(self):
+        self.assertEqual(m.repo(), "ome-projects/ome-docs")
+        for other in ["ome-projects/ome", "fork/ome-docs"]:
+            with self.subTest(repo=other), patch.dict(os.environ, {"GITHUB_REPOSITORY": other}), \
+                    self.assertRaisesRegex(ValueError, "Unsupported"):
+                m.repo()
 
     def test_identity_is_checked_independently_of_label(self):
         self.assertEqual(m.eligible(pull())[0], "a" * 40)
@@ -39,7 +47,7 @@ class PolicyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 m.eligible(pr)
         for who, value in [("user", {"login": "someone"}),
-                           ("head", {"sha": "b" * 40, "ref": "some-branch", "repo": {"full_name": "ome-projects/ome"}}),
+                           ("head", {"sha": "b" * 40, "ref": "some-branch", "repo": {"full_name": "ome-projects/ome-docs"}}),
                            ("head", {"sha": "b" * 40, "ref": pull()["head"]["ref"], "repo": {"full_name": "fork/ome"}})]:
             pr = pull()
             pr[who] = value
@@ -331,7 +339,7 @@ class PolicyTests(unittest.TestCase):
                 patch.object(m, "merge_blockers", return_value=[]):
             m.merge(7, False)
             self.assertEqual(api.call_count, 1)
-            self.assertEqual(api.call_args.args, ('repos/ome-projects/ome/pulls/7',))
+            self.assertEqual(api.call_args.args, ('repos/ome-projects/ome-docs/pulls/7',))
 
     def test_feedback_arriving_during_publication_is_not_marked_reviewed(self):
         thread = {"id": "T", "number": 1, "comments": [{"author": {"__typename": "Bot", "login": "claude"}}]}
@@ -373,7 +381,7 @@ class PolicyTests(unittest.TestCase):
                 patch.object(m.docs, 'run', return_value=json.dumps(info)), \
                 patch.object(m, 'check_runs', return_value=runs):
             m.merge(7, True)
-        self.assertEqual(api.call_args.args, ('repos/ome-projects/ome/pulls/7/merge', 'PUT',
+        self.assertEqual(api.call_args.args, ('repos/ome-projects/ome-docs/pulls/7/merge', 'PUT',
                                              {'sha': pr['head']['sha'], 'merge_method': 'squash'}))
 
 
@@ -382,7 +390,7 @@ class FreshnessTests(unittest.TestCase):
         pr = pull()
         ctx = {"number": 7, "head": pr['head']['sha'], "base": pr['base']['sha'],
                "signature": m.signature(pr, {}), "extra_feedback": ""}
-        with patch.object(m, 'repo', return_value='ome-projects/ome'), \
+        with patch.object(m, 'repo', return_value='ome-projects/ome-docs'), \
                 patch.object(m, 'api', side_effect=[pr, {'object': {'sha': 'c' * 40}}]), \
                 patch.object(m, 'feedback', return_value=({}, {}, None)):
             with self.assertRaisesRegex(ValueError, 'stale'):
@@ -422,6 +430,16 @@ class PublicationTests(unittest.TestCase):
         self.original = os.getcwd()
         self.addCleanup(os.chdir, self.original)
         self.root = Path(directory.name)
+        # OME is a separate repository; documentation revisions pin one of its commits.
+        self.code = self.root / 'ome'
+        self.code.mkdir()
+        self.code_git('init', '-q')
+        self.code_git('config', 'user.name', 'Test')
+        self.code_git('config', 'user.email', 'test@users.noreply.github.com')
+        self.source = self.code_commit('package example\n')
+        env = patch.dict(os.environ, {'NIGHTLY_DOCS_CODE': str(self.code)})
+        env.start()
+        self.addCleanup(env.stop)
         self.remote = self.root / 'remote.git'
         subprocess.run(['git', 'init', '--bare', '-q', str(self.remote)], check=True)
         working = self.root / 'working'
@@ -434,10 +452,11 @@ class PublicationTests(unittest.TestCase):
         self.path = Path(proposal()['doc_paths'][0])
         self.path.parent.mkdir(parents=True)
         self.path.write_text('Original\n')
+        Path(m.docs.CODE_REF).write_text(self.source + '\n')
         self.git('add', '.')
         self.git('commit', '-qm', 'base')
         self.base = self.git('rev-parse', 'HEAD')
-        self.item = m.docs.validate_item(proposal(source_sha=self.base))
+        self.item = m.docs.validate_item(proposal(source_sha=self.source))
         self.git('checkout', '-qb', self.item['branch'])
         self.path.write_text('Unfixed PR\n')
         self.git('commit', '-qam', 'original PR')
@@ -452,6 +471,48 @@ class PublicationTests(unittest.TestCase):
 
     def git(self, *args):
         return subprocess.check_output(['git', *args], text=True, stderr=subprocess.DEVNULL).strip()
+
+    def code_git(self, *args):
+        return subprocess.check_output(['git', '-C', str(self.code), *args], text=True,
+                                       stderr=subprocess.DEVNULL).strip()
+
+    def code_commit(self, content):
+        (self.code / 'source.go').write_text(content)
+        self.code_git('add', '.')
+        self.code_git('commit', '-qm', 'code change')
+        return self.code_git('rev-parse', 'HEAD')
+
+    def pull(self, item, head):
+        pr = pull()
+        pr['body'] = f"{m.docs.MARKER}{item['key']} -->"
+        pr['head'].update(sha=head, ref=item['branch'])
+        pr['base']['sha'] = self.base
+        return pr
+
+    def test_context_pins_the_code_and_requires_the_source_in_its_history(self):
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'ome-projects/ome-docs', 'GITHUB_SHA': 'c' * 40,
+                                     'GITHUB_RUN_ID': '1'}), \
+                patch.object(m.docs, 'mutate_git'), \
+                patch.object(m, 'feedback', return_value=({}, {}, None)):
+            ctx = m.context(self.pull(self.item, self.head))
+            self.assertEqual(ctx['code_sha'], self.source)
+            self.assertEqual(sorted(ctx['files']), [str(self.path)])
+            # OME moved on, but main still pins the older commit.
+            unpinned = m.docs.validate_item(proposal(source_sha=self.code_commit('package later\n')))
+            with self.assertRaisesRegex(ValueError, 'OME history that main pins'):
+                m.context(self.pull(unpinned, self.head))
+        self.assertEqual(self.code_git('rev-parse', 'HEAD'), self.source)
+
+    def test_restore_moves_the_code_to_the_commit_that_main_pins(self):
+        later = self.code_commit('package later\n')
+        Path(m.docs.CODE_REF).write_text(later + '\n')
+        self.git('commit', '-qam', 'move the pin')
+        ctx = {'base': self.git('rev-parse', 'HEAD'), 'item': self.item,
+               'files': {str(self.path): 'Fixed PR\n'}}
+        self.code_git('checkout', '-q', '--detach', self.source)
+        self.assertTrue(m.restore(ctx))
+        self.assertEqual(self.code_git('rev-parse', 'HEAD'), later)
+        self.assertEqual((self.code / 'source.go').read_text(), 'package later\n')
 
     def test_publication_preserves_history_and_exact_reviewed_tree(self):
         self.path.write_text('Fixed PR\n\nSecond paragraph.\n')
@@ -487,7 +548,7 @@ class PublicationTests(unittest.TestCase):
             pr['body'] = f"{m.docs.MARKER}{self.item['key']} -->"
             pr['head'].update(sha=self.git('rev-parse', 'HEAD'), ref=self.item['branch'])
             pr['base']['sha'] = self.base
-            with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'ome-projects/ome'}), \
+            with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'ome-projects/ome-docs'}), \
                     patch.object(m.docs, 'mutate_git'), self.assertRaises(ValueError):
                 m.context(pr)
 
@@ -513,7 +574,7 @@ class PublicationTests(unittest.TestCase):
         directory = self.root / 'evidence'
         directory.mkdir()
         pr, details = self.refresh_context(base)
-        with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'ome-projects/ome'}), \
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'ome-projects/ome-docs'}), \
                 patch.object(m, 'get_pr', return_value=pr), \
                 patch.object(m, 'feedback', return_value=(details, {}, None)):
             m.refresh_base(self.ctx, directory)
@@ -525,17 +586,18 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(self.git('diff', '--cached', '--name-only', base), str(self.path))
 
     def test_refresh_rejects_source_or_existing_page_changes(self):
-        for path in [Path('source.go'), self.path]:
+        # Moving the OME pin changes what every page is checked against.
+        for path in [Path('source.go'), Path(m.docs.CODE_REF), self.path]:
             self.git('reset', '--hard', self.base)
             path.write_text('Changed on main\n')
             self.git('add', str(path))
             self.git('commit', '-qm', 'main changed existing content')
             base = self.git('rev-parse', 'HEAD')
-            self.git('push', '-q', 'origin', 'HEAD:refs/heads/' + ('source' if path.suffix == '.go' else 'docs'))
+            self.git('push', '-q', 'origin', 'HEAD:refs/heads/changed-' + path.stem)
             self.git('checkout', '--detach', self.base)
             self.path.write_text('Reviewed repair\n')
             pr, details = self.refresh_context(base)
-            with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'ome-projects/ome'}), \
+            with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'ome-projects/ome-docs'}), \
                     patch.object(m, 'get_pr', return_value=pr), \
                     patch.object(m, 'feedback', return_value=(details, {}, None)), \
                     self.assertRaisesRegex(ValueError, 'fresh review'):

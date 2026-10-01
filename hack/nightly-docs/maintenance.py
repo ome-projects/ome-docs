@@ -50,7 +50,7 @@ def api(endpoint, method="GET", payload=None):
 def repo():
     """The workflow is deliberately restricted to this repository."""
     value = os.environ["GITHUB_REPOSITORY"]
-    if value != "ome-projects/ome":
+    if value != "ome-projects/ome-docs":
         raise ValueError("Unsupported repository")
     return value
 
@@ -292,11 +292,13 @@ def context(pr):
     if any(not re.fullmatch(r"[0-9a-f]{40}", sha) for sha in (base, head)):
         raise ValueError("Expected immutable commits")
     docs.mutate_git("fetch", "--no-tags", "origin", base, head)
+    # The concern's source commit is in OME; main pins the OME commit it documents.
+    code = docs.checkout_code(base)
     try:
-        docs.git("merge-base", "--is-ancestor", source, base)
+        docs.code_git("merge-base", "--is-ancestor", source, code)
     except subprocess.CalledProcessError as error:
         if error.returncode == 1:
-            raise ValueError('The source commit is not an ancestor of main') from error
+            raise ValueError('The source commit is not in the OME history that main pins') from error
         raise
     fork = docs.git("merge-base", base, head)
     files = {}
@@ -319,7 +321,7 @@ def context(pr):
     item = docs.validate_item({"area": area, "concern": concern, "source_sha": source,
                               "title": pr["title"], "question": pr["body"],
                               "evidence": "Original PR body and current source", "doc_paths": sorted(files)})
-    return {"number": pr["number"], "head": head, "base": base, "item": item,
+    return {"number": pr["number"], "head": head, "base": base, "code_sha": code, "item": item,
             "files": files, "feedback": details, "state": state, "state_id": state_id,
             "extra_feedback": extra, "signature": signature(pr, details, extra),
             "tools_sha": os.environ["GITHUB_SHA"],
@@ -329,6 +331,8 @@ def context(pr):
 def restore(ctx, bundle=None):
     """Import only validated markdown into a pristine trusted main checkout."""
     docs.mutate_git("checkout", "--detach", ctx["base"])
+    # Examples and claims are checked against the OME commit this main pins.
+    docs.checkout_code(ctx["base"])
     payload = bundle or json.dumps({"base_sha": ctx["base"], "key": ctx["item"]["key"],
                                    "files": ctx["files"]})
     return docs.import_bundle(ctx["item"], ctx["base"], payload)
@@ -357,7 +361,7 @@ def prepare(number, directory, apply, force):
     directory.mkdir(parents=True, exist_ok=True)
     ctx["action"] = action
     if action == "work":
-        ctx["findings"] = checks.document_findings(ctx["files"], Path.cwd())
+        ctx["findings"] = checks.document_findings(ctx["files"], Path(docs.code_dir()))
         attempts = 1 if force else ctx["state"].get("attempts", 0) + 1
         ctx["attempts"] = attempts
         ctx['infrastructure_attempts'] = (1 if force else
@@ -666,7 +670,7 @@ def main():
     elif command == "check":
         import maintenance_checks as checks
         files = {path: Path(path).read_text() for path in ctx["item"]["doc_paths"] if Path(path).is_file()}
-        findings = checks.write_report(files, Path.cwd(), directory / "checks.json")
+        findings = checks.write_report(files, Path(docs.code_dir()), directory / "checks.json")
         if findings:
             raise ValueError("\n".join(findings))
     elif command == "refresh":

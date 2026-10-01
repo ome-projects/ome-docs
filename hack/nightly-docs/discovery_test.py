@@ -10,7 +10,8 @@ from nightly_docs_test import proposal
 class DiscoveryTests(unittest.TestCase):
     def setUp(self):
         self.history = ['a' * 40 + ' old change', 'b' * 40 + ' new change']
-        self.context = {'base_sha': 'c' * 40, 'code_history': self.history, 'existing_prs': []}
+        self.context = {'base_sha': 'c' * 40, 'code_sha': 'd' * 40, 'code_history': self.history,
+                        'existing_prs': []}
         self.assignments = {slug: self.history for slug, _, _ in discovery.SHARDS}
         self.scans = [{'shard': slug, 'base_sha': self.context['base_sha'], 'concerns': [],
                        'inspected_commits': [], 'remaining_work': 'No more supported candidates.'}
@@ -40,8 +41,13 @@ class DiscoveryTests(unittest.TestCase):
                                                'inspected_commits': [1], 'remaining_work': 'Done'}), self.history)
 
     def test_partition_keeps_unmatched_history_and_order(self):
-        with patch.object(docs, 'git', side_effect=['a' * 40] + [''] * 7):
+        with patch.object(docs, 'code_git', side_effect=['a' * 40] + [''] * 7) as code_git, \
+                patch.object(docs, 'git') as docs_git:
             result = discovery.partition(self.context)
+        # Subsystem history is read from the pinned OME commit, not this repository.
+        docs_git.assert_not_called()
+        self.assertTrue(all(call.args[:4] == ('log', '--first-parent', '--format=%H', 'd' * 40)
+                            for call in code_git.call_args_list))
         self.assertEqual(result['cli-observe'], self.history[:1])
         self.assertEqual(result['operations'], self.history[1:])
         self.assertEqual(set().union(*(set(lines) for lines in result.values())), set(self.history))
@@ -121,6 +127,7 @@ class DiscoveryTests(unittest.TestCase):
             report = discovery.build_report([], self.context)
         self.assertFalse(report['complete'])
         self.assertEqual(report['selected'], [])
+        self.assertEqual((report['base_sha'], report['code_sha']), ('c' * 40, 'd' * 40))
         self.assertEqual(report['queued_concerns'], self.context['pending_concerns'])
         self.assertEqual(len(report['missing_shards']), len(discovery.SHARDS))
 

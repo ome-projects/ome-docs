@@ -40,7 +40,7 @@ on:
   issue_comment:
     types: [created, edited]
   workflow_run:
-    workflows: [Nightly Documentation Updates, PR Validation, Claude Code Review]
+    workflows: [Nightly Documentation Updates, Website, Pre-commit]
     types: [completed]
 
 permissions:
@@ -56,9 +56,13 @@ concurrency:
 
 jobs:
   select:
+    # Sweeps that start on their own (schedule, comments, finished workflows)
+    # are opt-in through NIGHTLY_DOCS_ENABLED, like the nightly. A manual
+    # dispatch, or a call from the nightly's manual route, works without it.
     if: >-
-      github.repository == 'ome-projects/ome'
+      github.repository == 'ome-projects/ome-docs'
       && vars.DOCS_MAINTENANCE_ENABLED != 'false'
+      && (github.event_name == 'workflow_dispatch' || vars.NIGHTLY_DOCS_ENABLED == 'true')
       && (github.event_name != 'issue_comment' || github.event.issue.pull_request)
       && (github.event_name != 'issue_comment' || !startsWith(github.event.comment.body, '<!-- docs-maintenance-state:'))
       && (github.event_name != 'issue_comment'
@@ -86,6 +90,7 @@ jobs:
       - uses: ./.github/actions/nightly-docs-setup
         with:
           export-api-key: 'false'
+          checkout-code: 'false'
           source-sha: ${{ github.sha }}
       - name: Select mode
         id: mode

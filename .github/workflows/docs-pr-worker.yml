@@ -97,10 +97,12 @@ jobs:
           prompt: >-
             Read and follow ${{ runner.temp }}/nightly-docs-tools/maintenance-write.md.
             The maintenance context is ${{ runner.temp }}/docs-maintenance/context.json.
+            The OME source checkout is ${{ runner.temp }}/nightly-docs-ome.
           claude_args: >-
             --model claude-fable-5
             --effort xhigh
             --max-turns 120
+            --add-dir ${{ runner.temp }}/nightly-docs-ome
             --tools "Read,Glob,Grep,Edit,Write"
             --allowedTools "Read,Glob,Grep,Edit,Write"
       - name: Export documentation data only
@@ -161,10 +163,12 @@ jobs:
             Read and follow ${{ runner.temp }}/nightly-docs-tools/maintenance-review.md.
             The context is ${{ runner.temp }}/docs-maintenance/context.json.
             Review ${{ runner.temp }}/docs-maintenance/full-pr.patch and checks.json in that directory.
+            The OME source checkout is ${{ runner.temp }}/nightly-docs-ome.
           claude_args: >-
             --model claude-fable-5
             --effort xhigh
             --max-turns 120
+            --add-dir ${{ runner.temp }}/nightly-docs-ome
             --tools "Read,Glob,Grep"
             --allowedTools "Read,Glob,Grep"
             --json-schema '{"type":"object","additionalProperties":false,"properties":{"single_concern":{"type":"boolean"},"accurate":{"type":"boolean"},"reason":{"type":"string"},"addressed_threads":{"type":"array","uniqueItems":true,"items":{"type":"integer","minimum":1}}},"required":["single_concern","accurate","reason","addressed_threads"]}'
@@ -232,13 +236,13 @@ jobs:
         with:
           node-version: '22'
           cache: pnpm
-          cache-dependency-path: website/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
       - name: Build production documentation from the trusted base
         id: build
         if: steps.verdict.outputs.accepted == 'true' && steps.examples.outcome == 'success'
         continue-on-error: true
         run: |
-          python3 "$RUNNER_TEMP/nightly-docs-tools/build_site.py" website "$RUNNER_TEMP/maintenance-site"
+          python3 "$RUNNER_TEMP/nightly-docs-tools/build_site.py" . "$RUNNER_TEMP/maintenance-site"
       - name: Publish guarded repair and record the actual PR-head check
         id: finish
         env:
@@ -284,6 +288,7 @@ jobs:
       - uses: ./.github/actions/nightly-docs-setup
         with:
           export-api-key: 'false'
+          checkout-code: 'false'
           source-sha: ${{ github.sha }}
       - run: python3 hack/nightly-docs/maintenance.py failure
         env:
@@ -313,6 +318,7 @@ jobs:
       - uses: ./.github/actions/nightly-docs-setup
         with:
           export-api-key: 'false'
+          checkout-code: 'false'
           source-sha: ${{ github.sha }}
       - run: python3 hack/nightly-docs/maintenance.py merge
         env:

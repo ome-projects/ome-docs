@@ -33,3 +33,15 @@ repos:
             '^TrafficMap (?:Admi|Trun)\.\.\.'
           ]
         exclude: ^pnpm-lock\.yaml$
+
+  - repo: local
+    hooks:
+      - id: nightly-docs-contract
+        name: nightly documentation scope and publication contract
+        entry: python3 -m unittest discover -s hack/nightly-docs -p '*_test.py'
+        language: python
+        additional_dependencies: [PyYAML==6.0.2, jsonschema==4.25.1]
+        # The tests also read the real navigation and redirects, which the
+        # automation accepts only as literal data.
+        files: ^(hack/nightly-docs/|\.github/workflows/(nightly-docs|docs-pr-maintenance|docs-pr-worker)\.yml|\.github/actions/nightly-docs-setup/|src/lib/config/nav\.ts$|redirects\.json$)
+        pass_filenames: false

@@ -1,5 +1,10 @@
 Read AGENTS.md and the single concern JSON in NIGHTLY_ITEM.
 Read the supplied source-commit patch, current implementation, tests, and docs.
+The documentation is this repository, which is the working directory. The
+implementation and tests are in the OME source checkout named in the invocation,
+at the commit this repository pins in ome.ref; its AGENTS.md describes the code
+layout. That checkout is read-only reference material: never edit it. Glob and
+Grep search only this repository unless you pass them a path under that checkout.
 Update ONLY the listed doc_paths to address exactly this one concern.
 Follow the placement decision: correct/extend canonical sections first and
 reconcile related claims on all listed pages. A separate new page must have the
@@ -18,9 +23,10 @@ complete, accurate fix cannot fit, leave the tree unchanged; do not truncate a
 larger change or broaden the plan. If the gap is already fixed,
 unsupported by current code, or depends on an unfinished OEP, make no changes.
 
-Read website/src/lib/content/contributing/writing-docs.md and follow its
-front matter, links, callout and writing conventions. This task targets website/
-regardless of stale transition guidance in the checked-out AGENTS.md.
+Read src/lib/content/contributing/writing-docs.md and follow its
+front matter, links, callout and writing conventions. This task targets
+src/lib/content/ here, even though AGENTS.md says fixes to the live Hugo site go
+to site/ in OME.
 Use /ome/<section>/<page> links, never /ome/docs/ links or Hugo shortcodes.
 When completing a draft, update its redirects.json rewrittenFrom mapping with
 the last legacy site commit incorporated (inspect the supplied history/source

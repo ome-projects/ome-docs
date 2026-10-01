@@ -44,7 +44,7 @@ class WebsiteDataTests(unittest.TestCase):
 
     def test_only_website_pages_and_metadata_are_eligible(self):
         for path in ['site/content/en/docs/tasks/x.md', docs.GENERATED,
-                     docs.DOC_ROOT + 'reference/api/serving-runtime.md', 'website/package.json',
+                     docs.DOC_ROOT + 'reference/api/serving-runtime.md', 'package.json', docs.CODE_REF,
                      docs.DOC_ROOT + 'guides/../x.md']:
             with self.subTest(path=path), self.assertRaises(ValueError):
                 docs.validate_item(proposal(doc_paths=[path]))
@@ -67,7 +67,7 @@ class WebsiteDataTests(unittest.TestCase):
         from maintenance_test import pull
         legacy = pull()
         legacy['body'] = old['body']
-        with patch.object(maintenance, 'repo', return_value='ome-projects/ome'), self.assertRaises(ValueError):
+        with patch.object(maintenance, 'repo', return_value='ome-projects/ome-docs'), self.assertRaises(ValueError):
             maintenance.eligible(legacy)
 
 

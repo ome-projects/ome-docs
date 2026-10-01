@@ -16,12 +16,15 @@ class BuildSiteTests(unittest.TestCase):
             (source / 'page.md').write_text('documentation change\n')
             (source / 'node_modules').mkdir()
             (source / 'node_modules' / 'untrusted').write_text('not copied')
+            (source / '.git').mkdir()
+            (source / '.git' / 'config').write_text('not copied')
             commands = []
 
             def run(command, *, cwd, check):
                 self.assertEqual(Path(cwd), output)
                 self.assertTrue(check)
                 self.assertFalse((output / 'node_modules' / 'untrusted').exists())
+                self.assertFalse((output / '.git').exists())
                 commands.append(command)
                 (output / 'package.json').write_text('isolated mutation')
 

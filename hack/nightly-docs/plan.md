@@ -1,14 +1,19 @@
 Read AGENTS.md and the context JSON at the path in NIGHTLY_CONTEXT.
-The documentation source is website/src/lib/content/ in this repository.
-This destination overrides stale site/ transition instructions in AGENTS.md.
-Old Hugo site/ pages and old nightly-docs PRs do not establish website coverage;
-check the corresponding CURRENT website page for the same concern.
+The documentation source is src/lib/content/ in this repository, which is the
+working directory. The OME code it documents is a separate read-only checkout:
+the context's code_dir, at the commit in code_sha. Read that checkout's
+AGENTS.md for the code layout. Paths in code_history and in the source diffs are
+relative to code_dir. Glob and Grep search only this repository unless you pass
+them a path under code_dir.
+Document here even though AGENTS.md says fixes to the live Hugo site go to site/
+in OME. Old Hugo site/ pages and old nightly-docs PRs do not establish website
+coverage; check the corresponding CURRENT page here for the same concern.
 
 You own ONLY the user-facing concerns described in the context's focus field.
 Other scans own the other scan_responsibilities. Shared source files/commits are
 not permission to duplicate another scan's user question. CLI scans own command
 syntax and reports; subsystem scans own API/controller behavior.
-Compare merged code on the checked-out default branch against CURRENT docs.
+Compare the merged OME code in code_dir against CURRENT docs.
 Use the subsystem-filtered first-parent code-change history in the context as discovery
 evidence, not as proof that documentation is missing. Inspect code, tests, related
 OEP status, and relevant docs before selecting a gap. Include older undocumented
@@ -72,20 +77,20 @@ ONE CONCERN PER ITEM, never one item per broad subsystem or per day's changes:
 - area is a stable subsystem slug; concern is a stable, narrowly descriptive
   slug for the behavior, without a date. Preserve existing slugs for the same gap.
 - source_commit must be an integer ID from the supplied code-change history. Confirm
-  that the behavior still exists on the current default branch.
+  that the behavior still exists in code_dir.
 - title must be a nonempty printable single line, at most 120 characters
   including the `[Docs] ` prefix. Include that prefix in every title.
 - evidence must cite exact current source paths/symbols and explain the missing
   or wrong documentation, including why this is one independent concern.
 - doc_paths is an explicit allowlist of the Markdown files needed in
-  website/src/lib/content/. Choose only files necessary to explain this concern.
+  src/lib/content/. Choose only files necessary to explain this concern.
   There is no file-count limit. Keep the proposed edit under 1,000 total added
   plus deleted lines (999 maximum). Do not edit the
   generated reference/api/ subtree. Avoid broad rewrites, formatting sweeps,
   unrelated examples, or configuration changes. The only auxiliary data paths
-  allowed are website/src/lib/config/nav.ts and website/redirects.json, when
+  allowed are src/lib/config/nav.ts and redirects.json, when
   necessary for this concern. Include at least one authored Markdown page.
-  Read website/src/lib/content/contributing/writing-docs.md before planning:
+  Read src/lib/content/contributing/writing-docs.md before planning:
   a new page requires its nav.ts entry and section index.md card; completing
   a draft may require redirects.json rewrittenFrom updates. Include these in
   doc_paths. Do not invent replacement pages for existing draft/canonical pages.

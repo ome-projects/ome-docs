@@ -2,14 +2,36 @@
 
 `.github/workflows/nightly-docs.yml` runs daily at **09:23 UTC** and supports
 manual dispatch. All jobs use **ome-runner-cpu** and **claude-fable-5**.
-It updates the documentation source in this repository's `website/src/lib/content/`;
-the existing release-driven Pages workflow publishes the website separately.
+It updates the documentation source in this repository's `src/lib/content/`
+from the code in [ome-projects/ome](https://github.com/ome-projects/ome).
+Scheduled runs stay off until the repository variable `NIGHTLY_DOCS_ENABLED`
+is `true`; see [Setup](#setup).
+
+## Two repositories
+
+The documentation is here and the code it describes is in ome-projects/ome.
+Every documentation revision pins the OME commit it describes in `ome.ref`, the
+same pin the Website workflow checks YAML examples and the API reference against.
+
+- The setup action checks out the pinned documentation revision in the
+  workspace, reads its `ome.ref`, and clones OME at that commit into
+  `$RUNNER_TEMP/nightly-docs-ome`, outside the workspace. `NIGHTLY_DOCS_CODE`
+  names that directory. The documentation scope guards never see the code.
+- Code history, source diffs, the ancestry check of a concern's source commit
+  and the CRD schemas for YAML examples all come from that clone. Models read
+  it as reference material; documentation PRs can only change this repository.
+- The nightly documents the pinned commit, not OME's `main`. A change in OME
+  becomes eligible after a pull request here moves `ome.ref`, which also
+  regenerates the API reference (see CONTRIBUTING.md). A bot PR therefore
+  passes the same checks a human PR does.
+- Moving `ome.ref` on `main` invalidates maintenance reviews in progress, as
+  any change to existing content does.
 
 ## Scope and lifecycle
 
 1. Build the unchanged base site first to catch runner/dependency failures before
-   calling a model. Partition the full first-parent code/configuration history
-   into eight focused scans: CLI observation, CLI actions, model storage,
+   calling a model. Partition OME's full first-parent code/configuration history
+   at the pinned commit into eight focused scans: CLI observation, CLI actions, model storage,
    runtimes/accelerators, workloads/rollouts, networking/traffic,
    autoscaling/quota, and operations. Each scan has a 200-turn hard ceiling
    and an 80-turn investigation target, leaving headroom for tool batches and
@@ -79,7 +101,7 @@ single printable line, validated before any branch is pushed.
 Every job first checks out the immutable workflow `github.sha` and preserves its
 automation tools outside the source checkout. The planner job pins the default
 branch's source SHA once, before calling the model; every job then checks out
-that same source SHA. A manual run from a fix branch therefore tests that
+that same source SHA, and with it the OME commit that revision's `ome.ref` names. A manual run from a fix branch therefore tests that
 branch's tooling while all generated PRs contain only documentation changes
 against the pinned default branch. The model cannot choose either revision.
 Run-level concurrency prevents overlapping nightlies. Discovery, writing, and
@@ -136,7 +158,7 @@ A targeted manual run can exercise discovery, writing, independent placement and
 human-overlap review, and the production site build without pushing branches:
 
 ```bash
-gh workflow run nightly-docs.yml --repo ome-projects/ome \
+gh workflow run nightly-docs.yml --repo ome-projects/ome-docs \
   --ref codex/your-fix-branch -f dry_run=true \
   -f discovery_shard=runtime-accelerators -f max_prs=2
 ```
@@ -156,6 +178,12 @@ build when evaluating a pilot.
 
 ## Setup
 
+- This repository needs its own `ome-runner-cpu` runners: the ones registered
+  to ome-projects/ome do not serve it.
+- Scheduled nightly runs, and maintenance sweeps that start on their own, run
+  only while the repository variable `NIGHTLY_DOCS_ENABLED` is `true`. Leave it
+  unset until the runners exist and a manual `dry_run` has passed. Manual
+  dispatch works without it.
 - Runner pods must expose `ANTHROPIC_API_KEY` with access to `claude-fable-5`,
   and support Node 22 and pnpm 10. An isolated website copy runs frozen-lockfile
   installation, lint, content/link/anchor/navigation tests, type checks and a
@@ -168,13 +196,15 @@ build when evaluating a pilot.
   Token-generated events do not reliably run follow-up CI without approval.
   The nightly therefore performs its own scope, review and website checks. The
   maintenance worker below validates its actual PR head independently; it does
-  not bypass any other pending or required CI. An installation token can be
+  not bypass any other pending or required CI. Checks this repository requires,
+  such as Pre-commit, stay pending on a bot PR until a maintainer releases them.
+  An installation token can be
   added separately if normal event-driven CI without approval is desired.
 - Schedules become active only after the workflow is on the default branch.
   Maintainers can manually dispatch from a trusted workflow branch to validate
   fixes before opening a PR. These runs perform the full review/build/publication
   pipeline and open documentation PRs targeting the default branch. Use
-  `gh workflow run nightly-docs.yml --repo ome-projects/ome --ref BRANCH`.
+  `gh workflow run nightly-docs.yml --repo ome-projects/ome-docs --ref BRANCH`.
   The workflow does not change runner or repository settings.
 
 ## Local validation
@@ -198,7 +228,7 @@ own Python environment.
 `docs-pr-maintenance.yml` reconciles up to 100 eligible open PRs on each sweep,
 with four concurrent workers on `ome-runner-cpu`. Sweeps run every two hours,
 at minute 11 of even-numbered UTC hours. Issue comments and completion of the
-nightly, PR validation or code review workflow also wake it. Submitted reviews and inline replies are
+nightly, Website or Pre-commit workflow also wake it. Submitted reviews and inline replies are
 picked up by the sweep, avoiding privileged execution from a PR merge ref.
 Schedules/events use default-branch workflow code. Manual dispatch can use a
 trusted implementation branch. No PR-controlled scripts or Git metadata are
@@ -208,7 +238,8 @@ Eligibility requires the original `github-actions[bot]` author, a same-repositor
 branch matching the original concern marker, an open non-draft PR targeting
 main, and only added/modified handwritten documentation. Labels alone do not
 confer eligibility. A replacement publisher identity needs an explicit update
-to this guard. The source commit must belong to current main's history.
+to this guard. The source commit must belong to the history of the OME commit
+that current main pins.
 
 Each activation does one repair round:
 
@@ -226,7 +257,8 @@ Each activation does one repair round:
    using read/edit tools and a read-only GitHub token. It cannot push or merge.
 3. A separate job imports only documentation text, repeats the full-PR scope,
    whitespace and **999 changed-line maximum** checks, validates YAML examples
-   against current OME CRD schemas, and catches incorrect `/docs/` prefixes.
+   against the CRD schemas of the pinned OME commit, and catches incorrect
+   `/docs/` prefixes.
    There is no file-count limit; repairs stay within the original PR's paths.
 4. A second, independent **claude-fable-5** review in a read-only job checks the whole PR, behavior
    claims, feedback and semantic correctness against implementation and tests.
@@ -240,8 +272,8 @@ Each activation does one repair round:
    admission webhooks are not executed. These checks do not prove every example
    can run against a live Kubernetes cluster.
    Before building, a main advance may be carried forward only if it adds
-   unrelated regular handwritten Markdown pages. Source, schemas, templates and
-   every existing page must remain byte-for-byte identical. The semantic review
+   unrelated regular handwritten Markdown pages. Source, the `ome.ref` pin,
+   templates and every existing page must remain byte-for-byte identical. The semantic review
    can then be reused while build/link validation uses the refreshed base; both
    revisions are recorded in the evidence. Any other main change requires a
    fresh review, and a subsequent base move still blocks publication.
@@ -267,7 +299,8 @@ still report a rejected repair; inspect its verdict and the PR-head check.
 
 ### Merge policy and controls
 
-- Set `DOCS_MAINTENANCE_ENABLED=false` to stop new maintenance work.
+- Set `DOCS_MAINTENANCE_ENABLED=false` to stop new maintenance work. Sweeps
+  that start on their own also need `NIGHTLY_DOCS_ENABLED=true`.
 - **Merging is off by default.** Opt in separately with repository variable
   `DOCS_MAINTENANCE_MERGE=true`. No repository/organization setting is changed by
   the workflow. Dry runs never write a branch, check, comment, thread or merge.
@@ -290,7 +323,7 @@ The existing nightly dispatcher has a maintenance-only route, allowing the new
 reusable workflows to run before their first merge to main:
 
 ```bash
-gh workflow run nightly-docs.yml --repo ome-projects/ome --ref BRANCH \
+gh workflow run nightly-docs.yml --repo ome-projects/ome-docs --ref BRANCH \
   -f maintenance_pr=1047 -f maintenance_apply=false
 ```
 
@@ -308,9 +341,9 @@ are marked `needs-human` rather than repeatedly launching workers.
 
 ## Website migration
 
-Only authored pages in `website/src/lib/content/` are editable; generated
-`reference/api/` pages are excluded. `website/src/lib/config/nav.ts` and
-`website/redirects.json` may accompany a concern as narrowly validated data.
+Only authored pages in `src/lib/content/` are editable; generated
+`reference/api/` pages are excluded. `src/lib/config/nav.ts` and
+`redirects.json` may accompany a concern as narrowly validated data.
 Navigation must retain its literal array export and fixed type-only import;
 expressions, functions, extra imports and statements are rejected before any
 website tooling runs. New pages require navigation entries and section cards.

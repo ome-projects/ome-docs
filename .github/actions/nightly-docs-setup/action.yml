@@ -7,6 +7,9 @@ inputs:
   source-sha:
     description: Immutable default-branch commit to document
     required: true
+  checkout-code:
+    description: Also check out OME at the commit that source-sha pins in ome.ref
+    default: 'true'
 runs:
   using: composite
   steps:
@@ -39,4 +42,13 @@ runs:
       shell: bash
       env:
         SOURCE_SHA: ${{ inputs.source-sha }}
-      run: python3 hack/nightly-docs/prepare_source.py "$SOURCE_SHA" "$RUNNER_TEMP/nightly-docs-tools"
+        CHECKOUT_CODE: ${{ inputs.checkout-code }}
+      # OME is cloned outside the workspace, so the documentation checkout and
+      # its scope guards never see the code.
+      run: |
+        if [ "$CHECKOUT_CODE" = 'true' ]; then
+          python3 hack/nightly-docs/prepare_source.py "$SOURCE_SHA" "$RUNNER_TEMP/nightly-docs-tools" "$RUNNER_TEMP/nightly-docs-ome"
+          echo "NIGHTLY_DOCS_CODE=$RUNNER_TEMP/nightly-docs-ome" >> "$GITHUB_ENV"
+        else
+          python3 hack/nightly-docs/prepare_source.py "$SOURCE_SHA" "$RUNNER_TEMP/nightly-docs-tools"
+        fi

@@ -38,8 +38,8 @@ def partition(context):
     history = {line.split()[0]: line for line in context["code_history"]}
     assignments = {}
     for slug, _, paths in SHARDS:
-        assignments[slug] = set(docs.git("log", "--first-parent", "--format=%H",
-                                       context["base_sha"], "--", *paths).splitlines()) & history.keys()
+        assignments[slug] = set(docs.code_git("log", "--first-parent", "--format=%H",
+                                            context["code_sha"], "--", *paths).splitlines()) & history.keys()
     # No path falls through the cracks. Operational discovery also receives
     # commits outside the named subsystems, including future directories.
     assignments["operations"].update(history.keys() - set().union(*assignments.values()))
@@ -167,7 +167,8 @@ def build_report(scans, context):
                  if (item['area'], item['concern']) not in selected_ids]
         queued = prior + queued
     queued = pending_candidates(queued, context)
-    return {'doc_root': docs.DOC_ROOT, 'base_sha': context['base_sha'], 'scans': scans, 'selected': selected,
+    return {'doc_root': docs.DOC_ROOT, 'base_sha': context['base_sha'], 'code_sha': context.get('code_sha'),
+            'scans': scans, 'selected': selected,
             'deferred': deferred, 'queued_concerns': queued[:docs.MAX_PRS],
             'queue_overflow': [item['key'] for item in queued[docs.MAX_PRS:]],
             'expected_shards': expected, 'missing_shards': missing, 'complete': not missing,
@@ -248,7 +249,7 @@ def main():
         assignments = json.loads((root / "assignments.json").read_text())
         focus = next(focus for name, focus, _ in SHARDS if name == slug)
         context.update(code_history=[f"{i}: {line}" for i, line in enumerate(assignments[slug], 1)],
-                       shard=slug, focus=focus,
+                       code_dir=docs.code_dir(), shard=slug, focus=focus,
                        scan_responsibilities={name: focus for name, focus, _ in SHARDS})
         Path(os.environ["NIGHTLY_CONTEXT"]).write_text(json.dumps(context, indent=2))
     elif command == "scan":

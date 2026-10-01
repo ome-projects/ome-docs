@@ -5,8 +5,8 @@ import json
 from pathlib import PurePosixPath
 import re
 
-NAV = 'website/src/lib/config/nav.ts'
-REDIRECTS = 'website/redirects.json'
+NAV = 'src/lib/config/nav.ts'
+REDIRECTS = 'redirects.json'
 SECTIONS = {'getting-started', 'guides', 'concepts', 'reference', 'contributing'}
 AUXILIARY = {NAV, REDIRECTS}
 TOKEN = re.compile(r'''\s+|/\*.*?\*/|//[^\r\n]*|'(?:[^'\\\r\n]|\\.)*'|"(?:[^"\\\r\n]|\\.)*"|[A-Za-z_][A-Za-z_0-9]*|[][{}:,]''', re.S)

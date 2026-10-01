@@ -13,10 +13,15 @@ import tempfile
 import website_data
 
 
-DOC_ROOT = "website/src/lib/content/"
+DOC_ROOT = "src/lib/content/"
 GENERATED = DOC_ROOT + "reference/api/index.md"
 MAX_LINES = 1000
 MAX_PRS = 100
+# The documented code is in another repository. Every documentation revision
+# pins the OME commit it describes in CODE_REF; the setup action checks that
+# commit out, outside the documentation tree, at the path in NIGHTLY_DOCS_CODE.
+CODE_REPO = "ome-projects/ome"
+CODE_REF = "ome.ref"
 CODE_PATHS = ["cmd", "pkg", "internal", "charts", "config", "scheduler", "hack",
               "dockerfiles", "Makefile", "Makefile-deps.mk", "go.mod"]
 SLUG = r"[a-z0-9]+(?:-[a-z0-9]+)*"
@@ -33,6 +38,34 @@ def git(*args):
 
 def mutate_git(*args):
     subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *args], check=True)
+
+
+def code_dir():
+    return os.environ["NIGHTLY_DOCS_CODE"]
+
+
+def code_git(*args):
+    return run("git", "-C", code_dir(), "-c", "core.hooksPath=/dev/null", *args)
+
+
+def code_sha(base):
+    """Read the OME commit that a documentation revision pins."""
+    sha = git("show", f"{base}:{CODE_REF}")
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError(f"{CODE_REF} must hold one full OME commit SHA")
+    return sha
+
+
+def checkout_code(base):
+    """Keep the OME checkout at the commit pinned by a documentation revision."""
+    sha = code_sha(base)
+    if code_git("rev-parse", "HEAD") != sha:
+        try:
+            code_git("cat-file", "-e", sha + "^{commit}")
+        except subprocess.CalledProcessError:
+            code_git("fetch", "--no-tags", "origin", sha)
+        code_git("checkout", "--detach", sha)
+    return sha
 
 
 def pages(endpoint):
@@ -130,20 +163,22 @@ def covered(item, prs):
 def prepare(repo, output):
     # Full history, no moving date cutoff or success cursor: failures and capped
     # work stay eligible on the next night, including the initial docs backlog.
-    history = git("log", "--first-parent", "--format=%H %cs %s", "HEAD", "--", *CODE_PATHS)
+    code = checkout_code("HEAD")
+    history = code_git("log", "--first-parent", "--format=%H %cs %s", code, "--", *CODE_PATHS)
     sources = Path(output).parent / "nightly-docs-sources"
     sources.mkdir(exist_ok=True)
     for line in history.splitlines():
         sha = line.split()[0]
         with (sources / f"{sha}.patch").open("w") as patch:
-            subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "show",
+            subprocess.run(["git", "-C", code_dir(), "-c", "core.hooksPath=/dev/null", "show",
                             "--first-parent", "--no-ext-diff", "--no-textconv",
                             sha, "--", *CODE_PATHS], stdout=patch, check=True)
     import placement
     limit = int(os.getenv("MAX_PR_COUNT") or MAX_PRS)
     if not 1 <= limit <= MAX_PRS:
         raise ValueError("max_prs must be between 1 and 100")
-    context = {"base_sha": git("rev-parse", "HEAD"), "max_prs": limit,
+    context = {"base_sha": git("rev-parse", "HEAD"), "code_repo": CODE_REPO, "code_sha": code,
+               "max_prs": limit,
                "doc_inventory": placement.inventory("HEAD"), "dry_run": os.getenv("DRY_RUN") == "true",
                "code_history": history.splitlines(), "source_diffs": str(sources),
                "existing_prs": existing_prs(repo)}
@@ -329,7 +364,7 @@ def publish(item, repo, base, base_branch):
 
 ## Why we need it
 
-Source change: https://github.com/{repo}/commit/{item["source_sha"]}
+Source change: https://github.com/{CODE_REPO}/commit/{item["source_sha"]}
 
 {item["evidence"]}
 
@@ -343,9 +378,8 @@ Scope: **{item["area"]} / {item["concern"]}**. Other concerns are deferred.
 
 ## Checklist
 
-- [ ] Tests added/updated (if applicable)
-- [x] Docs updated (if applicable)
-- [ ] `make test` passes locally (not run; documentation only)
+- [x] Every commit is signed off (`git commit -s`)
+- [x] `pnpm lint && pnpm check && pnpm test && pnpm build` passes (run by the publisher on an isolated copy)
 '''
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md") as f:
         f.write(body)
@@ -379,7 +413,7 @@ def main():
         if args.command == "evidence":
             path = Path(os.environ["NIGHTLY_ITEM"])
             path.write_text(json.dumps(item) + "\n")
-            patch = git("show", "--first-parent", "--no-ext-diff", "--no-textconv", item["source_sha"])
+            patch = code_git("show", "--first-parent", "--no-ext-diff", "--no-textconv", item["source_sha"])
             path.with_name("nightly-docs-source.patch").write_text(patch + "\n")
         elif args.command == 'overlaps':
             import placement
