@@ -30,7 +30,7 @@ Run `pnpm lint && pnpm check && pnpm test && pnpm build` before submitting.
 - `src/lib/docs/` — the page registry, the content checks and the search index.
 - `src/lib/server/` — worker code: GitHub repository stats and the D1 `content_blocks` table.
 - `redirects.json` — maps each Hugo page in ome-projects/ome to the page that replaces it.
-- `ADOPTERS.md` — the adopters list of record. The home page's list in `src/lib/components/HomeWhy.svelte` mirrors it.
+- `src/lib/components/HomeWhy.svelte` — includes the home page's adopters list. It mirrors `ADOPTERS.md` in ome-projects/ome, which is the list of record.
 - `hack/nightly-docs/` — the nightly documentation automation, run by `.github/workflows/nightly-docs.yml`, `docs-pr-maintenance.yml` and `docs-pr-worker.yml`. It reads OME's code history from a checkout at `ome.ref` and opens one-concern documentation PRs here. Its `README.md` covers the design. After changing it, run `python3 -m unittest discover -s hack/nightly-docs -p '*_test.py'` (needs `hack/nightly-docs/maintenance-requirements.txt`).
 
 ## Checks that use OME's code
