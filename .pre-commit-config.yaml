@@ -1,0 +1,35 @@
+default_stages: [pre-commit, pre-push, manual]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-symlinks
+      - id: destroyed-symlinks
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        # The generated API reference is over 400 KB and grows with the API.
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: check-shebang-scripts-are-executable
+      - id: detect-private-key
+      - id: mixed-line-ending
+      - id: no-commit-to-branch
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        # The same words and pattern as ome-projects/ome, which the pages
+        # were first checked with. The pattern keeps the truncated CLI
+        # column labels in output samples.
+        args:
+          [
+            '-L',
+            'AfterAll,NotIn,OptIn,UpToDate,WithT,allReady,notin,rouge,trough',
+            '--ignore-regex',
+            '^TrafficMap (?:Admi|Trun)\.\.\.'
+          ]
+        exclude: ^pnpm-lock\.yaml$

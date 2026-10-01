@@ -87,7 +87,7 @@ export function checkRedirects(
 			errors.push(`${where}: "new" page ${entry.new} does not exist`);
 		} else if (entry.rewrittenFrom === null && page.status !== 'draft') {
 			errors.push(
-				`${where}: ${entry.new} is written, so set "rewrittenFrom" to the 8-character hash of the last commit that changed the old page (git log -1 --abbrev=8 --format=%h HEAD -- site/content/en/docs/${entry.old})`
+				`${where}: ${entry.new} is written, so set "rewrittenFrom" to the 8-character hash of the last commit that changed the old page (in a clone of ome-projects/ome: git log -1 --abbrev=8 --format=%h HEAD -- site/content/en/docs/${entry.old})`
 			);
 		} else if (entry.rewrittenFrom !== null && page.status === 'draft') {
 			errors.push(`${where}: ${entry.new} is a draft, so "rewrittenFrom" must be null`);

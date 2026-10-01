@@ -84,10 +84,10 @@ describe('docPageData', () => {
 	it('links written pages to GitHub', async () => {
 		const data = await docPageData(page('guides/deploy/a.md'), context);
 		expect(data.editUrl).toBe(
-			'https://github.com/ome-projects/ome/edit/main/website/src/lib/content/guides/deploy/a.md'
+			'https://github.com/ome-projects/ome-docs/edit/main/src/lib/content/guides/deploy/a.md'
 		);
 		expect(data.sourceUrl).toBe(
-			'https://raw.githubusercontent.com/ome-projects/ome/main/website/src/lib/content/guides/deploy/a.md'
+			'https://raw.githubusercontent.com/ome-projects/ome-docs/main/src/lib/content/guides/deploy/a.md'
 		);
 		expect(data.replaces).toEqual([]);
 	});

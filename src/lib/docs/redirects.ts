@@ -1,9 +1,9 @@
 import table from '../../../redirects.json';
 import { site } from '../config/site';
 
-/** One row of website/redirects.json, which maps each Hugo page to the page that replaces it. */
+/** One row of redirects.json, which maps each Hugo page to the page that replaces it. */
 export interface RedirectEntry {
-	/** Hugo page, relative to site/content/en/docs, such as `concepts/base_model.md`. */
+	/** Hugo page, relative to site/content/en/docs in ome-projects/ome, such as `concepts/base_model.md`. */
 	old: string;
 	/** Replacement, relative to src/lib/content, such as `concepts/models/base-models.md`. */
 	new: string;
