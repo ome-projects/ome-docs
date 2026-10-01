@@ -394,13 +394,13 @@ The observed state of the `FineTunedWeight`.
 
 ## `InferenceReplica` {#ome-io-v1beta1-InferenceReplica since=v1.3}
 
-InferenceReplica is the per-Component workload abstraction for
-OMENative-managed InferenceService Components. One InferenceReplica
-exists per (ISVC, Component) tuple. The ISVC controller writes the
-spec; the InferenceReplica controller writes the status.
+InferenceReplica is one pod set: N Instances of the same rendered pod
+templates with one revision history and one rollout. A projected replica
+exists per (InferenceService, Component) tuple and is named
+&lt;inferenceservice&gt;-&lt;component&gt;; a standalone replica is named by its
+creator.
 
-The scale subresource lets HPA/KEDA target the InferenceReplica
-directly rather than indirecting through the parent ISVC.
+The scale subresource lets HPA/KEDA target the InferenceReplica directly.
 
 
 <table class="doc-api-fields">
@@ -2893,6 +2893,42 @@ Details provide additional information or metadata about the benchmark job.
 </tbody>
 </table>
 
+### `CanaryFailure` {#ome-io-v1beta1-CanaryFailure}
+
+Used by [`CanaryStatus`](#ome-io-v1beta1-CanaryStatus).
+
+CanaryFailure is why and when a canary parked.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>reason</code></td>
+<td><a href="#ome-io-v1beta1-CanaryFailureReason"><code>CanaryFailureReason</code></a></td>
+<td>
+
+Reason names the gate that gave up.
+
+Allowed values: `CapacityTimeout`, `AnalysisStalled`, `StableRevisionMissing`.
+
+</td></tr>
+<tr><td><code>time</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta"><code>Time</code></a></td>
+<td>
+
+Time is when the canary parked.
+
+</td></tr>
+</tbody>
+</table>
+
+### `CanaryFailureReason` {#ome-io-v1beta1-CanaryFailureReason}
+
+Used by [`CanaryFailure`](#ome-io-v1beta1-CanaryFailure).
+
+CanaryFailureReason enumerates why a canary parked Failed.
+
+Underlying type: `string`.
+
 ### `CanaryStatus` {#ome-io-v1beta1-CanaryStatus}
 
 Used by [`ComponentStatusSpec`](#ome-io-v1beta1-ComponentStatusSpec), [`InferenceServiceStatus`](#ome-io-v1beta1-InferenceServiceStatus).
@@ -3032,6 +3068,28 @@ MetricResults is the most recent per-metric evaluation, for observability
 Promotion=Analysis.
 
 </td></tr>
+<tr><td><code>capacityWaitSince</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta"><code>Time</code></a></td>
+<td>
+
+CapacityWaitSince is when the current step&#39;s capacity gate became unmet.
+The ready timeout is measured from here and never from the step&#39;s soak
+anchor, so a long soak cannot spend the capacity budget and a capacity
+dip cannot restart the soak. Cleared once the step&#39;s capacity is met.
+
+</td></tr>
+<tr><td><code>failed</code></td>
+<td><a href="#ome-io-v1beta1-CanaryFailure"><code>CanaryFailure</code></a></td>
+<td>
+
+Failed records that the canary is parked at CurrentStep: the capacity
+gate stayed unmet past the ready timeout, analysis stayed inconclusive
+past the stall timeout, or a rollback found no stable revision to
+return to. While set the step machine does not run, the phase reads
+Failed and the stable revision keeps serving. Cleared by a re-arm
+toward a new target and by a rollback request.
+
+</td></tr>
 </tbody>
 </table>
 
@@ -3050,6 +3108,60 @@ floors. A zero current floor does not authorize deletion before traffic drains.
 <td>
 
 
+
+</td></tr>
+<tr><td><code>inventoryPending</code></td>
+<td><code>bool</code></td>
+<td>
+
+InventoryPending prevents unknown standing resources from becoming free
+migration capacity. It is cleared only by an identified member inventory.
+
+</td></tr>
+<tr><td><code>homeInputsPending</code></td>
+<td><code>bool</code></td>
+<td>
+
+HomeInputsPending holds movement when current full-policy inputs cannot
+be verified, while retaining the last accepted desired floors.
+
+</td></tr>
+<tr><td><code>raceCandidate</code></td>
+<td><code>bool</code></td>
+<td>
+
+RaceCandidate authorizes cleanup of a Single race copy after another
+candidate wins. A retained winner does not carry this permission.
+
+</td></tr>
+<tr><td><code>replacementStartedAt</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#microtime-v1-meta"><code>MicroTime</code></a></td>
+<td>
+
+ReplacementStartedAt persists the start of an authorized bounded probe.
+The configured replacement timeout is evaluated against this instant.
+
+</td></tr>
+<tr><td><code>matched</code></td>
+<td><code>bool</code></td>
+<td>
+
+Matched distinguishes a desired full-policy home from an outgoing home,
+including an affinity that matches every registration without terms.
+
+</td></tr>
+<tr><td><code>currentHome</code></td>
+<td><a href="#ome-io-v1beta1-PlacementHomePolicy"><code>PlacementHomePolicy</code></a></td>
+<td>
+
+CurrentHome retains the full policy authorized at a home through draining.
+
+</td></tr>
+<tr><td><code>desiredHome</code></td>
+<td><a href="#ome-io-v1beta1-PlacementHomePolicy"><code>PlacementHomePolicy</code></a></td>
+<td>
+
+DesiredHome is present for every intended full-policy home.
 
 </td></tr>
 <tr><td><code>matchingTerms</code></td>
@@ -3411,6 +3523,8 @@ Underlying type: `string`.
 Allowed values: `ControlPlane`, `Endpoint`.
 
 ### `ClusterAffinityTerm` {#ome-io-v1beta1-ClusterAffinityTerm}
+
+Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
 
 ClusterAffinityTerm selects WorkloadClusters by ANDing its requirements.
 Multiple terms form a union; a weight assigns replica shares to each match.
@@ -4062,7 +4176,7 @@ PairingProtocol values are equal; an empty value pairs with anything.
 
 ### `ComponentType` {#ome-io-v1beta1-ComponentType}
 
-Used by [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`MigrationHistoryEntry`](#ome-io-v1beta1-MigrationHistoryEntry), [`ProportionalPolicy`](#ome-io-v1beta1-ProportionalPolicy), [`RolloutCoordinationGroupStatus`](#ome-io-v1beta1-RolloutCoordinationGroupStatus), [`RolloutGroup`](#ome-io-v1beta1-RolloutGroup), [`RolloutRunTarget`](#ome-io-v1beta1-RolloutRunTarget).
+Used by [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`MigrationHistoryEntry`](#ome-io-v1beta1-MigrationHistoryEntry), [`PlacementComponentDemand`](#ome-io-v1beta1-PlacementComponentDemand), [`PlacementComponentFloor`](#ome-io-v1beta1-PlacementComponentFloor), [`ProportionalPolicy`](#ome-io-v1beta1-ProportionalPolicy), [`RolloutCoordinationGroupStatus`](#ome-io-v1beta1-RolloutCoordinationGroupStatus), [`RolloutGroup`](#ome-io-v1beta1-RolloutGroup), [`RolloutRunTarget`](#ome-io-v1beta1-RolloutRunTarget).
 
 ComponentType contains the different types of components of the service
 
@@ -5017,10 +5131,9 @@ first. Unset inherits the ServingRuntime&#39;s value, then true.
 
 Used by [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec).
 
-InferenceReplicaPacing is the per-replica projection of the active
-RolloutCoordinationGroup pacing. Mirrors the corresponding
-RollingUpdate subset so the projection is a verbatim
-copy.
+InferenceReplicaPacing is the rollout control written onto one replica: the
+partition that holds Instances back, a reserved disruption budget, and the
+revision to roll back to.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -5029,9 +5142,10 @@ copy.
 <td><code>int32</code></td>
 <td>
 
-Partition holds back updates for Instances whose index is less
-than Partition. Mirrors RollingUpdate.Partition. 0
-(the default) updates all Instances. Used for canary holds.
+Partition holds back updates: the Partition lowest-indexed Instances
+not yet on the target revision, skipping any already updating to it,
+keep their current revision. When set it takes precedence over
+lifecycle.updateStrategy.rollingUpdate.partition; nil defers to it.
 
 Minimum: `0`.
 
@@ -5040,21 +5154,21 @@ Minimum: `0`.
 <td><a href="https://pkg.go.dev/k8s.io/apimachinery/pkg/util/intstr#IntOrString"><code>IntOrString</code></a></td>
 <td>
 
-MaxUnavailable caps in-rollout disruption. Accepts either a
-raw count or a percent string. When nil, the InferenceReplica
-controller falls back to its own default budget.
+MaxUnavailable is reserved; setting it has no effect. Disruption during
+a rollout is paced by lifecycle.updateStrategy.rollingUpdate.maxUnavailable.
 
 </td></tr>
 <tr><td><code>rollbackToRevision</code></td>
 <td><code>string</code></td>
 <td>
 
-RollbackToRevision, when set, names a ControllerRevision the
-InferenceReplica must roll every Instance back to — overriding the
-rendered desired template with that revision&#39;s stored pod template (and
-using it as the update target). The InferenceService controller sets this
-during a canary rollback so the forward-roll machinery drains the canary
-pods back onto the stable revision. Empty in steady state.
+RollbackToRevision, when set, names a ControllerRevision the replica
+rolls every Instance back to: that revision&#39;s stored pod template
+becomes the update target while UpdateRevision keeps reporting the
+spec&#39;s own revision. The InferenceService controller sets it during a
+canary rollback; empty in steady state. If the named revision does not
+exist, the replica rolls to its spec. A revision this replica does not
+control is ignored and reported with a Warning event.
 
 </td></tr>
 </tbody>
@@ -5064,10 +5178,23 @@ pods back onto the stable revision. Empty in steady state.
 
 Used by [`InferenceReplica`](#ome-io-v1beta1-InferenceReplica).
 
-InferenceReplicaSpec is the desired state of one (ISVC, Component)
-workload. The InferenceService controller is the sole writer; the
-admission webhook rejects writes from other actors that lack the
-ome.io/controller-write annotation.
+InferenceReplicaSpec is the desired state of one pod set. Its fields fall
+into three groups:
+
+  - User fields describe the pod set itself: component, set at create and
+    immutable; the template source (runners, modelRef and runtimeRef),
+    replicas, minReadySeconds, topologyKey, topologySpread,
+    topologySpreadKey, lifecycle, revisionHistoryLimit and autoscaler. The
+    owner of the replica writes them: the InferenceService controller for
+    a projected replica, the creating user for a standalone one. Exactly
+    one template source: runners, or modelRef and/or runtimeRef; the
+    validating webhook enforces it.
+  - Rollout-control fields steer a rollout across pod sets: pacing, paused,
+    pauseMode and pairingProtocol. The InferenceService controller writes
+    them on the replicas it orchestrates; on a standalone replica its owner
+    sets them.
+  - Controller-only fields carry state only the InferenceService controller
+    can know: parentRef, placementExecution and placementReplicaLimit.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -5078,6 +5205,7 @@ ome.io/controller-write annotation.
 
 PlacementExecution is allocation authority projected from a derived service.
 Its generation must be observed before the control plane uses member evidence.
+Controller-only.
 
 </td></tr>
 <tr><td><code>placementReplicaLimit</code></td>
@@ -5087,45 +5215,82 @@ Its generation must be observed before the control plane uses member evidence.
 PlacementReplicaLimit reserves the largest replica count this component
 may request while placement pauses growth. Only a raised placement floor
 can increase this limit; autoscaler requests remain in Replicas.
+Controller-only.
 
 Minimum: `1`.
 
 </td></tr>
-<tr><td><code>parentRef</code> <span class="doc-api-required">Required</span></td>
+<tr><td><code>parentRef</code></td>
 <td><a href="#ome-io-v1beta1-ParentReference"><code>ParentReference</code></a></td>
 <td>
 
-ParentRef names the InferenceService that owns this replica.
-Set by the ISVC controller at create time; immutable thereafter.
+ParentRef names the InferenceService that projects this replica. The
+InferenceService controller sets it at create time and it is immutable
+thereafter; a standalone replica omits it. Pod, Service and
+ControllerRevision names derive from the parent name when set and from
+the replica&#39;s own name otherwise. Controller-only.
 
 </td></tr>
 <tr><td><code>component</code> <span class="doc-api-required">Required</span></td>
 <td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
 <td>
 
-Component is one of engine | decoder | router. Immutable;
-moving a workload between Component slots requires recreating
-the InferenceReplica.
+Component is the role this pod set fills: engine | decoder | router.
+Immutable; moving a workload between roles requires recreating the
+InferenceReplica.
+
+</td></tr>
+<tr><td><code>modelRef</code></td>
+<td><a href="#ome-io-v1beta1-ModelRef"><code>ModelRef</code></a></td>
+<td>
+
+ModelRef names the BaseModel (in the replica&#39;s namespace) or
+ClusterBaseModel this replica serves. With it set the controller renders
+the pods from the model and the runtime: the runtime named by RuntimeRef,
+or the runtime selected for the model when RuntimeRef is absent. Fine-tuned
+weights and overlays render as they do on an InferenceService. Exclusive
+with Runners. User field.
+
+</td></tr>
+<tr><td><code>runtimeRef</code></td>
+<td><a href="#ome-io-v1beta1-ServingRuntimeRef"><code>ServingRuntimeRef</code></a></td>
+<td>
+
+RuntimeRef names the ServingRuntime (in the replica&#39;s namespace) or
+ClusterServingRuntime whose piece for Component this replica renders.
+The runtime must declare that piece. Without ModelRef the piece renders
+as-is, with no model mounted. The runtime&#39;s pod spec places the pods
+(node selector, affinity, resources); a second accelerator pool is a
+second runtime. A pin (autoSync=false, revision) is not honored: the
+live runtime renders, and the validating webhook rejects a pinned
+reference. Exclusive with Runners. User field.
 
 </td></tr>
 <tr><td><code>replicas</code></td>
 <td><code>int32</code></td>
 <td>
 
-Replicas is the desired Instance count. The HPA / KEDA scale
-subresource writes this field. Defaults to 1 when omitted.
+Replicas is the desired Instance count; nil or 0 runs one Instance.
+Whatever targets the scale subresource (HPA, KEDA or an external
+scaler) writes this field. On a projected replica the InferenceService
+controller writes the component&#39;s minReplicas (at least 1) at create,
+and thereafter while no autoscaler owns the count or the stored count
+is nil or 0.
+
+Minimum: `0`.
 
 </td></tr>
 <tr><td><code>minReadySeconds</code></td>
 <td><code>int32</code></td>
 <td>
 
-MinReadySeconds is the minimum time a newly Ready pod must stay
-Ready before it counts as Available, projected from the parent
-ISVC&#39;s spec.&lt;component&gt;.lifecycle.minReadySeconds. The workload
-engine paces rollout drains and promotions on Available pods and
-counts only Available pods in availableReplicas. 0 means Available
-as soon as Ready.
+MinReadySeconds is the minimum time a newly Ready pod must stay Ready
+before it counts as Available. The workload engine paces rollout
+drains and promotions on Available pods and counts only Available pods
+in availableReplicas; 0 means Available as soon as Ready. On a
+projected replica the InferenceService controller copies the
+component&#39;s effective lifecycle.minReadySeconds: the InferenceService&#39;s
+value, else the runtime&#39;s, else the operator&#39;s deploy default.
 
 Minimum: `0`.
 
@@ -5134,25 +5299,24 @@ Minimum: `0`.
 <td><code>string</code></td>
 <td>
 
-TopologyKey is the resolved gang co-location node-label key for this
-Component, projected verbatim from the effective ISVC↔runtime
-component spec (spec.&lt;component&gt;.topologyKey, else the runtime
-component-config value). When set on a multi-node Component, the
-InferenceReplica controller auto-generates the per-Instance
-worker→leader podAffinity that co-locates every worker onto its
-gang&#39;s leader on a node sharing this label value. Nil means no
-auto-generated gang affinity.
+TopologyKey is the gang co-location node-label key for this Component.
+When set on a multi-node Component, the InferenceReplica controller
+auto-generates the per-Instance worker→leader podAffinity that
+co-locates every worker onto its gang&#39;s leader on a node sharing this
+label value. Nil means no auto-generated gang affinity. On a projected
+replica the value is the effective InferenceService or runtime
+component setting.
 
 </td></tr>
 <tr><td><code>topologySpread</code></td>
 <td><a href="#ome-io-v1beta1-TopologySpreadPolicy"><code>TopologySpreadPolicy</code></a></td>
 <td>
 
-TopologySpread is the resolved spreading policy for this
-Component, projected verbatim from the effective ISVC↔runtime
-component spec. The InferenceReplica controller renders it as a
-topologySpreadConstraint on each Instance&#39;s anchor pod; nil keeps
-pure bin-packing.
+TopologySpread is the spreading policy for this Component. The
+InferenceReplica controller renders it as a topologySpreadConstraint on
+each Instance&#39;s anchor pod; nil keeps pure bin-packing. On a projected
+replica the value is the effective InferenceService or runtime
+component setting.
 
 Allowed values: `Preferred`, `Required`.
 
@@ -5161,40 +5325,38 @@ Allowed values: `Preferred`, `Required`.
 <td><code>string</code></td>
 <td>
 
-TopologySpreadKey is the resolved fault-domain node-label key
-TopologySpread spreads across; nil defaults to TopologyKey.
+TopologySpreadKey is the fault-domain node-label key TopologySpread
+spreads across; nil defaults to TopologyKey. On a projected replica the
+value is the effective InferenceService or runtime component setting.
 
 </td></tr>
 <tr><td><code>pairingProtocol</code></td>
 <td><code>string</code></td>
 <td>
 
-PairingProtocol is the engine↔decoder wire-compatibility token projected
-from spec.rollout.pairingProtocol on the parent InferenceService. It is
-folded into the revision hash (a change mints a new revision) and stamped
-as the ome.io/pairing-protocol label on rendered pods. Projected only
-onto engine and decoder — the router does not participate in P/D pairing
-and must not re-roll on a protocol change. Nil pairs with anything.
+PairingProtocol is the engine/decoder wire-compatibility token. It is
+folded into the revision hash (a change mints a new revision) and
+stamped as the ome.io/pairing-protocol label on rendered pods; nil pairs
+with anything. Only engine and decoder replicas pair on it; a change on
+any replica still mints a new revision. On a projected replica the
+InferenceService controller copies spec.rollout.pairingProtocol onto
+the engine and decoder replicas and never onto the router, which must
+not re-roll on a protocol change.
 
 Maximum length: `63`. Pattern: `^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$`.
 
 </td></tr>
-<tr><td><code>runners</code> <span class="doc-api-required">Required</span></td>
+<tr><td><code>runners</code></td>
 <td><a href="#ome-io-v1beta1-Runner"><code>[]Runner</code></a></td>
 <td>
 
-Runners is the fully-rendered set of pod templates per Instance.
-MUST be non-empty. Single-pod Instances have one Runner with
-Name=&#34;default&#34; and Size=1; multi-node Instances typically have
-Name=&#34;leader&#34; (Size=1) plus Name=&#34;worker&#34; (Size=N).
+Runners is the fully-rendered set of pod templates per Instance. A
+single-pod Instance has one Runner named &#34;default&#34; with Size=1; a
+multi-node Instance has &#34;leader&#34; (Size=1) and &#34;worker&#34; (Size=N). Required
+unless ModelRef or RuntimeRef is set, in which case it must be absent: the
+controller renders the runners from the refs and never stores them. The
+controller treats each Runner.Template as opaque input. User field.
 
-The InferenceService controller is the sole writer of this
-field. The InferenceReplica controller treats each
-Runner.Template as opaque input (same contract
-appsv1.Deployment.spec.template uses).
-
-
-Minimum items: `1`.
 
 </td></tr>
 <tr><td><code>lifecycle</code></td>
@@ -5202,34 +5364,42 @@ Minimum items: `1`.
 <td>
 
 Lifecycle holds the OMENative lifecycle policies (RestartPolicy,
-UpdateStrategy, ReadyPolicy, InstanceReadyTimeout,
-MigrationPolicy). Reuses the existing LifecycleSpec
-type so the projection from ISVC.spec.&lt;component&gt;.lifecycle is
-a verbatim copy.
+UpdateStrategy, ReadyPolicy, InstanceReadyTimeout, MigrationPolicy).
+An unset policy takes the fixed fallback its LifecycleSpec field
+names; an unset or zero instanceReadyTimeout falls back to the
+operator&#39;s lifecycle.instanceReadyTimeout on every replica, and with
+neither set operations open with no deadline. The operator&#39;s deploy
+defaults are applied only to a projected replica, before the copy.
+lifecycle.minReadySeconds is not read on a replica and is rejected on
+a standalone one; set spec.minReadySeconds. On a projected replica
+this is the component&#39;s effective lifecycle: the InferenceService&#39;s
+value, else the runtime&#39;s, with unset fields filled from the
+operator&#39;s deploy defaults.
 
 </td></tr>
 <tr><td><code>pacing</code></td>
 <td><a href="#ome-io-v1beta1-InferenceReplicaPacing"><code>InferenceReplicaPacing</code></a></td>
 <td>
 
-Pacing is the InferenceService controller&#39;s projection of the
-active RolloutCoordinationGroup pacing for this replica.
-Written by the ISVC controller; read by the InferenceReplica
-controller. Includes Partition (canary hold) and MaxUnavailable
-(rollout budget). Nil means independent rollout.
+Pacing is rollout control written onto this replica: the canary
+partition, the rollback target and a reserved disruption budget. The
+InferenceService controller writes it on the replicas it orchestrates;
+on a standalone replica its owner sets it. Nil means the replica rolls
+independently.
 
 </td></tr>
 <tr><td><code>autoscaler</code></td>
 <td><a href="#ome-io-v1beta1-ComponentAutoscaler"><code>ComponentAutoscaler</code></a></td>
 <td>
 
-Autoscaler is the live autoscaler configuration that downstream
-scalers (HPA / KEDA / external) target. The ISVC controller projects
-the per-Component autoscaler defaults from ISVC.spec.&lt;component&gt;.autoscaler
-onto the corresponding IR at create time + on subsequent reconciles.
-External autoscalers may also write directly
-to this field via the /scale subresource without going through the
-ISVC controller.
+Autoscaler is the autoscaler configuration downstream scalers (HPA /
+KEDA / External) target. Only the InferenceService controller creates
+a scaler from it, so on a standalone replica the HPA and KEDA classes
+are rejected and an External scaler targets the scale subresource
+directly. On a projected replica the InferenceService controller
+writes the resolved per-Component autoscaler, replacing the whole
+block, whenever that autoscaler resolves; while an autoscaler policy
+fails to render, the stored block is kept as the last known good one.
 
 </td></tr>
 <tr><td><code>paused</code></td>
@@ -5267,15 +5437,13 @@ Allowed values: `Recover`, `Freeze`.
 <td><code>int32</code></td>
 <td>
 
-RevisionHistoryLimit caps how many non-live ControllerRevisions
-the InferenceReplica controller retains for this replica,
-projected by the InferenceService controller from the parent
-ISVC&#39;s ome.io/revision-history-limit annotation. Live revisions
-(CurrentRevision / UpdateRevision and every per-Instance
-running/target revision) are never deleted regardless of the
-limit. Nil falls back to the operator-level
-lifecycle.revisionHistoryLimit config; when that is also absent,
-no revisions are pruned.
+RevisionHistoryLimit caps how many non-live ControllerRevisions the
+InferenceReplica controller retains. Live revisions (CurrentRevision /
+UpdateRevision and every per-Instance running/target revision) are never
+deleted regardless of the limit. Nil falls back to the operator-level
+lifecycle.revisionHistoryLimit config; when that is also absent, no
+revisions are pruned. On a projected replica the InferenceService
+controller copies the parent&#39;s ome.io/revision-history-limit annotation.
 
 Minimum: `1`.
 
@@ -5544,6 +5712,8 @@ Used by [`InferenceService`](#ome-io-v1beta1-InferenceService).
 InferenceServiceSpec is the desired state of an InferenceService.
 
 Validation: spec.routing.capacityFactors and deprecated spec.placement.capacityFactors must not both be set.
+
+Validation: ClusterAffinity placement policy cannot be removed; drain and recreate the service to use Legacy.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -7574,7 +7744,7 @@ Underlying type: `string`.
 
 ### `ModelRef` {#ome-io-v1beta1-ModelRef}
 
-Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec).
+Used by [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec).
 
 
 
@@ -8124,6 +8294,8 @@ names without re-reading the metadata field.
 
 Name is the name of the parent InferenceService.
 
+Minimum length: `1`.
+
 </td></tr>
 </tbody>
 </table>
@@ -8223,6 +8395,14 @@ used to normalize one member into nominal whole-replica capacity.
 
 
 </td></tr>
+<tr><td><code>demandContract</code></td>
+<td><a href="#ome-io-v1beta1-PlacementDemandContract"><code>PlacementDemandContract</code></a></td>
+<td>
+
+DemandContract binds normalization to the member rendering authorized by
+this allocation. Its fingerprint must equal DemandFingerprint.
+
+</td></tr>
 <tr><td><code>replicas</code></td>
 <td><code>int64</code></td>
 <td>
@@ -8235,6 +8415,96 @@ Minimum: `0`.
 <td><a href="#ome-io-v1beta1-PlacementCapacityPool"><code>[]PlacementCapacityPool</code></a></td>
 <td>
 
+
+</td></tr>
+</tbody>
+</table>
+
+### `PlacementComponentDemand` {#ome-io-v1beta1-PlacementComponentDemand}
+
+Used by [`PlacementDemandContract`](#ome-io-v1beta1-PlacementDemandContract).
+
+PlacementComponentDemand identifies one component&#39;s rendered replica shape.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>component</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
+<td>
+
+
+Allowed values: `engine`, `decoder`.
+
+</td></tr>
+<tr><td><code>renderingHash</code> <span class="doc-api-required">Required</span></td>
+<td><code>string</code></td>
+<td>
+
+RenderingHash includes pod shapes, worker count, mode and RuntimeClasses.
+
+Pattern: `^[a-f0-9]{64}$`.
+
+</td></tr>
+</tbody>
+</table>
+
+### `PlacementComponentFloor` {#ome-io-v1beta1-PlacementComponentFloor}
+
+Used by [`PlacementExecutionPolicy`](#ome-io-v1beta1-PlacementExecutionPolicy), [`PlacementHomePolicy`](#ome-io-v1beta1-PlacementHomePolicy).
+
+PlacementComponentFloor records a resolved component&#39;s guaranteed count.
+Engine and Decoder use equal whole-replica floors; Router is independent.
+Zero permits steady scale-to-zero; movement requires positive floors.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>component</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
+<td>
+
+
+Allowed values: `engine`, `decoder`, `router`.
+
+</td></tr>
+<tr><td><code>replicas</code> <span class="doc-api-required">Required</span></td>
+<td><code>int32</code></td>
+<td>
+
+
+Minimum: `0`.
+
+</td></tr>
+</tbody>
+</table>
+
+### `PlacementDemandContract` {#ome-io-v1beta1-PlacementDemandContract}
+
+Used by [`PlacementCapacitySample`](#ome-io-v1beta1-PlacementCapacitySample), [`PlacementExecutionPolicy`](#ome-io-v1beta1-PlacementExecutionPolicy).
+
+PlacementDemandContract binds component rendering to normalized unit demand.
+Router is excluded because its replicas follow a per-home policy.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>fingerprint</code> <span class="doc-api-required">Required</span></td>
+<td><code>string</code></td>
+<td>
+
+Fingerprint identifies the complete resolved resource/flavor demand.
+
+Pattern: `^[a-f0-9]{64}$`.
+
+</td></tr>
+<tr><td><code>components</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-PlacementComponentDemand"><code>[]PlacementComponentDemand</code></a></td>
+<td>
+
+Components includes exactly the declared Engine/Decoder components.
+
+Minimum items: `1`. Maximum items: `2`.
 
 </td></tr>
 </tbody>
@@ -8287,19 +8557,97 @@ PauseSurge prevents new surplus-producing operations while existing
 operations retain their reservations and may finish cleanup.
 
 </td></tr>
+<tr><td><code>demand</code></td>
+<td><a href="#ome-io-v1beta1-PlacementDemandContract"><code>PlacementDemandContract</code></a></td>
+<td>
+
+Demand requires member rendering to match the accepted normalization
+inputs before a component can project workloads. Absent for static plans.
+
+</td></tr>
+<tr><td><code>replicaFloors</code></td>
+<td><a href="#ome-io-v1beta1-PlacementComponentFloor"><code>[]PlacementComponentFloor</code></a></td>
+<td>
+
+ReplicaFloors binds the full per-home policy to the floors accepted by
+placement. Runtime changes cannot expand a paused placement reservation.
+
+Minimum items: `1`. Maximum items: `3`.
+
+</td></tr>
+</tbody>
+</table>
+
+### `PlacementHomePolicy` {#ome-io-v1beta1-PlacementHomePolicy}
+
+Used by [`CandidateAllocationStatus`](#ome-io-v1beta1-CandidateAllocationStatus).
+
+PlacementHomePolicy records the full component floors of one retained home.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>inputDigest</code></td>
+<td><code>string</code></td>
+<td>
+
+InputDigest binds these resolved floors to the accepted source intent.
+
+</td></tr>
+<tr><td><code>replicaFloors</code></td>
+<td><a href="#ome-io-v1beta1-PlacementComponentFloor"><code>[]PlacementComponentFloor</code></a></td>
+<td>
+
+
+Minimum items: `1`. Maximum items: `3`.
+
+</td></tr>
+</tbody>
+</table>
+
+### `PlacementLegacyFields` {#ome-io-v1beta1-PlacementLegacyFields}
+
+Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
+
+PlacementLegacyFields records obsolete fields whose zero values would be omitted.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Requirements</code> <span class="doc-api-required">Required</span></td>
+<td><code>bool</code></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>ClusterSelector</code> <span class="doc-api-required">Required</span></td>
+<td><code>bool</code></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>CapacityFactors</code> <span class="doc-api-required">Required</span></td>
+<td><code>bool</code></td>
+<td>
+
+
+
+</td></tr>
 </tbody>
 </table>
 
 ### `PlacementMode` {#ome-io-v1beta1-PlacementMode}
 
-Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec), [`TrafficMapSpec`](#ome-io-v1beta1-TrafficMapSpec).
+Used by [`PlacementPlanStatus`](#ome-io-v1beta1-PlacementPlanStatus), [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec), [`TrafficMapSpec`](#ome-io-v1beta1-TrafficMapSpec).
 
 PlacementMode is the cardinality of a multi-cluster placement: how many
 workload clusters end up serving the InferenceService.
 
 Underlying type: `string`.
 
-Allowed values: `Single`, `All`, `Split`.
+Allowed values: `Single`, `All`, `Split`, `SplitByCapacity`.
 
 ### `PlacementPhase` {#ome-io-v1beta1-PlacementPhase}
 
@@ -8326,6 +8674,39 @@ Original assignments remain fixed throughout a transition, including retargets.
 <td>
 
 
+
+</td></tr>
+<tr><td><code>mode</code></td>
+<td><a href="#ome-io-v1beta1-PlacementMode"><code>PlacementMode</code></a></td>
+<td>
+
+Mode identifies the execution semantics of this accepted plan.
+
+Allowed values: `Single`, `All`, `Split`, `SplitByCapacity`.
+
+</td></tr>
+<tr><td><code>winner</code></td>
+<td><code>string</code></td>
+<td>
+
+Winner commits the admitted Single home before race losers are removed.
+Empty means the persisted Single admission race has not selected a home.
+
+</td></tr>
+<tr><td><code>singleMove</code></td>
+<td><a href="#ome-io-v1beta1-PlacementSingleMoveStatus"><code>PlacementSingleMoveStatus</code></a></td>
+<td>
+
+SingleMove retains bounded replacement-race state until the old home and
+losing probes have been removed. Winner remains the serving home.
+
+</td></tr>
+<tr><td><code>adoptionDigest</code></td>
+<td><code>string</code></td>
+<td>
+
+AdoptionDigest fixes the initial intent while standing homes are being
+inventoried. A changed intent cannot expand an incomplete inventory.
 
 </td></tr>
 <tr><td><code>revision</code></td>
@@ -8405,77 +8786,140 @@ Minimum: `0`.
 </tbody>
 </table>
 
-### `PlacementSpec` {#ome-io-v1beta1-PlacementSpec}
+### `PlacementPolicy` {#ome-io-v1beta1-PlacementPolicy}
 
-Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec).
+Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
 
-PlacementSpec declares how the control plane selects the workload clusters an
-InferenceService is placed onto, and how many of them serve it. It subsumes the
-legacy ome.io/accelerator-requirements and ome.io/cluster-selector annotations
-in a typed, schema-validated form; when this field is nil the control plane
-still honors those annotations for backward compatibility.
+PlacementPolicy selects the matching and allocation contract.
+
+Underlying type: `string`.
+
+Allowed values: `Legacy`, `ClusterAffinity`.
+
+### `PlacementSingleMoveStatus` {#ome-io-v1beta1-PlacementSingleMoveStatus}
+
+Used by [`PlacementPlanStatus`](#ome-io-v1beta1-PlacementPlanStatus).
+
+PlacementSingleMoveStatus separates replacement admission from serving handoff.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
+<tr><td><code>selected</code></td>
+<td><code>string</code></td>
+<td>
+
+Selected records the admitted replacement while it becomes ready and routable.
+
+</td></tr>
+<tr><td><code>cursor</code></td>
+<td><code>string</code></td>
+<td>
+
+Cursor identifies the last nominated replacement for fair bounded retries.
+
+</td></tr>
+</tbody>
+</table>
+
+### `PlacementSpec` {#ome-io-v1beta1-PlacementSpec}
+
+Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec).
+
+PlacementSpec declares multi-cluster intent. Policy omission preserves the
+legacy selector and allocation contract, including its mode defaults.
+
+Validation: ClusterAffinity requires an explicit mode.
+
+Validation: replacementTimeout requires ClusterAffinity Single placement.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>policy</code></td>
+<td><a href="#ome-io-v1beta1-PlacementPolicy"><code>PlacementPolicy</code></a></td>
+<td>
+
+Policy explicitly opts into ClusterAffinity semantics. Omission is Legacy.
+ClusterAffinity cannot be removed from an existing service; migrating back
+requires draining and recreating the source and its derived workloads.
+
+</td></tr>
 <tr><td><code>mode</code></td>
 <td><a href="#ome-io-v1beta1-PlacementMode"><code>PlacementMode</code></a></td>
 <td>
 
-Mode is the placement cardinality: Single (one cluster), All (every
-candidate), or Split (replicas distributed across clusters). Defaults to
-Single. All and Split are rejected by admission on a control plane that
-does not implement them.
+Mode is required for ClusterAffinity. Legacy omission means Single.
 
-Default: `Single`.
+</td></tr>
+<tr><td><code>clusterAffinity</code></td>
+<td><a href="#ome-io-v1beta1-ClusterAffinityTerm"><code>[]ClusterAffinityTerm</code></a></td>
+<td>
+
+ClusterAffinity ORs terms whose requirements are ANDed. Requires the
+ClusterAffinity policy; omission then matches every registration.
+An explicit empty or null list is invalid.
+
+Minimum items: `1`. Maximum items: `64`.
+
+</td></tr>
+<tr><td><code>maxSurge</code></td>
+<td><code>int32</code></td>
+<td>
+
+MaxSurge is the whole-replica allowance shared by placement transitions
+and local rollout surge. Omission blocks disruptive movement between homes.
+
+Minimum: `0`.
+
+</td></tr>
+<tr><td><code>replacementTimeout</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#duration-v1-meta"><code>Duration</code></a></td>
+<td>
+
+ReplacementTimeout bounds a non-admitting probe during a healthy Single
+move. Omission retains pending probes; a positive duration allows rotation.
+
+Validation: replacementTimeout must be a positive duration.
+
+</td></tr>
+<tr><td><code>-</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-PlacementLegacyFields"><code>PlacementLegacyFields</code></a></td>
+<td>
+
+LegacyFields retains explicit zero-valued obsolete fields during JSON round trips.
+It is serialization bookkeeping and is not a wire field.
 
 </td></tr>
 <tr><td><code>requirements</code></td>
 <td><code>string</code></td>
 <td>
 
-Requirements is the intrinsic capability selector a candidate workload
-cluster MUST satisfy, expressed as a Kubernetes label-selector string
-matched against WorkloadCluster labels plus the virtual, immutable
-metadata.name key (e.g. &#34;accelerator in (gb300, tpu7x)&#34;). It is the
-structured equivalent of the ome.io/accelerator-requirements annotation.
-Empty means no intrinsic requirement.
+Requirements is a Legacy label selector, ANDed with ClusterSelector.
+Deprecated: opt into ClusterAffinity and use clusterAffinity.
 
 </td></tr>
 <tr><td><code>clusterSelector</code></td>
 <td><code>string</code></td>
 <td>
 
-ClusterSelector is an optional operator-imposed routing overlay
-(label-selector string) AND-ed onto Requirements to further narrow
-candidates. It can select WorkloadCluster labels (e.g. &#34;provider=cloud-a&#34;)
-or immutable object names (e.g. &#34;metadata.name in (cluster-a,cluster-c)&#34;).
-Structured equivalent of the ome.io/cluster-selector annotation.
+ClusterSelector is a Legacy selector over labels and virtual metadata.name.
+Deprecated: opt into ClusterAffinity and use clusterAffinity.
 
 </td></tr>
 <tr><td><code>split</code></td>
 <td><a href="#ome-io-v1beta1-SplitSpec"><code>SplitSpec</code></a></td>
 <td>
 
-Split tunes Split mode (distributing replicas across clusters). Only
-consulted when Mode is Split; ignored otherwise. Nil means Split defaults:
-distribute the engine&#39;s minReplicas, packed onto the fewest clusters.
+Split provides the requested floor and optional per-home ceiling for
+Split and SplitByCapacity. ClusterAffinity rejects it in other modes.
 
 </td></tr>
 <tr><td><code>capacityFactors</code></td>
 <td><a href="https://pkg.go.dev/k8s.io/apimachinery/pkg/api/resource#Quantity"><code>map[string]Quantity</code></a></td>
 <td>
 
-CapacityFactors overrides the per-replica relative serving capacity of
-named workload clusters, keyed by WorkloadCluster name. It weights traffic
-for heterogeneous hardware where one cluster&#39;s replica serves more (or less)
-than another&#39;s: a home&#39;s routed share scales with its admitted replicas
-times this factor. A quantity of &#34;2&#34; means each replica on that cluster
-carries twice the share of a factor-1 replica; &#34;500m&#34; means half. A cluster
-absent from the map (or the whole field unset) uses the identity factor 1.
-This is a routing weight only — it does not influence placement or how many
-replicas a cluster admits.
-
+CapacityFactors is the Legacy alias for routing capacity factors.
 Deprecated: use spec.routing.capacityFactors.
 
 </td></tr>
@@ -11067,7 +11511,7 @@ Default to false.
 
 ### `ServingRuntimeRef` {#ome-io-v1beta1-ServingRuntimeRef}
 
-Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec).
+Used by [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec).
 
 
 
@@ -11314,16 +11758,50 @@ would pin if the inline progression were removed.
 </tbody>
 </table>
 
-### `SplitSpec` {#ome-io-v1beta1-SplitSpec}
+### `SplitLegacyFields` {#ome-io-v1beta1-SplitLegacyFields}
 
-Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
+Used by [`SplitSpec`](#ome-io-v1beta1-SplitSpec).
 
-SplitSpec tunes how Split mode distributes replicas across candidate
-clusters. All fields are optional and degrade to the documented defaults.
+SplitLegacyFields records obsolete fields whose zero values would be omitted.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
+<tr><td><code>Spread</code> <span class="doc-api-required">Required</span></td>
+<td><code>bool</code></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>MinReplicasPerCluster</code> <span class="doc-api-required">Required</span></td>
+<td><code>bool</code></td>
+<td>
+
+
+
+</td></tr>
+</tbody>
+</table>
+
+### `SplitSpec` {#ome-io-v1beta1-SplitSpec}
+
+Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
+
+SplitSpec declares the fleet floor and optional local ceiling. The floor
+falls back only to an explicitly declared positive engine.minReplicas.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>-</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-SplitLegacyFields"><code>SplitLegacyFields</code></a></td>
+<td>
+
+LegacyFields retains explicit zero-valued obsolete fields during JSON round trips.
+It is serialization bookkeeping and is not a wire field.
+
+</td></tr>
 <tr><td><code>replicas</code></td>
 <td><code>int32</code></td>
 <td>
@@ -11334,36 +11812,34 @@ floor) — the count OME actually guarantees running and thus the one worth
 spreading. maxReplicas is deliberately NOT used (it is an autoscaling
 ceiling that stays a per-home local concern).
 
+Minimum: `1`.
+
 </td></tr>
 <tr><td><code>spread</code></td>
 <td><code>bool</code></td>
 <td>
 
-Spread selects the apportionment policy. False (default) is Packed: fan out
-in preference order and fill the fewest clusters the fleet&#39;s quota forces
-(better locality, fewer endpoint backends). True is Balanced: apportion
-~evenly (ceil(N/candidates)) so replicas spread across more clusters
-(blast-radius resilience over locality).
+Spread requests ceil(replicas/candidates) on each Legacy candidate.
+False uses admission-driven packing in candidate name order.
+Deprecated: ClusterAffinity uses exact shares and optional affinity weights.
 
 </td></tr>
 <tr><td><code>maxReplicasPerCluster</code></td>
 <td><code>int32</code></td>
 <td>
 
-MaxReplicasPerCluster caps how many replicas one cluster may hold. It bounds
-the over-request the fractional fan-out makes, and — combined with Spread —
-is the lever that forces the fill to move on before a cluster is full
-(deliberate spread without reading capacity). Zero means no cap.
+MaxReplicasPerCluster is an optional local ceiling. ClusterAffinity holds
+plans exceeding it; Legacy clips requests to it. Zero leaves it uncapped.
+
+Minimum: `0`.
 
 </td></tr>
 <tr><td><code>minReplicasPerCluster</code></td>
 <td><code>int32</code></td>
 <td>
 
-MinReplicasPerCluster is the anti-sliver floor: a home that admits fewer
-than this is dropped and its replicas returned to the deficit, so the
-placement does not keep a home serving a tiny, uneconomical fraction. Zero
-keeps any home that admitted &gt;=1.
+MinReplicasPerCluster discards Legacy homes admitted below this count.
+Deprecated: ClusterAffinity exact shares cannot discard a small admission.
 
 </td></tr>
 </tbody>
