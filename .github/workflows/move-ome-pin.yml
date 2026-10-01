@@ -1,0 +1,143 @@
+name: Move the OME Pin
+
+# The nightly documents ome-projects/ome at the commit in ome.ref, and the
+# Website workflow checks every pull request against it. This workflow opens
+# the pull request that moves the pin to OME's newest commit and regenerates
+# the API reference. A maintainer merges it, like any other pull request.
+
+on:
+  schedule:
+    - cron: '17 15 * * *' # 15:17 UTC daily, ahead of the nightly at 09:23 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Regenerate and validate without pushing a branch or opening a PR
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+concurrency:
+  group: move-ome-pin
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    # Scheduled runs are opt-in through NIGHTLY_DOCS_ENABLED, like the nightly
+    # they serve. Manual dispatch works without it.
+    if: >-
+      github.repository == 'ome-projects/ome-docs'
+      && (github.event_name == 'workflow_dispatch'
+          || (vars.NIGHTLY_DOCS_ENABLED == 'true'
+              && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      needed: ${{ steps.plan.outputs.needed }}
+      target: ${{ steps.plan.outputs.target }}
+      base_sha: ${{ steps.baseline.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: docs
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin the default-branch documentation baseline
+        id: baseline
+        working-directory: docs
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]; then
+            echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=$(git rev-parse "refs/remotes/origin/$DEFAULT_BRANCH")" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Compare the pin with OME's newest commit
+        id: plan
+        working-directory: docs
+        # Only this step reads the GitHub API. The steps below run OME's
+        # Makefile and generator, which get no token.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ steps.baseline.outputs.sha }}
+        run: python3 hack/nightly-docs/move_pin.py plan
+      - uses: actions/checkout@v7
+        if: steps.plan.outputs.needed == 'true'
+        with:
+          repository: ome-projects/ome
+          ref: ${{ steps.plan.outputs.target }}
+          path: ome
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        if: steps.plan.outputs.needed == 'true'
+        with:
+          go-version-file: ome/go.mod
+          cache: true
+          cache-dependency-path: ome/go.sum
+      - name: Regenerate the API reference
+        if: steps.plan.outputs.needed == 'true'
+        # The commands of the Website workflow's API reference check. genref
+        # finds its templates in the working directory and has to run inside
+        # OME's Go module.
+        working-directory: ome
+        run: |
+          make genref
+          cd hack/genref/website
+          ../../../bin/genref -c ../config.yaml -o "$RUNNER_TEMP/ome-pin"
+          # genref logs a package or template error and still exits 0.
+          if [ ! -s "$RUNNER_TEMP/ome-pin/ome.v1beta1.md" ]; then
+            echo "::error title=API reference::genref wrote no page; see its log above."
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: steps.plan.outputs.needed == 'true'
+        with:
+          name: ome-pin
+          path: ${{ runner.temp }}/ome-pin/ome.v1beta1.md
+          if-no-files-found: error
+          retention-days: 2
+
+  publish:
+    needs: generate
+    if: needs.generate.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BASE_SHA: ${{ needs.generate.outputs.base_sha }}
+      BASE_BRANCH: ${{ github.event.repository.default_branch }}
+      TARGET_SHA: ${{ needs.generate.outputs.target }}
+      DRY_RUN: ${{ inputs.dry_run == true }}
+    steps:
+      # Only data crosses the job boundary: one commit SHA and one generated
+      # page. This job holds the write token and runs none of OME's code.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/nightly-docs-setup
+        with:
+          export-api-key: 'false'
+          checkout-code: 'false'
+          source-sha: ${{ needs.generate.outputs.base_sha }}
+      - uses: actions/download-artifact@v5
+        with:
+          name: ome-pin
+          path: ${{ runner.temp }}/ome-pin
+      - name: Open the pull request that moves the pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GENERATED_PAGE: ${{ runner.temp }}/ome-pin/ome.v1beta1.md
+        run: |
+          gh auth setup-git
+          python3 "$RUNNER_TEMP/nightly-docs-tools/move_pin.py" publish

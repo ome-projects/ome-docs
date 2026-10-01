@@ -23,9 +23,36 @@ same pin the Website workflow checks YAML examples and the API reference against
 - The nightly documents the pinned commit, not OME's `main`. A change in OME
   becomes eligible after a pull request here moves `ome.ref`, which also
   regenerates the API reference (see CONTRIBUTING.md). A bot PR therefore
-  passes the same checks a human PR does.
+  passes the same checks a human PR does. A separate workflow opens that pull
+  request; see [Moving the pin](#moving-the-pin).
 - Moving `ome.ref` on `main` invalidates maintenance reviews in progress, as
   any change to existing content does.
+
+## Moving the pin
+
+`.github/workflows/move-ome-pin.yml` runs daily at **15:17 UTC**, ahead of the
+nightly, and supports manual dispatch. When OME's `main` is ahead of `ome.ref`,
+it opens one pull request that moves the pin to OME's newest commit and
+regenerates the API reference from that commit. A maintainer reviews and merges
+it; the next nightly then documents the new commits. The workflow calls no
+model and runs on GitHub-hosted runners.
+
+- One pin move at a time. While any open pull request changes `ome.ref`,
+  whoever wrote it, the workflow opens no other and never rewrites that one. A
+  maintainer can therefore push fixes for the new commit's CRDs to its branch.
+- The pin only moves forward along OME's `main`. A pin that `main` does not
+  contain fails the run for a maintainer to inspect.
+- Closing a pin pull request without merging it declines that commit. The next
+  OME commit gets a new pull request.
+- The job that runs OME's Makefile and generator has a read-only token. The
+  publishing job receives one commit SHA and one generated page as data,
+  validates both, and signs off one commit on a new branch. Git commands
+  disable hooks, and an existing branch is never overwritten.
+- `dry_run` regenerates and validates without pushing a branch or opening a
+  pull request.
+- Checks on the pull request stay pending until a maintainer releases them, as
+  on a nightly documentation PR. Fix a failing YAML example, or a link into the
+  API reference that broke, in that pull request.
 
 ## Scope and lifecycle
 
@@ -181,10 +208,10 @@ build when evaluating a pilot.
 - `ome-runner-cpu` is one runner scale set registered to the ome-projects
   organization and shared with ome-projects/ome. The organization's Default
   runner group must allow public repositories and include this repository.
-- Scheduled nightly runs, and maintenance sweeps that start on their own, run
-  only while the repository variable `NIGHTLY_DOCS_ENABLED` is `true`. Leave it
-  unset until the runners exist and a manual `dry_run` has passed. Manual
-  dispatch works without it.
+- Scheduled nightly runs, scheduled pin moves, and maintenance sweeps that
+  start on their own, run only while the repository variable
+  `NIGHTLY_DOCS_ENABLED` is `true`. Leave it unset until the runners exist and
+  a manual `dry_run` has passed. Manual dispatch works without it.
 - Runner pods must expose `ANTHROPIC_API_KEY` with access to `claude-fable-5`,
   and support Node 22 and pnpm 10. An isolated website copy runs frozen-lockfile
   installation, lint, content/link/anchor/navigation tests, type checks and a
