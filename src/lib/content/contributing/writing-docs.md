@@ -24,7 +24,7 @@ Each section's `index.md` is its landing page. The pages in a nav group live in 
 | `guides/index.md` | `/ome/guides` |
 | `guides/deploy-models/serve-models-from-pvc.md` | `/ome/guides/deploy-models/serve-models-from-pvc` |
 
-To preview the site, install Node 22 or newer and pnpm 10, then start the dev server from `website/`:
+To preview the site, install Node 22 or newer and pnpm 10.26 or newer, then start the dev server from `website/`:
 
 ```bash
 cd website

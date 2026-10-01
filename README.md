@@ -5,7 +5,7 @@ launch. Until launch, documentation changes still go to `../site/`.
 
 ## Develop
 
-You need Node 22 or newer and pnpm 10.
+You need Node 22 or newer and pnpm 10.26 or newer.
 
 ```bash
 pnpm install

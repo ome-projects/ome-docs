@@ -14,7 +14,7 @@ This guide sets up a checkout of OME for development. You clone the repository, 
 - `kubectl`, and Helm 3 or Helm 4.
 - `jq`.
 - Python 3 and `pip`, for the pre-commit hooks.
-- To change the docs: Node 22 or newer and pnpm 10.
+- To change the docs: Node 22 or newer and pnpm 10.26 or newer.
 
 </div>
 
@@ -120,7 +120,7 @@ make ci-lint
 
 ### Check a docs change
 
-The docs site is `website/`, which needs Node 22 or newer and pnpm 10. This site replaces the old Hugo site in `site/`. A docs change must pass the site's checks, which run from `website/`, and the YAML check, a Go program that runs from the repository root:
+The docs site is `website/`, which needs Node 22 or newer and pnpm 10.26 or newer. This site replaces the old Hugo site in `site/`. A docs change must pass the site's checks, which run from `website/`, and the YAML check, a Go program that runs from the repository root:
 
 ```bash
 cd website
