@@ -50,6 +50,10 @@ To run the YAML check yourself, check out ome-projects/ome at that commit next t
 
 Move it when a page documents something newer than the pinned commit, or when OME's API types changed.
 
+The Move the OME Pin workflow does this once a day while OME's `main` is ahead of the pin: it opens a pull request that moves the pin to OME's newest commit and regenerates the API reference. Review and merge that pull request. If one of its checks fails, fix the pages in it.
+
+To move the pin yourself, for example to a commit that isn't OME's newest:
+
 1. Check out ome-projects/ome at the new commit, next to this repository.
 2. Write that commit's SHA to `ome.ref`:
 
