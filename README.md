@@ -1,7 +1,6 @@
 # OME website
 
-The redesigned OME documentation site, served at `lightseek.org/ome` from
-launch. Until launch, documentation changes still go to `../site/`.
+Documentation site for [OME — Open Model Engine](https://github.com/ome-projects/ome). (Open Model Engine) is a Kubernetes operator for enterprise-grade management and serving of Large Language Models (LLMs)
 
 ## Develop
 
