@@ -67,7 +67,7 @@ jobs:
           ref: ${{ steps.ome.outputs.ref }}
           path: ome
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: ome/go.mod
           cache: true
@@ -115,7 +115,7 @@ jobs:
           ref: ${{ steps.ome.outputs.ref }}
           path: ome
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: ome/go.mod
           cache: true
@@ -163,7 +163,7 @@ jobs:
           fetch-depth: 0
           path: ome
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: ome/go.mod
           cache: true
