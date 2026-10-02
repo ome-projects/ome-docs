@@ -367,7 +367,7 @@ True    IngressDisabled   Ingress creation is disabled, using external service f
 ### OME doesn't create a route
 
 - With the reason `IngressDisabled`, ingress creation is off. Check the ConfigMap as in Step 1, and look for the `ome.io/ingress-disable-creation` annotation on the InferenceService. If the ConfigMap has `"disableIngressCreation": false`, restart the controller.
-- With the reason `ComponentNotReady`, the router, decoder or engine isn't ready, and OME creates its route when it is. See [Troubleshoot an InferenceService](../troubleshoot/troubleshoot-an-inferenceservice.md).
+- With the reason `ComponentNotReady`, the router, decoder or engine isn't ready, and OME creates its route when it is. With Gateway API, an OMENative component needs only a serving Instance for its route, so the reason means it has none, as [Routes](../../concepts/rollouts-and-traffic/ingress.md#routes) describes. See [Troubleshoot an InferenceService](../troubleshoot/troubleshoot-an-inferenceservice.md).
 - If the condition is missing, or doesn't change after you restart the controller, an error stops OME before it updates the status. Read the logs of every controller replica:
 
 ```bash

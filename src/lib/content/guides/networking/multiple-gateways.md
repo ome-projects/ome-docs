@@ -86,7 +86,7 @@ llama-chat          internal-gateway,external-gateway   llm.internal.example.com
 llama-chat-engine   internal-gateway,external-gateway   llm.internal.example.com,llm.external.example.com
 ```
 
-The routes list the primary gateway first, with one hostname per gateway in the same order. A router or a decoder gets its own route too, on the same gateways. OME creates a component's route only once the component is ready.
+The routes list the primary gateway first, with one hostname per gateway in the same order. A router or a decoder gets its own route too, on the same gateways. OME creates a component's route once the component is ready, or, for an [OMENative](../../concepts/omenative/overview.md) component, once it has a serving Instance: see [Routes](../../concepts/rollouts-and-traffic/ingress.md#routes).
 
 The listener hostnames from [Before you begin](#before-you-begin) keep each gateway to its own hostname: a listener with a hostname [ignores the route's hostnames that don't match it](https://gateway-api.sigs.k8s.io/api-types/httproute/#hostnames). A listener without one would serve both.
 
