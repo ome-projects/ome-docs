@@ -3,11 +3,11 @@ title: Writing docs
 description: "Follow the OME docs style guide for titles, voice and guide structure, and use the site's front matter, callouts and code block syntax."
 ---
 
-Every page in these docs is a Markdown file in the OME repository. This page covers where the files live, how to add a page, the house style and the syntax the site accepts. The build checks the syntax, links and navigation, so most mistakes fail `pnpm test` with the file and the problem.
+Every page in these docs is a Markdown file in the docs repository, [ome-projects/ome-docs](https://github.com/ome-projects/ome-docs). OME's code is in [ome-projects/ome](https://github.com/ome-projects/ome). This page covers where the files live, how to add a page, the house style and the syntax the site accepts. The build checks the syntax, links and navigation, so most mistakes fail `pnpm test` with the file and the problem.
 
 ## Where the docs live
 
-Pages live in `website/src/lib/content/`, one directory per section:
+Pages live in `src/lib/content/` of the docs repository, one directory per section:
 
 | Directory | What it holds |
 |---|---|
@@ -24,28 +24,29 @@ Each section's `index.md` is its landing page. The pages in a nav group live in 
 | `guides/index.md` | `/ome/guides` |
 | `guides/deploy-models/serve-models-from-pvc.md` | `/ome/guides/deploy-models/serve-models-from-pvc` |
 
-To preview the site, install Node 22 or newer and pnpm 10.26 or newer, then start the dev server from `website/`:
+To preview the site, install Node 22 or newer and pnpm 10.26 or newer. Then clone the docs repository, and start the dev server from its root:
 
 ```bash
-cd website
+git clone https://github.com/ome-projects/ome-docs.git
+cd ome-docs
 pnpm install
 pnpm dev
 ```
 
-Then open `http://localhost:5173/ome`. The browser reloads when you save a page.
+Git clones the repository into the directory `ome-docs`. Then open `http://localhost:5173/ome`. The browser reloads when you save a page.
 
 ## Add or move a page
 
 To add a page:
 
 1. Create the file in the section's directory, or in the group's directory, and start it with [front matter](#front-matter).
-2. Add its path to the group's `pages` in `website/src/lib/config/nav.ts`, such as `'deploy-models/serve-models-from-pvc.md'` under Deploy models. The order of `pages` sets the order of the sidebar and of the previous and next links. `pnpm test` fails when a page isn't listed, or is listed twice. Don't list an `index.md`: a section's landing page needs no entry, and a group's directory can't have one.
+2. Add its path to the group's `pages` in `src/lib/config/nav.ts`, such as `'deploy-models/serve-models-from-pvc.md'` under Deploy models. The order of `pages` sets the order of the sidebar and of the previous and next links. `pnpm test` fails when a page isn't listed, or is listed twice. Don't list an `index.md`: a section's landing page needs no entry, and a group's directory can't have one.
 3. Add its card to the section's landing page, in the same position as in `nav.ts`. See [Card grids](#card-grids).
-4. If the page replaces a page of the old Hugo site, add or update its entry in `website/redirects.json`.
+4. If the page replaces a page of the old Hugo site, add or update its entry in `redirects.json`.
 
 To move a page, change its path in `nav.ts`, its card, the `new` path in its `redirects.json` entry and every link to it. `pnpm test` lists the links that no longer resolve.
 
-`website/redirects.json` maps each Hugo page to the page that replaces it, with an entry like this one:
+`redirects.json`, in the root of the docs repository, maps each Hugo page to the page that replaces it, with an entry like this one:
 
 ```json
 {
@@ -55,13 +56,13 @@ To move a page, change its path in `nav.ts`, its card, the `new` path in its `re
 }
 ```
 
-- `old` is the Hugo page's path under `site/content/en/docs/`.
-- `new` is the new page's path under `website/src/lib/content/`. When a Hugo page is split across several pages, `new` names the main one. At launch, each entry becomes a redirect.
+- `old` is the Hugo page's path under `site/content/en/docs/` in ome-projects/ome, where the Hugo site lives.
+- `new` is the new page's path under `src/lib/content/`. When a Hugo page is split across several pages, `new` names the main one. At launch, each entry becomes a redirect.
 - `rewrittenFrom` is the 8-character hash of the last commit that changed the Hugo page when you checked the new page against it. It's `null` while the new page is a draft. `pnpm test` fails when a written page's entry has `null` or a draft's entry has a commit.
 
 Indent the file with tabs: `pnpm lint` fails on spaces, and `pnpm format` fixes them.
 
-To get the commit, run this from the repository root, with the Hugo page's path:
+To get the commit, run this in a checkout of ome-projects/ome, from its root, with the Hugo page's path:
 
 ```bash
 git log -1 --abbrev=8 --format=%h HEAD -- site/content/en/docs/tasks/run-workloads/serve-models-from-pvc.md
@@ -73,7 +74,7 @@ It prints the commit's 8-character hash:
 b3f561eb
 ```
 
-The Hugo site stays live until launch, and the nightly docs job keeps changing it. `make docs-drift` reports each Hugo page that changed after its `rewrittenFrom` commit, with the commits that changed it. It skips pages that set `generated: true`, such as [the API reference](#the-api-reference), because the tool that writes them keeps them current. It also reports Hugo pages with no entry, and entries whose pages don't exist. Fold the changes into the new page, then move `rewrittenFrom` forward. See [Checks](#checks).
+The Hugo site stays live until launch, and pull requests in ome-projects/ome keep changing it. The drift report lists each Hugo page that changed after its `rewrittenFrom` commit, with the commits that changed it. It skips pages that set `generated: true`, such as [the API reference](#the-api-reference), because the tool that writes them keeps them current. It also reports Hugo pages with no entry, and entries whose pages don't exist. Fold the changes into the new page, then move `rewrittenFrom` forward. See [Checks](#checks).
 
 ## Front matter
 
@@ -194,7 +195,7 @@ model-storage   Bound    100Gi
 
 ## Accuracy
 
-The code is the source of truth. Check every field, default, flag, state, condition, reason, event, message and output you write against the code at the commit your pull request is based on. The Hugo pages show what a topic needs to cover, but they can be out of date, and so can doc comments: check behavior in the code that implements it.
+The code is the source of truth. Check every field, default, flag, state, condition, reason, event, message and output you write against the code on the `main` branch of ome-projects/ome. The Hugo pages show what a topic needs to cover, but they can be out of date, and so can doc comments: check behavior in the code that implements it.
 
 - Before you say what OME does, find the default, such as a `+kubebuilder:default` marker, and the code that acts on it. Write "by default" for behavior that can be turned off, and "when" for behavior that depends on a condition. When the code makes something certain, write "always".
 - Quote an output line, such as an event or a status message, only after you trace the code that prints it, at the version you name.
@@ -203,17 +204,17 @@ The code is the source of truth. Check every field, default, flag, state, condit
 - Take flags and defaults from the `--help` of a binary you just built. Its usage lines say `ome rollout`, but pages write `kubectl ome rollout`, the way readers run it.
 - Label and annotation keys are built from constants, such as `OMEAPIGroupName + "/deploymentMode"` in `pkg/constants/constants.go`, so search the code for the part after the slash.
 - Don't write counts that change with the code, such as how many runtimes OME ships. Show a command that lists them instead.
-- YAML examples also go through `make docs-examples`. See [Checks](#checks) for what it can't catch.
+- YAML examples also go through the YAML check. See [Checks](#checks) for what it can't catch.
 - Mark anything that isn't in the latest release with `since`. See [Versioning and status](#versioning-and-status).
 
-To read a command's help, build the plugin from the repository root:
+To read a command's help, build the plugin in a checkout of ome-projects/ome, from its root:
 
 ```bash
 make kubectl-ome
 bin/kubectl-ome rollout history --help
 ```
 
-To see a file as released, or what changed since a release, use the release's tag:
+To see a file as released, or what changed since a release, use the release's tag in the same checkout:
 
 ```bash
 git show v1.2.2:pkg/apis/ome/v1beta1/model.go
@@ -446,7 +447,7 @@ Link to a page with its relative `.md` path, and to a heading with `#` and its i
 !!! tip
     To get a heading's id, hover over the heading and copy its ¶ link.
 
-Link to other files in the repository with a full GitHub URL: `https://github.com/ome-projects/ome/blob/main/` and the file's path, or `tree/main/` for a directory. The build doesn't check these URLs, so link only to files that `git ls-files` lists. Other web links and `mailto:` links pass as written.
+Link to a file in OME's repository with a full GitHub URL: `https://github.com/ome-projects/ome/blob/main/` and the file's path, or `tree/main/` for a directory. For a file in the docs repository that isn't a page, the URL starts with `https://github.com/ome-projects/ome-docs/blob/main/`. The build doesn't check these URLs, so link only to files that `git ls-files` lists in the repository you link to. Other web links and `mailto:` links pass as written.
 
 The build fails on:
 
@@ -463,7 +464,7 @@ Raw HTML, such as an `<a>` or `<img>` tag, skips most of these checks, so write 
 
 ### Images
 
-Prefer text, since screenshots go stale. Add an image only when text can't do the job, such as a diagram. Put it in `website/static/images/`, point to it with a path under `/images/`, and give it alt text that says what it shows:
+Prefer text, since screenshots go stale. Add an image only when text can't do the job, such as a diagram. Put it in `static/images/`, point to it with a path under `/images/`, and give it alt text that says what it shows:
 
 ```markdown
 ![A multi-pod Instance: one leader pod and two worker pods](/images/multi-pod-instance.svg)
@@ -530,7 +531,7 @@ A page about an alpha API, or about a feature behind a flag, says so in its open
 
 ## Checks
 
-Run the site's checks from `website/`:
+Run the site's checks from the root of the docs repository:
 
 ```bash
 pnpm lint
@@ -544,7 +545,9 @@ pnpm build
 - `pnpm test` runs the unit tests and the content checks. The content checks render every page, then check `nav.ts`, every link and anchor, `redirects.json` and the search index. They report every broken page at once, so run `pnpm test` first when you edit pages.
 - `pnpm build` builds the site. It stops at the first page that doesn't render, with the file and the problem.
 
-`make docs-examples`, from the repository root, checks the YAML examples. It's a Go program, so it needs Go. It starts a local Kubernetes API server with OME's CRDs and dry-run creates every object in a `yaml` block:
+The YAML check and the drift report are Go programs in ome-projects/ome. To run them, you need Go, Make and a checkout of that repository next to the docs repository, as `../ome`.
+
+The YAML check starts a local Kubernetes API server with OME's CRDs and dry-run creates every object in a `yaml` block:
 
 - It catches unknown fields, wrong types, bad enum values, missing required fields and failed CEL rules.
 - It doesn't run OME's admission webhooks, so check what `pkg/webhook/admission/` and `pkg/validation/` enforce by hand.
@@ -552,44 +555,58 @@ pnpm build
 - It skips objects whose CRDs it doesn't have, and lists them.
 - It reports an object without `metadata.name` or `metadata.generateName` as a problem.
 
-It prints each problem, then a count of objects and problems.
-
-`make docs-drift`, also from the repository root, reports Hugo pages that changed since they were rewritten (see [Add or move a page](#add-or-move-a-page)). When there's nothing to fold in, it prints:
+It uses the CRDs of the commit that `../ome` has checked out. The docs repository pins the commit that its own checks use in `ome.ref`, a file in its root, so check out that commit in `../ome`. Then run the check from the root of the docs repository:
 
 ```bash
-make docs-drift
+(cd ../ome && make envtest &&
+  KUBEBUILDER_ASSETS="$(bin/setup-envtest use "$(sed -n 's/^ENVTEST_K8S_VERSION = //p' Makefile)" -p path)" \
+    go run ./hack/docs-examples -content "$OLDPWD/src/lib/content")
 ```
+
+It prints each problem, then a count of objects and problems.
+
+Because the pin is a fixed commit, a change in OME can't break a docs pull request. When a page documents something newer than the pinned commit, move the pin: [`CONTRIBUTING.md`](https://github.com/ome-projects/ome-docs/blob/main/CONTRIBUTING.md) in the docs repository has the steps. A workflow there also opens a pull request that moves it, once a day while OME's `main` is ahead of it.
+
+The drift report lists the Hugo pages that changed since they were rewritten (see [Add or move a page](#add-or-move-a-page)). It reads the history of the Hugo site, so check out `main` in `../ome`. The command names the docs repository's directory, `ome-docs` here. Run it from the root of the docs repository:
+
+```bash
+(cd ../ome && go run ./hack/docs-drift -new ../ome-docs/src/lib/content -redirects ../ome-docs/redirects.json)
+```
+
+When there's nothing to fold in, it prints:
 
 ```output
 No drift: every Hugo page is mapped, and every rewrite is current.
 ```
 
-The repository's pre-commit hooks trim trailing whitespace, fix the final newline and run codespell, among other checks. `helm-lint` and `helm-template` run every time, even when no chart changed, so they fail when Helm isn't installed: install Helm, or skip them. From the repository root, run the hooks on the files you changed:
+Otherwise, it lists the pages and the commits that changed them, and exits with status 1.
+
+The docs repository's pre-commit hooks trim trailing whitespace, fix the final newline and run codespell, among other checks. Install [pre-commit](https://pre-commit.com) with `pip install pre-commit`. Then, from the root of the docs repository, run the hooks on the files you changed:
 
 ```bash
-SKIP=helm-lint,helm-template pre-commit run --files website/src/lib/content/guides/deploy-models/serve-models-from-pvc.md
+pre-commit run --files src/lib/content/guides/deploy-models/serve-models-from-pvc.md
 ```
 
 It prints a line for each hook, ending in Passed, Failed or Skipped. Work on a branch: the `no-commit-to-branch` hook fails on `main`.
 
-To run the hooks on every commit, install them with `pip install pre-commit && pre-commit install`. Without Helm, set `SKIP` the same way when you commit.
+To run the hooks on every commit, install them with `pre-commit install`.
 
-The PR Validation workflow runs the hooks, the Helm ones included, on every pull request into `main` or a `release-*` branch. On a pull request that changes `website/`, the CRDs, the API types or the programs behind these checks, the Website workflow runs the site checks, the YAML check, the API reference check and the drift report. The drift report is information only: it doesn't fail the workflow. To open the pull request, see [Pull requests and OEPs](pull-requests-and-oeps.md).
+On every pull request in the docs repository, the Pre-commit workflow runs the hooks on every file, and the Website workflow runs the site checks, the YAML check, the API reference check and the drift report. The drift report is information only: it doesn't fail the workflow.
+
+Open the pull request against `main` of ome-projects/ome-docs, from a fork and with signed-off commits, as [Pull requests and OEPs](pull-requests-and-oeps.md) describes for OME. In the docs repository, a title starts with `[Docs]`, or with `[CI/Tests]` or `[Misc]` for a change to the site's code, and the template's checklist asks for the four `pnpm` checks to pass.
 
 ## The API reference
 
-The [OME API](../reference/api/ome.v1beta1.md) reference is generated from the Go types in `pkg/apis/ome/v1beta1/`, so don't edit the page. Edit the doc comments on the types and fields, then regenerate it from the repository root:
+The [OME API](../reference/api/ome.v1beta1.md) reference is generated from the Go types in `pkg/apis/ome/v1beta1/` of ome-projects/ome, so don't edit the page. To change a description, edit the doc comment on the type or field in OME. When you change the types there, also run `make manifests` and `make generate`, as [Change the API](development-setup.md#change-the-api) explains.
+
+The page is generated from OME at the commit in `ome.ref`, so it shows your change once the pin moves to a commit that has it. The pull request that moves the pin carries the regenerated page. A workflow in the docs repository opens one once a day while OME's `main` is ahead of the pin.
+
+To regenerate the page yourself, you need Go and a checkout of ome-projects/ome next to the docs repository, as `../ome`, at the pinned commit. Run this from the root of the docs repository:
 
 ```bash
-make generate-apiref
+hack/genref/generate.sh ../ome
 ```
 
-It writes two copies and prints the path of each: the website page, in `website/src/lib/content/reference/api/`, and the Hugo copy, at `site/content/en/docs/reference/ome.v1beta1.md`. The Hugo copy stays out of date until launch, so commit only the website page, and undo the change to the Hugo copy:
+It builds the generator, and its last line names the page it wrote.
 
-```bash
-git restore site/content/en/docs/reference/ome.v1beta1.md
-```
-
-It prints nothing.
-
-The page sets `generated: true`, so it shows View source and no Edit button. Its templates are in `hack/genref/website/markdown/`. When you change the types, also run `make manifests` and `make generate`. The Website workflow regenerates the page and fails if it differs from the one you committed.
+The page sets `generated: true`, so it shows View source and no Edit button. Its templates and the generator's settings are in `hack/genref/` of the docs repository. The Website workflow regenerates the page and fails if it differs from the one you committed.
