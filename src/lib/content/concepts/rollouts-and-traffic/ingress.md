@@ -98,7 +98,7 @@ For `llama-chat`, OME creates up to four HTTPRoutes, all with the hostname `llm.
 | `llama-chat-router` | `/llama-demo/llama-chat-router/` | `llama-chat-router`, with a router |
 | `llama-chat-decoder` | `/llama-demo/llama-chat-decoder/` | `llama-chat-decoder`, with a decoder |
 
-Clients use the top-level route, `llama-chat`. The other routes each reach one component, bypassing the router. OME creates a component's route once the component is ready.
+Clients use the top-level route, `llama-chat`. The other routes each reach one component, bypassing the router. OME creates a component's route once the component is ready. For an OMENative component, a [serving Instance](../omenative/instances.md#readiness-and-availability) is enough: OME creates and updates the route even while the component's `EngineReady`, `RouterReady` or `DecoderReady` condition is `False`, as long as the component's [lifecycle](../architecture/deployment-modes.md#lifecycle-status) reports `readyReplicas` and `servingReplicas` above `0`. So a component whose [condition](../architecture/deployment-modes.md#conditions) turns `False` with the reason `InsufficientAvailable` keeps its route, and `IngressReady` can stay `True`, while OME restores the Instances.
 
 Each route rewrites its path prefix to `/`, so a request for `/llama-demo/llama-chat/v1/models` reaches the model server as `/v1/models`. It also sets the headers `OMe-Isvc-Name` and `OME-Isvc-Namespace` to the InferenceService's name and namespace.
 
@@ -199,13 +199,13 @@ The InferenceService is `Ready` only when `IngressReady` is `True`, as [Status](
 | --- | --- |
 | The external Service | Always, with the reason `IngressDisabled`. |
 | A Kubernetes Ingress | OME has created the Ingress. It waits for the router, or the decoder when there's no router, or else the engine. It doesn't check your ingress controller. |
-| HTTPRoutes | Every declared component is ready. The Gateway has accepted every HTTPRoute, with no `False` condition. The Gateway can reject the default BackendTrafficPolicy without changing `IngressReady`. |
+| HTTPRoutes | Every declared component is ready, or is an OMENative component with a serving Instance. The Gateway has accepted every HTTPRoute, with no `False` condition. The Gateway can reject the default BackendTrafficPolicy without changing `IngressReady`. |
 
 When `IngressReady` is `False`, its reason and message say why:
 
 | Reason | Message | Meaning |
 | --- | --- | --- |
-| `ComponentNotReady` | `Target service not ready for ingress creation`, or `engine component not ready for HTTPRoute creation` | OME creates the Ingress or the HTTPRoute once the component is ready. |
+| `ComponentNotReady` | `Target service not ready for ingress creation`, or `engine component not ready for HTTPRoute creation` | OME creates the Ingress once the component is ready, and the HTTPRoute once the component is ready or, for an OMENative component, has a serving Instance: see [Routes](#routes). |
 | `ParentStatusNotAvailable` | `engine HTTPRoute awaiting gateway programming`, or `Engine HttpRouteNotReady` | The Gateway hasn't reported on the HTTPRoute yet. |
 | The Gateway's reason, such as `NotAllowedByListeners` | `Engine`, then the Gateway's message | The Gateway reports a `False` condition on the HTTPRoute. |
 
