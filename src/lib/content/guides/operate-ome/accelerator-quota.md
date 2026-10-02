@@ -325,7 +325,7 @@ Then set `hysteresisPercent` back to 10, or remove it from the file, and upgrade
 !!! warning "Don't leave the damping off"
     At 0, the mark follows every dip of the installed capacity, such as a node the cluster autoscaler is replacing. A budget over the dip reports `CapacityExceeded`, and the quota manager freezes the node and its descendants until the mark recovers. At 100 or more, the other extreme, the mark never comes down.
 
-A pair that stops being measured at all, because you delete its ResourceFlavor or remove its resource from `quotaManager.capacity.resources`, keeps its last mark and reports 0 allocatable, whatever the band. To clear the mark, measure the pair again: recreate the flavor, let a measurement bring the mark to 0, then delete the flavor.
+A pair that stops being measured at all, because the last node that carried it is gone, you delete its ResourceFlavor, or you remove its resource from `quotaManager.capacity.resources`, keeps its last mark and reports 0 allocatable, whatever the band. Turning the damping off doesn't lower this mark either: the band judges measurements, and a pool with no hardware isn't measured at zero, it isn't measured at all, so no reading arrives for the mark to follow down. The entry stays in `root`'s status as the record of what the pair once held, and the mark moves again only when nodes report the pair again: at once when the new installed capacity is above it, past the band when it's below. So when you retire a pool for good, also delete the budgets that name its resource and flavor. Each one keeps passing its check against the stale mark, promising teams accelerators that no node has.
 
 ## Budget other accelerators
 
