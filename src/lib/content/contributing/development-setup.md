@@ -3,7 +3,7 @@ title: Set up a development environment
 description: Install the tools OME needs, build and test it locally, and deploy your own build to a Kubernetes cluster for development.
 ---
 
-This guide sets up a checkout of OME for development. You clone the repository, build OME's binaries, run the tests, and run your build of the OME controller on a local [kind](https://kind.sigs.k8s.io) cluster. Then it covers what to regenerate when you change the API, and how to debug the controller from your IDE. To change only the docs, you need Git, Make, Go, Node and pnpm: see [Check a docs change](#check-a-docs-change).
+This guide sets up a checkout of OME for development. You clone the repository, build OME's binaries, run the tests, and run your build of the OME controller on a local [kind](https://kind.sigs.k8s.io) cluster. Then it covers what to regenerate when you change the API, and how to debug the controller from your IDE. The docs are in their own repository: to change them, see [Check a docs change](#check-a-docs-change).
 
 <div class="prerequisites" markdown>
 
@@ -14,7 +14,6 @@ This guide sets up a checkout of OME for development. You clone the repository, 
 - `kubectl`, and Helm 3 or Helm 4.
 - `jq`.
 - Python 3 and `pip`, for the pre-commit hooks.
-- To change the docs: Node 22 or newer and pnpm 10.26 or newer.
 
 </div>
 
@@ -120,20 +119,12 @@ make ci-lint
 
 ### Check a docs change
 
-The docs site is `website/`, which needs Node 22 or newer and pnpm 10.26 or newer. This site replaces the old Hugo site in `site/`. A docs change must pass the site's checks, which run from `website/`, and the YAML check, a Go program that runs from the repository root:
+The docs are in their own repository, [ome-projects/ome-docs](https://github.com/ome-projects/ome-docs), whose site replaces the old Hugo site in `site/` of ome-projects/ome. A docs change is a pull request to the docs repository, and it must pass two kinds of checks:
 
-```bash
-cd website
-pnpm install
-pnpm lint
-pnpm check
-pnpm test
-pnpm build
-cd ..
-make docs-examples
-```
+- The site's checks, which need Node 22 or newer and pnpm 10.26 or newer.
+- The YAML check, which checks the YAML examples in the docs against OME's CRDs. It's a Go program in ome-projects/ome, `hack/docs-examples`, that the docs repository runs from a checkout of OME.
 
-Each `pnpm` check exits with an error, and says what's wrong, when your change breaks it. `make docs-examples` prints each problem, then a count of the objects it checked and the problems it found, then the kinds it skipped because their CRDs aren't installed. [Checks](writing-docs.md#checks) explains what each check covers, and [Writing docs](writing-docs.md) how to write and preview a page.
+[Checks](writing-docs.md#checks) explains what each check covers and how to run it, and [Writing docs](writing-docs.md) how to write and preview a page.
 
 ## Step 4: Deploy your build to a cluster
 
@@ -361,10 +352,10 @@ Each prints the steps it runs:
 
 Commit every file they change or create. On each pull request, the Generated Code Drift check runs both, and fails if they change a committed file. It doesn't notice a file that they create, such as the CRD of a new kind, so check `git status` for new files.
 
-Then update the docs that come from the types:
+The docs that come from the types are in the docs repository, which reads OME at a commit it pins:
 
-- Regenerate the [OME API](../reference/api/ome.v1beta1.md) reference with `make generate-apiref`, as [The API reference](writing-docs.md#the-api-reference) explains.
-- Run `make docs-examples` to check the YAML examples in the docs against the new CRDs.
+- The [OME API](../reference/api/ome.v1beta1.md) reference is regenerated when the pin moves to a commit that has your change, as [The API reference](writing-docs.md#the-api-reference) explains.
+- The YAML examples in the docs are checked against the CRDs of the pinned commit. If your change removes or renames a field that an example uses, the pull request that moves the pin fails until the example is fixed. To find such examples before you merge, run the [YAML check](writing-docs.md#checks) with your branch checked out.
 
 Major features and API changes need an OME Enhancement Proposal (OEP): see [Pull requests and OEPs](pull-requests-and-oeps.md).
 

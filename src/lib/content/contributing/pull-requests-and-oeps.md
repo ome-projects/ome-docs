@@ -8,7 +8,7 @@ To get a change into OME, open a pull request against `main` with a prefixed tit
 ## Open a pull request {#before-you-open-a-pull-request}
 
 1. Create a branch named `<type>/<description>` or `<username>/<description>`, in lowercase, as in `alex-kim/fix-pvc-claim-name`. Keep the pull request to one change.
-2. Add tests, and update the docs that describe your change. A bug fix needs a test that fails without the fix. Go code follows the [Google Go Style Guide](https://google.github.io/styleguide/go/).
+2. Add tests. A bug fix needs a test that fails without the fix. Go code follows the [Google Go Style Guide](https://google.github.io/styleguide/go/). The docs are in their own repository, so update the pages that describe your change in a pull request there: see [Writing docs](writing-docs.md).
 3. After a change to the API types in `pkg/apis/`, regenerate the code and manifests, and commit the files they change or create:
 
    ```bash
@@ -16,7 +16,7 @@ To get a change into OME, open a pull request against `main` with a prefixed tit
    make generate
    ```
 
-   They print the steps they run. [Change the API](development-setup.md#change-the-api) says what they regenerate. When you change the types or their doc comments, also run `make generate-apiref`, as [The API reference](writing-docs.md#the-api-reference) describes.
+   They print the steps they run. [Change the API](development-setup.md#change-the-api) says what they regenerate. The docs repository regenerates the API reference from the types and their doc comments, as [The API reference](writing-docs.md#the-api-reference) describes.
 
 4. Run the tests, the coverage check and the linter from the repository root, and commit the files that `make test` changes:
 
@@ -26,7 +26,7 @@ To get a change into OME, open a pull request against `main` with a prefixed tit
    make ci-lint
    ```
 
-   They print what they find, and stop with an error when a check or a test fails. `make test` needs a Rust toolchain: without one, see [Run the tests](development-setup.md#step-3-run-the-tests). For a docs change, run the checks in [Check a docs change](development-setup.md#check-a-docs-change).
+   They print what they find, and stop with an error when a check or a test fails. `make test` needs a Rust toolchain: without one, see [Run the tests](development-setup.md#step-3-run-the-tests). A docs change goes to the docs repository, which has its own checks: see [Check a docs change](development-setup.md#check-a-docs-change).
 
 5. Commit with a sign-off and a [prefixed title](#title-prefixes), as [Commit messages](#commit-messages) describes. The [pre-commit hooks](development-setup.md#step-1-clone-the-repository) check your commits, and [A pre-commit hook fails](development-setup.md#a-pre-commit-hook-fails) covers the usual failures.
 6. Rebase on the latest `main` of `ome-projects/ome`, which is `origin` in your clone. Then fork `ome-projects/ome` on GitHub, add your fork as a remote, and push the branch to it. Put your GitHub username in place of `alex-kim`:
@@ -131,7 +131,6 @@ Other checks run only on some pull requests:
 |---|---|
 | Docker Build Validation | Pull requests that change `dockerfiles/`, the root Makefiles, `pkg/xet/`, `scheduler/`, `go.mod`, `go.sum`, or the PR validation or dev image workflow. It builds the images for amd64. |
 | Docker Multi-Arch Build Validation | Pull requests with the `test-multiarch` label, from the push after you add it. It builds the manager and model agent images for amd64 and arm64. |
-| Website | Pull requests that change `website/`, `pkg/apis/`, `config/crd/full/`, the docs tooling in `hack/`, `go.mod`, `go.sum` or the root Makefiles. It runs the checks in [Check a docs change](development-setup.md#check-a-docs-change). It also fails when `make generate-apiref` changes the API reference. |
 | Alfred Scheduler Simulator | Pull requests that change the scheduling code or simulator of [Alfred](../concepts/scheduling/alfred.md), `scheduler/`, `go.mod` or `go.sum`. Alfred is alpha. |
 | Claude Code Review | Pull requests from branches in `ome-projects/ome`, not from forks, that change more than docs pages. It checks the [description](#the-pull-request-template), then comments on the code, and marks its comments Important, Nit or Pre-existing. |
 
