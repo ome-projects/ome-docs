@@ -64,12 +64,10 @@ To move the pin yourself, for example to a commit that isn't OME's newest:
 3. Regenerate the API reference:
 
    ```bash
-   GOTOOLCHAIN="go$(sed -n 's/^go //p' ../ome/go.mod)" make -C ../ome genref
-   (cd ../ome/hack/genref/website &&
-     ../../../bin/genref -c ../config.yaml -o "$OLDPWD/src/lib/content/reference/api")
+   hack/genref/generate.sh ../ome
    ```
 
-   `GOTOOLCHAIN` builds genref with OME's Go version. A genref built with Go older than 1.24 writes no page and reports no error.
+   The script needs Go. It builds genref with OME's Go version and runs it inside the checkout, with the config and templates in `hack/genref/`.
 
 4. Commit `ome.ref` and the page together. The workflow then checks the YAML examples against the new commit's CRDs.
 

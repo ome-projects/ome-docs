@@ -62,8 +62,8 @@ jobs:
       - name: Compare the pin with OME's newest commit
         id: plan
         working-directory: docs
-        # Only this step reads the GitHub API. The steps below run OME's
-        # Makefile and generator, which get no token.
+        # Only this step reads the GitHub API. The steps below build genref
+        # and run it on OME's source, and get no token.
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ steps.baseline.outputs.sha }}
@@ -83,19 +83,15 @@ jobs:
           cache-dependency-path: ome/go.sum
       - name: Regenerate the API reference
         if: steps.plan.outputs.needed == 'true'
-        # The commands of the Website workflow's API reference check. genref
-        # finds its templates in the working directory and has to run inside
-        # OME's Go module.
-        working-directory: ome
+        # The Website workflow checks the pull request with its own
+        # hack/genref, which is the baseline's. Generate with that copy, not
+        # with the one of the workflow revision.
+        env:
+          BASE_SHA: ${{ steps.baseline.outputs.sha }}
         run: |
-          make genref
-          cd hack/genref/website
-          ../../../bin/genref -c ../config.yaml -o "$RUNNER_TEMP/ome-pin"
-          # genref logs a package or template error and still exits 0.
-          if [ ! -s "$RUNNER_TEMP/ome-pin/ome.v1beta1.md" ]; then
-            echo "::error title=API reference::genref wrote no page; see its log above."
-            exit 1
-          fi
+          mkdir "$RUNNER_TEMP/baseline"
+          git -C docs archive "$BASE_SHA" hack/genref | tar -x -C "$RUNNER_TEMP/baseline"
+          "$RUNNER_TEMP/baseline/hack/genref/generate.sh" ome "$RUNNER_TEMP/ome-pin"
       - uses: actions/upload-artifact@v4
         if: steps.plan.outputs.needed == 'true'
         with:

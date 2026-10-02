@@ -44,10 +44,12 @@ model and runs on GitHub-hosted runners.
   contain fails the run for a maintainer to inspect.
 - Closing a pin pull request without merging it declines that commit. The next
   OME commit gets a new pull request.
-- The job that runs OME's Makefile and generator has a read-only token. The
-  publishing job receives one commit SHA and one generated page as data,
-  validates both, and signs off one commit on a new branch. Git commands
-  disable hooks, and an existing branch is never overwritten.
+- The job that builds genref and runs it on OME's source has a read-only token.
+  It generates with the baseline's `hack/genref`, the copy that the pull
+  request's own check uses. The publishing job receives one commit SHA and one
+  generated page as data, validates both, and signs off one commit on a new
+  branch. Git commands disable hooks, and an existing branch is never
+  overwritten.
 - `dry_run` regenerates and validates without pushing a branch or opening a
   pull request.
 - Checks on the pull request stay pending until a maintainer releases them, as

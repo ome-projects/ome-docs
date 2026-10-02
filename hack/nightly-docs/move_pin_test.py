@@ -280,6 +280,19 @@ class WorkflowTests(unittest.TestCase):
             if "GH_TOKEN" in step.get("env", {}):
                 self.assertEqual(step["name"], "Open the pull request that moves the pin")
 
+    def test_the_page_is_generated_with_the_baselines_generator(self):
+        import yaml
+        root = Path(__file__).resolve().parents[2]
+        workflow = yaml.load((root / ".github/workflows/move-ome-pin.yml").read_text(), Loader=yaml.BaseLoader)
+        step = next(step for step in workflow["jobs"]["generate"]["steps"]
+                    if step.get("name") == "Regenerate the API reference")
+        # The pull request's own check runs its hack/genref, which is the
+        # baseline's and may differ from the one of a dispatched branch.
+        self.assertEqual(step["env"]["BASE_SHA"], "${{ steps.baseline.outputs.sha }}")
+        self.assertIn('archive "$BASE_SHA" hack/genref', step["run"])
+        self.assertIn('"$RUNNER_TEMP/baseline/hack/genref/generate.sh" ome', step["run"])
+        self.assertTrue(os.access(root / "hack/genref/generate.sh", os.X_OK))
+
 
 if __name__ == "__main__":
     unittest.main()
