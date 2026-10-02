@@ -217,6 +217,8 @@ To stop new use of a model, set `disabled: true` in its spec. The admission webh
 
 When you delete a model, a finalizer keeps it until the agent on each node that recorded the model reports its copy deleted. If a node's agent isn't running, the deletion waits until it runs again or the node leaves the cluster.
 
+You don't have to wait for the download. On a node that's still downloading the model, the agent cancels the download, and a queued download never starts, so the nodes don't keep downloading weights you deleted. A canceled download doesn't mark the model `Failed` on the node. [How a delete stops a download](../../guides/operate-ome/model-agent.md#how-a-delete-stops-a-download) in the model agent guide says how quickly a running download stops; on v1.2.2, the agent can't stop an `oci://` download that has started.
+
 On each node, the agent removes the model's label and deletes the files of an `hf://` or `oci://` model from `path`. It keeps the files when another model, in any namespace, uses the same `path`, or when the model has the label `models.ome/reserve-model-artifact: "true"`. It leaves `local://` and `vendor://` files in place. Files shared through `ReuseIfExists` follow the rules in [Share Hugging Face artifacts](../../guides/operate-ome/shared-hf-artifacts.md). For `pvc://` models, see [Clean up](../../guides/deploy-models/serve-models-from-pvc.md#clean-up) in the PVC guide.
 
 Set the reserve label when you create the model: adding a label later makes all matching nodes process the model again. See [Keep downloaded model files](../../guides/operate-ome/configure-model-artifact-retention.md).
