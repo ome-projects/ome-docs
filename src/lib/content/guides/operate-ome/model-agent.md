@@ -154,6 +154,15 @@ When two `oci://` models name the same files, one downloads them, and the other 
 
 With `storage.downloadPolicy: ReuseIfExists`, models that use the same Hugging Face files share one copy on each node: see [Share Hugging Face artifacts](shared-hf-artifacts.md).
 
+### How a delete stops a download
+
+When you delete a model, the agent stops the model's work on each node, so a node doesn't spend hours downloading weights you deleted:
+
+- A download that's waiting its turn never starts: the delete drops it from the queue.
+- The agent cancels the model's running download as soon as it sees the deletion. A Hugging Face download stops right away. Since v1.3, an `oci://` download stops too: the agent starts no new files, lets a file under 200 MiB finish, and stops the multipart transfer of a larger file mid-file, removing its temporary files. A request to object storage that has already started keeps its retries and returns first, so the stop can wait for one request. On v1.2.2, the agent can't stop an `oci://` download once it has started: it runs to completion.
+
+A canceled download doesn't mark the model `Failed` on the node. The agent then deletes the files that reached the node and removes the model's label, following the rules in [Delete a model](../../concepts/models/base-models.md#deleting-a-model), and the model's deletion finishes once every node reports its copy deleted.
+
 ### TensorRT-LLM models
 
 For an `oci://` model with `modelFormat.name: tensorrtllm`, the agent downloads only the objects built for its node's GPU, whose names contain `/{gpu}/`, such as `/H100/`. It finds the GPU name by looking up the node's `node.kubernetes.io/instance-type` label in the ConfigMap `model-agent-config-map`, and uses an unlisted instance type as it is. When no object matches, the model fails on the node.
