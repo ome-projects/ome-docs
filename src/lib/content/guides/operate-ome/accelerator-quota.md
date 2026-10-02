@@ -38,7 +38,7 @@ A team's `priorityTier` has no effect in this release.
 
 The quota manager writes a Cohort node to Kueue as a Cohort, and a team as a ClusterQueue with a LocalQueue in each enrolled namespace. These objects take their node's name and carry the label `ome.io/quota-managed-by: ome-quota-manager`.
 
-The webhook denies a change that breaks the tree's rules. A node can also break one later, when a budget is more than the capacity that the quota manager measures. The quota manager then freezes the node and its descendants: their Kueue objects stay as they were, so admitted workloads keep running. Each budget is checked against capacity on its own, so to cap the total, give `root` a budget.
+The webhook denies a change that breaks the tree's rules. A node can also break one later, when a budget is more than the peak capacity that the quota manager measures. The quota manager then freezes the node and its descendants: their Kueue objects stay as they were, so admitted workloads keep running. Each budget is checked against capacity on its own, so to cap the total, give `root` a budget.
 
 ## Step 1: Install the quota manager
 
@@ -148,7 +148,7 @@ google.com/tpu a100 0 0
 nvidia.com/gpu a100 32 32
 ```
 
-The columns are a resource, a flavor, the accelerators on nodes that are Ready and not cordoned, and the high-water mark that budgets are checked against. The mark also counts cordoned and not-Ready nodes, so it stays put while you drain nodes. Measured resources appear on all flavors, so `google.com/tpu` shows 0.
+The columns are a resource, a flavor, the accelerators on nodes that are Ready and not cordoned, and the high-water mark that budgets are checked against. The mark also counts cordoned and not-Ready nodes, so it stays put while you drain nodes: [Lower the high-water mark](#lower-the-high-water-mark) explains when it comes down. Measured resources appear on all flavors, so `google.com/tpu` shows 0.
 
 Write the tree once `root` lists your resource and flavor. Until then, a budget for them can report `CapacityExceeded`. The tree puts the Cohort `ml-research` under `root`, with two teams under it:
 
@@ -278,6 +278,54 @@ Edit `quota-tree.yaml` and apply it again. To check a change without writing it,
 Raising `team-alpha` to 20, for example, would bring the children of `ml-research` to 28, more than its 24. The apply fails with an error that ends in `admission webhook "acceleratorquota.ome-quota-manager.validator" denied the request: ml-research: budget nvidia.com/gpu on a100 is 24 but its children total 28`.
 
 To change a node's role, delete the node and create it again: changing `spec.role` in place leaves the old Kueue object behind.
+
+## Lower the high-water mark
+
+Each budget is checked against its resource and flavor's high-water mark on `root`, not against the capacity of the moment. The mark is a running peak of the installed capacity: the accelerators on every node, the cordoned and not-Ready ones included. It's damped, so it ignores dips that say nothing about what the teams are entitled to, such as a drain, a rolling reboot or a restarting device plugin:
+
+- Growth is believed at once: a measurement above the mark raises it to the new installed capacity.
+- A drop is believed only when the installed capacity falls below the mark by more than the band: `quotaManager.capacity.hysteresisPercent` percent of the mark, 10 by default, which the chart passes to the quota manager as its `--capacity-hysteresis-percent` flag. The mark then falls all the way to the new installed capacity, not to the edge of the band.
+
+So the mark comes down within a minute when a decommission takes the installed capacity past the band. Deleting one of the four A100 nodes leaves 24 GPUs installed, 25% below the mark of 32, so the mark falls to 24, and a budget over 24 reports `CapacityExceeded`. But the band is a magnitude, not a wait: retire 2 of the 32 GPUs instead, 6.25%, and the mark stays at 32 for good, so the tree keeps accepting budgets for 2 GPUs that are gone. The marks live in `root`'s status, so restarting the quota manager doesn't lower them either.
+
+To bring the mark down after a decommission within the band, turn the damping off and let the quota manager measure. Set `hysteresisPercent` to 0, keeping the other values in the file:
+
+```yaml title="quota-values.yaml"
+global:
+  hub: registry.example.com/ome
+quotaManager:
+  mode: workload
+  image:
+    tag: dev
+  capacity:
+    hysteresisPercent: 0
+  materialize:
+    enrolledNamespaces:
+      - ml-serving
+```
+
+```bash
+helm upgrade ome-quota-manager ./charts/ome-quota-manager \
+  --namespace ome -f quota-values.yaml
+```
+
+Helm reports the upgrade, and the quota manager's pods restart with the damping off. Within a minute, the mark matches the installed capacity:
+
+```bash
+kubectl get aq root -o jsonpath='{range .status.capacity[*]}{.resourceName}{" "}{.resourceFlavor}{" "}{.allocatable}{" "}{.highWaterMark}{"\n"}{end}'
+```
+
+```output
+google.com/tpu a100 0 0
+nvidia.com/gpu a100 30 30
+```
+
+Then set `hysteresisPercent` back to 10, or remove it from the file, and upgrade again.
+
+!!! warning "Don't leave the damping off"
+    At 0, the mark follows every dip of the installed capacity, such as a node the cluster autoscaler is replacing. A budget over the dip reports `CapacityExceeded`, and the quota manager freezes the node and its descendants until the mark recovers. At 100 or more, the other extreme, the mark never comes down.
+
+A pair that stops being measured at all, because the last node that carried it is gone, you delete its ResourceFlavor, or you remove its resource from `quotaManager.capacity.resources`, keeps its last mark and reports 0 allocatable, whatever the band. Turning the damping off doesn't lower this mark either: the band judges measurements, and a pool with no hardware isn't measured at zero, it isn't measured at all, so no reading arrives for the mark to follow down. The entry stays in `root`'s status as the record of what the pair once held, and the mark moves again only when nodes report the pair again: at once when the new installed capacity is above it, past the band when it's below. So when you retire a pool for good, also delete the budgets that name its resource and flavor. Each one keeps passing its check against the stale mark, promising teams accelerators that no node has.
 
 ## Budget other accelerators
 
@@ -438,7 +486,7 @@ Materialized=True Admitted: enforcement objects match this node's budget
 
 | Condition | Reason | Meaning |
 | --- | --- | --- |
-| `Ready` | `CapacityExceeded` | A budget on the node or an ancestor is over the high-water mark on `root`, or `root` measures nothing for its resource and flavor. |
+| `Ready` | `CapacityExceeded` | A budget on the node or an ancestor is over the [high-water mark](#lower-the-high-water-mark) on `root`, or `root` measures nothing for its resource and flavor. |
 | `Ready` | `ContainmentViolated`, `ParentMissing`, `ParentCycle`, `Unreachable`, `DepthExceeded` or `NodeKindInvalid` | The node or an ancestor breaks a rule of the tree. The message says which. |
 | `Materialized` | `Frozen` | `Ready` is `False`, and the node's Kueue objects keep their last good state. |
 | `Materialized` | `FlavorMissing` | A budget names a missing ResourceFlavor. Create it. The node's other budgets are written. |
