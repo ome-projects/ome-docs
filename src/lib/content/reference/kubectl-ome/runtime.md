@@ -662,7 +662,8 @@ Besides the refusals [every action shares](#how-the-action-runs), `sync` refuses
 - PIN is `ManagedPin/Resolved`, and the Active view is the revision in `status.pinnedRevisionName`.
 - DRIFT is `ReportedTrue/RevisionMismatch`, and LIVE-RELATION is `Different`.
 - SYNC isn't `Pending`, so no earlier token waits for the controller.
-- The runtime isn't disabled, and its chain has at most five runtimes, none of them twice.
+- The runtime isn't disabled after the merge. `sync` checks the Live view, the runtime merged with every runtime it inherits from, not each runtime in the chain alone. So the disabled [profiles](../../concepts/runtimes/runtime-inheritance.md#define-a-profile-and-inherit-from-it) a runtime inherits from don't make it refuse: the runtime's `disabled: false` overrides their `disabled: true`. A runtime that inherits `disabled: true` without setting `disabled: false` is disabled after the merge, and `sync` refuses.
+- No runtime in the chain is being deleted, and the chain has at most five runtimes, none of them twice.
 - The runtime has at most 32 revisions, all consistent with what OME writes and none disabled, and at most one of them has the target hash.
 
 Because runtimes with the same name share their revisions' label, a same-named runtime in another namespace or scope that has revisions makes `sync` refuse.
