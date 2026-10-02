@@ -119,10 +119,10 @@ make ci-lint
 
 ### Check a docs change
 
-The docs aren't in this checkout. They are in [ome-projects/ome-docs](https://github.com/ome-projects/ome-docs), whose site replaces the old Hugo site in `site/`. A docs change is a pull request to that repository, and it must pass two kinds of checks:
+The docs are in their own repository, [ome-projects/ome-docs](https://github.com/ome-projects/ome-docs), whose site replaces the old Hugo site in `site/` of ome-projects/ome. A docs change is a pull request to the docs repository, and it must pass two kinds of checks:
 
 - The site's checks, which need Node 22 or newer and pnpm 10.26 or newer.
-- The YAML check, which checks the YAML examples in the docs against OME's CRDs. It's a Go program in this repository, `hack/docs-examples`, that the docs repository runs from a checkout of OME.
+- The YAML check, which checks the YAML examples in the docs against OME's CRDs. It's a Go program in ome-projects/ome, `hack/docs-examples`, that the docs repository runs from a checkout of OME.
 
 [Checks](writing-docs.md#checks) explains what each check covers and how to run it, and [Writing docs](writing-docs.md) how to write and preview a page.
 
