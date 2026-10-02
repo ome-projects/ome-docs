@@ -32,6 +32,7 @@ Run `pnpm lint && pnpm check && pnpm test && pnpm build` before submitting.
 - `redirects.json` — maps each Hugo page in ome-projects/ome to the page that replaces it.
 - `src/lib/components/HomeWhy.svelte` — includes the home page's adopters list. It mirrors `ADOPTERS.md` in ome-projects/ome, which is the list of record.
 - `hack/nightly-docs/` — the nightly documentation automation, run by `.github/workflows/nightly-docs.yml`, `docs-pr-maintenance.yml` and `docs-pr-worker.yml`. It reads OME's code history from a checkout at `ome.ref` and opens one-concern documentation PRs here. `move-ome-pin.yml` opens the pull request that moves `ome.ref` to OME's newest commit. Its `README.md` covers the design. After changing it, run `python3 -m unittest discover -s hack/nightly-docs -p '*_test.py'` (needs `hack/nightly-docs/maintenance-requirements.txt`).
+- `hack/genref/` — the API reference generator: `generate.sh`, the genref version it installs, `config.yaml` and the page templates. It needs a checkout of ome-projects/ome only for the Go types.
 
 ## Checks that use OME's code
 

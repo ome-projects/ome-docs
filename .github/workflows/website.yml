@@ -121,24 +121,15 @@ jobs:
           cache: true
           cache-dependency-path: ome/go.sum
       - name: Regenerate the API reference
-        # genref finds its templates in the working directory and has to run
-        # inside OME's Go module.
-        working-directory: ome
-        run: |
-          make genref
-          cd hack/genref/website
-          ../../../bin/genref -c ../config.yaml -o "$RUNNER_TEMP/apiref"
-          # genref logs a package or template error and still exits 0.
-          if [ ! -s "$RUNNER_TEMP/apiref/ome.v1beta1.md" ]; then
-            echo "::error title=API reference::genref wrote no page; see its log above."
-            exit 1
-          fi
+        # The genref version, config and templates are this repository's. The
+        # script runs genref inside the checkout, where it finds OME's types.
+        run: docs/hack/genref/generate.sh ome "$RUNNER_TEMP/apiref"
       - name: Compare the committed page
         run: |
           page=src/lib/content/reference/api/ome.v1beta1.md
           if ! diff -u "docs/$page" "$RUNNER_TEMP/apiref/ome.v1beta1.md" > "$RUNNER_TEMP/apiref.diff"; then
             head -n 200 "$RUNNER_TEMP/apiref.diff"
-            echo "::error title=API reference::$page doesn't match ome-projects/ome at the commit in ome.ref. Regenerate it there with the commands of the step above, built with Go 1.24 or newer, and commit the page."
+            echo "::error title=API reference::$page doesn't match ome-projects/ome at the commit in ome.ref. Regenerate it with hack/genref/generate.sh and commit the page; CONTRIBUTING.md has the steps."
             exit 1
           fi
 
