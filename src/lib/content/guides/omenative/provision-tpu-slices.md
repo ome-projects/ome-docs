@@ -31,7 +31,7 @@ A Slice is named after the component's [InferenceReplica](../../reference/api/om
 
 ## Step 1: Turn on slice provisioning
 
-Describe the pools in the `ome.controller.tpuSliceProvisioning` Helm value. This example is the `ome-resources` chart's, for GKE dynamic slicing with single-host and two-host Ironwood slices:
+Describe the pools in the `ome.controller.tpuSliceProvisioning` Helm value. This example is the `ome-resources` chart's with a two-host topology added, for GKE dynamic slicing with single-host and two-host Ironwood slices:
 
 ```yaml title="values.yaml"
 ome:
