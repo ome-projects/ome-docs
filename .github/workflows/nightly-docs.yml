@@ -150,7 +150,7 @@ jobs:
       - uses: ./.github/actions/nightly-docs-setup
         with:
           source-sha: ${{ needs.prepare.outputs.base_sha }}
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: nightly-docs-context
           path: ${{ runner.temp }}/nightly-docs-context
@@ -208,11 +208,11 @@ jobs:
       - uses: ./.github/actions/nightly-docs-setup
         with:
           source-sha: ${{ needs.prepare.outputs.base_sha }}
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: nightly-docs-context
           path: ${{ runner.temp }}/nightly-docs-context
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: nightly-docs-scan-*
           path: ${{ runner.temp }}/nightly-docs-scans
@@ -338,7 +338,7 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
             echo "Writer produced no artifact for this concern; no PR created." >> "$GITHUB_STEP_SUMMARY"
           fi
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         if: steps.artifact.outputs.found == 'true'
         with:
           name: nightly-docs-${{ strategy.job-index }}

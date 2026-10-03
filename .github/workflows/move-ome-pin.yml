@@ -126,7 +126,7 @@ jobs:
           export-api-key: 'false'
           checkout-code: 'false'
           source-sha: ${{ needs.generate.outputs.base_sha }}
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: ome-pin
           path: ${{ runner.temp }}/ome-pin
