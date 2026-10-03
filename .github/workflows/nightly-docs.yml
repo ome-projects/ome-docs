@@ -122,7 +122,7 @@ jobs:
       - name: Partition discovery by subsystem
         id: partition
         run: python3 "$RUNNER_TEMP/nightly-docs-tools/discovery.py" partition
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nightly-docs-context
           path: ${{ runner.temp }}/nightly-docs-context
@@ -178,7 +178,7 @@ jobs:
           PLAN_JSON: ${{ steps.discover.outputs.structured_output }}
           SCAN_OUTPUT: ${{ runner.temp }}/nightly-docs-scan-${{ matrix.shard }}.json
         run: python3 "$RUNNER_TEMP/nightly-docs-tools/discovery.py" scan
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nightly-docs-scan-${{ matrix.shard }}
           path: ${{ runner.temp }}/nightly-docs-scan-${{ matrix.shard }}.json
@@ -223,7 +223,7 @@ jobs:
           SCAN_DIR: ${{ runner.temp }}/nightly-docs-scans
           REPORT_OUTPUT: ${{ runner.temp }}/nightly-docs-discovery-report.json
         run: python3 "$RUNNER_TEMP/nightly-docs-tools/discovery.py" combine
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nightly-docs-discovery-report
           path: ${{ runner.temp }}/nightly-docs-discovery-report.json
@@ -281,7 +281,7 @@ jobs:
         env:
           BUNDLE_PATH: ${{ runner.temp }}/nightly-docs-bundle.json
         run: python3 "$RUNNER_TEMP/nightly-docs-tools/nightly_docs.py" export
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nightly-docs-${{ strategy.job-index }}
           path: ${{ runner.temp }}/nightly-docs-bundle.json
@@ -406,7 +406,7 @@ jobs:
       - name: No-op summary
         if: steps.scope.outputs.changed == 'false'
         run: echo "No supported documentation change remained for this concern; no PR created." >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && steps.scope.outputs.changed == 'true'
         with:
           name: nightly-docs-validation-${{ strategy.job-index }}
