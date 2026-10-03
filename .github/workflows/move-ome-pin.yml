@@ -92,7 +92,7 @@ jobs:
           mkdir "$RUNNER_TEMP/baseline"
           git -C docs archive "$BASE_SHA" hack/genref | tar -x -C "$RUNNER_TEMP/baseline"
           "$RUNNER_TEMP/baseline/hack/genref/generate.sh" ome "$RUNNER_TEMP/ome-pin"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: steps.plan.outputs.needed == 'true'
         with:
           name: ome-pin
