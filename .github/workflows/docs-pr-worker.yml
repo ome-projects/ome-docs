@@ -231,7 +231,7 @@ jobs:
         if: steps.verdict.outputs.accepted == 'true' && steps.examples.outcome == 'success'
         with:
           version: 10
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: steps.verdict.outputs.accepted == 'true' && steps.examples.outcome == 'success'
         with:
           node-version: '22'
