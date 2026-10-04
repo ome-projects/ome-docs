@@ -82,7 +82,7 @@ jobs:
       - uses: ./.github/actions/nightly-docs-setup
         with:
           source-sha: ${{ needs.prepare.outputs.base }}
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: docs-maintenance-context-${{ inputs.number }}
           path: ${{ runner.temp }}/docs-maintenance
@@ -136,11 +136,11 @@ jobs:
           source-sha: ${{ needs.prepare.outputs.base }}
       - name: Install pinned validation dependencies
         run: python3 -m pip install -r "$RUNNER_TEMP/nightly-docs-tools/maintenance-requirements.txt"
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: docs-maintenance-context-${{ inputs.number }}
           path: ${{ runner.temp }}/docs-maintenance
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: docs-maintenance-draft-${{ inputs.number }}
           path: ${{ runner.temp }}/docs-maintenance
@@ -209,7 +209,7 @@ jobs:
           source-sha: ${{ needs.prepare.outputs.base }}
       - name: Install pinned validation dependencies
         run: python3 -m pip install -r "$RUNNER_TEMP/nightly-docs-tools/maintenance-requirements.txt"
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: docs-maintenance-review-${{ inputs.number }}
           path: ${{ runner.temp }}/docs-maintenance
@@ -281,7 +281,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: docs-maintenance-context-${{ inputs.number }}
           path: ${{ runner.temp }}/docs-maintenance
