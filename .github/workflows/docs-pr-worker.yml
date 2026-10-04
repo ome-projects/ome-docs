@@ -227,7 +227,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 "$RUNNER_TEMP/nightly-docs-tools/maintenance.py" refresh
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: steps.verdict.outputs.accepted == 'true' && steps.examples.outcome == 'success'
         with:
           version: 10

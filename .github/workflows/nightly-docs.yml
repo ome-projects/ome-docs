@@ -102,7 +102,7 @@ jobs:
       - uses: ./.github/actions/nightly-docs-setup
         with:
           source-sha: ${{ steps.baseline.outputs.sha }}
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
       - uses: actions/setup-node@v6
@@ -382,7 +382,7 @@ jobs:
           REVIEW_JSON: ${{ steps.review.outputs.structured_output }}
         run: |
           python3 "$RUNNER_TEMP/nightly-docs-tools/nightly_docs.py" review
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: steps.verdict.outputs.accepted == 'true'
         with:
           version: 10
