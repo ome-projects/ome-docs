@@ -380,7 +380,10 @@ are marked `needs-human` rather than repeatedly launching workers.
 ## Website migration
 
 Only authored pages in `src/lib/content/` are editable; generated
-`reference/api/` pages are excluded. `src/lib/config/nav.ts` and
+`reference/api/ome.v1beta1.md` is excluded. The handwritten
+`reference/api/labels-and-annotations.md` and `reference/api/traffic-annotations.md`
+are explicitly eligible for inventory, planning, publication and maintenance;
+all other paths in that API directory remain protected. `src/lib/config/nav.ts` and
 `redirects.json` may accompany a concern as narrowly validated data.
 Navigation must retain its literal array export and fixed type-only import;
 expressions, functions, extra imports and statements are rejected before any

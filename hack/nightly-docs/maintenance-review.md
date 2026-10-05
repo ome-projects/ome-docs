@@ -27,5 +27,9 @@ fixes to the live Hugo site go to site/ in OME. Read
 src/lib/content/contributing/writing-docs.md. Use /ome/<section>/<page> URLs,
 not /ome/docs/.
 Only planned literal nav.ts and redirects.json data may accompany Markdown;
-no executable code or generated reference/api/ edits. Completing drafts needs
+no executable code or generated reference/api/ome.v1beta1.md edits. Completing drafts needs
 consistent redirect metadata; new pages need navigation and section cards.
+
+The handwritten reference/api/labels-and-annotations.md and
+reference/api/traffic-annotations.md pages are editable canonical homes and
+appear in doc_inventory. Other reference/api/ paths remain protected.
