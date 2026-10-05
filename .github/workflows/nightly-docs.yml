@@ -102,14 +102,17 @@ jobs:
       - uses: ./.github/actions/nightly-docs-setup
         with:
           source-sha: ${{ steps.baseline.outputs.sha }}
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
+      # pnpm v6 needs Node >=22.13 before bootstrap on minimal runners.
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          check-latest: true
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
       - name: Verify the base documentation site builds before planning
         run: |
           python3 "$RUNNER_TEMP/nightly-docs-tools/build_site.py" . "$RUNNER_TEMP/nightly-docs-base-site"
@@ -382,16 +385,19 @@ jobs:
           REVIEW_JSON: ${{ steps.review.outputs.structured_output }}
         run: |
           python3 "$RUNNER_TEMP/nightly-docs-tools/nightly_docs.py" review
-      - uses: pnpm/action-setup@v6
-        if: steps.verdict.outputs.accepted == 'true'
-        with:
-          version: 10
+      # pnpm v6 needs Node >=22.13 before bootstrap on minimal runners.
       - uses: actions/setup-node@v7
         if: steps.verdict.outputs.accepted == 'true'
         with:
           node-version: '22'
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          check-latest: true
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        if: steps.verdict.outputs.accepted == 'true'
+        with:
+          version: 10
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
       - name: Build the documentation site
         if: steps.verdict.outputs.accepted == 'true'
         run: |

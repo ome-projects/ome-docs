@@ -29,13 +29,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
+      # pnpm v6 needs Node >=22.13 before bootstrap on minimal runners.
       - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
-          cache: pnpm
+          check-latest: true
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       # Lint and test run before check, which generates worker-configuration.d.ts.
       - run: pnpm lint

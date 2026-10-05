@@ -207,6 +207,14 @@ build when evaluating a pilot.
 
 ## Setup
 
+Install the latest Node 22 before `pnpm/action-setup@v6` in every build job.
+Its bootstrap selects a bundled executable when system Node is below 22.13;
+that executable needs `libatomic.so.1`, absent on the minimal CPU runners.
+Setting `version: 10` or `standalone: false` does not bypass that bootstrap.
+Disable setup-node's automatic package-manager cache during this initial
+step and let the subsequent pnpm action cache the store using `pnpm-lock.yaml`.
+
+
 - `ome-runner-cpu` is one runner scale set registered to the ome-projects
   organization and shared with ome-projects/ome. The organization's Default
   runner group must allow public repositories and include this repository.

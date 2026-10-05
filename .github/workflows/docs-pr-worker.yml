@@ -227,16 +227,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 "$RUNNER_TEMP/nightly-docs-tools/maintenance.py" refresh
-      - uses: pnpm/action-setup@v6
-        if: steps.verdict.outputs.accepted == 'true' && steps.examples.outcome == 'success'
-        with:
-          version: 10
+      # pnpm v6 needs Node >=22.13 before bootstrap on minimal runners.
       - uses: actions/setup-node@v7
         if: steps.verdict.outputs.accepted == 'true' && steps.examples.outcome == 'success'
         with:
           node-version: '22'
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          check-latest: true
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        if: steps.verdict.outputs.accepted == 'true' && steps.examples.outcome == 'success'
+        with:
+          version: 10
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
       - name: Build production documentation from the trusted base
         id: build
         if: steps.verdict.outputs.accepted == 'true' && steps.examples.outcome == 'success'
