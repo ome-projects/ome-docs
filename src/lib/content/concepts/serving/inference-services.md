@@ -162,6 +162,17 @@ Each component is a pod spec, so it takes pod fields such as `nodeSelector` and 
 | `acceleratorOverride` | Engine, decoder | The component's own accelerator choice. See [Accelerator selection](#accelerator-selection). |
 | `config` | Router | Settings passed to the router's container as environment variables. |
 
+One pod field has a default of its own: `terminationGracePeriodSeconds`, how long a pod gets to finish its in-flight requests after SIGTERM. A component whose InferenceService and runtime both leave it unset takes it from the `deploy` entry of the `inferenceservice-config` ConfigMap, in every deployment mode, on its `leader` and `worker` pod specs too. The `ome-resources` chart sets that default to `600` with `ome.controller.terminationGracePeriodSeconds`, so serving pods get 600 seconds. A manifest install sets none, and the pods take the Kubernetes default, 30 seconds. OME doesn't write the value into the InferenceService, so read it from the component's workload:
+
+```bash
+kubectl get deployment llama-3-2-1b-instruct-engine -n llama-demo \
+  -o jsonpath='{.spec.template.spec.terminationGracePeriodSeconds}'
+```
+
+```output
+600
+```
+
 ## Deployment modes {#how-ome-picks-the-deployment-mode}
 
 Each component runs as a Deployment, the default, or, since v1.3, on [OMENative](../omenative/overview.md). OMENative runs the component as an InferenceReplica, which manages each replica as one [Instance](../omenative/instances.md): one pod, or a leader and its workers. OME creates, updates, repairs, moves and removes each Instance as one unit.
