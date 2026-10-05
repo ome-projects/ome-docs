@@ -65,6 +65,23 @@ Every guarded command refuses when the InferenceService fails one of these check
 
 `traffic drain` and `traffic undrain` act on the control-plane InferenceService and have refusals of their own, which [`kubectl ome traffic`](traffic.md#drain-and-undrain-refusals) lists.
 
+### Instance status decoding {#instance-status-decoding}
+
+`rollout pause`, `promote` and `rollback`, `migration start`, `runtime sync`, `scale` and `instance release-held` also read the InferenceReplicas of the [OMENative](../../concepts/omenative/overview.md) components before they decide; the other guarded commands don't read InferenceReplicas. An InferenceReplica stores the status of its [Instances](../../concepts/omenative/instances.md) as compact `ColumnarV2` columns, the chart default, or as a `DenseV1` list, as [Change the Instance status encoding](../../guides/omenative/change-the-status-encoding.md) describes. The command decodes every InferenceReplica it reads on a private copy, so its checks see the same lifecycle state under either encoding: active lifecycle work stored as columns refuses a `scale` of its component exactly as a list row does, and a valid columnar status with no active work passes.
+
+The command refuses an InferenceReplica whose rows it can't see in full:
+
+| Message | Cause |
+| --- | --- |
+| `action refused: safety inputs exceed inspection bounds` | The status holds more than 2048 rows, under either encoding. |
+| `action refused: controller safety evidence is stale or inconsistent` | The status doesn't decode: an unknown encoding, a `ColumnarV2` marker without columns or next to list rows, columns without the marker, or columns that fail validation, such as rows that the phase column doesn't cover. |
+
+`migration start` reports the second case as `migration precondition conflicts or is stale; inspect migration status and retry explicitly` and exits `3`, like its other [state refusals](migration.md#start-refusals).
+
+The 2048-row bound is the CLI's own, the same for every action. It's lower than the chart's `maxDecodedInstances` default of `20000` and the 20,000 rows that [`kubectl ome instance`](instance.md) reads, so a very large InferenceReplica can be readable everywhere else and still refuse every action. [Size `maxDecodedInstances`](../../guides/omenative/change-the-status-encoding.md#size-maxdecodedinstances) covers how many rows one InferenceReplica can hold.
+
+Decoding changes nothing about what the patch tests: the command keeps each InferenceReplica as the API server returned it, and the commands that [read their inputs again](#the-shared-sequence) before the patch compare that stored form, so a conversion that stores the same rows in the other encoding stops the action.
+
 ## The confirmation prompt {#the-confirmation-prompt}
 
 After the preview, the command asks on stderr:
