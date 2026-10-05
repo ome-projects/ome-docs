@@ -2934,10 +2934,15 @@ Underlying type: `string`.
 
 Used by [`ComponentStatusSpec`](#ome-io-v1beta1-ComponentStatusSpec), [`InferenceServiceStatus`](#ome-io-v1beta1-InferenceServiceStatus).
 
-CanaryStatus tracks progress of a spec.rollout.groups[].canary rollout. It is the
-executor&#39;s persistent state machine: which step is active, when it was
+CanaryStatus is the canary executor&#39;s persistent state machine for one
+unit&#39;s spec.rollout.groups[].canary run: which step is active, when it was
 entered (Auto promotion measures Pause.Duration from here), and which
-revision is the canary. Absent when no canary is in progress.
+revisions are the canary and the stable. It is written when a canary arms
+and replaced in place when a new target re-arms the unit; it is never
+cleared, so it also records how the last run ended. A completed run keeps
+CurrentStep equal to the number of steps with ObservedTrafficWeight 100
+and StableRevisionHash empty; a rollback keeps RolledBackRevisionHash; a
+park keeps Failed. Absent only until the unit&#39;s first canary arms.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -2974,7 +2979,8 @@ completes (the canary revision becomes the new stable).
 <td><code>int32</code></td>
 <td>
 
-CurrentStep is the zero-based index into spec.rollout.groups[i].canary.steps.
+CurrentStep is the zero-based index into spec.rollout.groups[i].canary.steps;
+equal to the number of steps once the canary has completed.
 
 </td></tr>
 <tr><td><code>stepEnteredTime</code></td>
@@ -3087,8 +3093,11 @@ Failed records that the canary is parked at CurrentStep: the capacity
 gate stayed unmet past the ready timeout, analysis stayed inconclusive
 past the stall timeout, or a rollback found no stable revision to
 return to. While set the step machine does not run, the phase reads
-Failed and the stable revision keeps serving. Cleared by a re-arm
-toward a new target and by a rollback request.
+Failed and the stable revision keeps serving. A re-arm toward a new
+target clears any park. A rollback request clears a capacity-timeout
+or analysis park and drains the rejected revision; a park for a
+missing stable revision refuses the request and removes it, since the
+revert it asks for is the one that could not run.
 
 </td></tr>
 </tbody>
@@ -4011,14 +4020,17 @@ Nil otherwise.
 <td>
 
 Since v1.3.
-RolloutPhase reflects the current rollout state for this
-Component. One of Stable, Canarying,
-BlueGreenStandby, Pending, Paused, Promoting, RollingBack,
-RolledBack, Failed. Empty when no rollout is in flight on this
-Component (also empty for Components on deployment modes without
-the rollout contract — e.g. RawDeployment).
+RolloutPhase is the canary step machine&#39;s state for this Component
+when a spec.rollout canary group governs it. One of Stable, Canarying,
+Pending, Paused, Promoting, RollingBack, RolledBack, Failed. Written
+on the Component the step machine drives (the unit&#39;s entrypoint) and
+never cleared: it reads Stable between runs, a completed canary
+included. Empty for Components no canary group governs
+(blueGreen/rollingUpdate groups report under
+status.rolloutCoordination) and on deployment modes without the
+rollout contract — e.g. RawDeployment.
 
-Allowed values: `Stable`, `Canarying`, `BlueGreenStandby`, `Pending`, `Paused`, `Promoting`, `RollingBack`, `RolledBack`, `Failed`.
+Allowed values: `Stable`, `Canarying`, `Pending`, `Paused`, `Promoting`, `RollingBack`, `RolledBack`, `Failed`.
 
 </td></tr>
 <tr><td><code>latestReadyRevision</code></td>
@@ -4076,7 +4088,8 @@ Canary tracks the canary step machine for the unit this Component
 belongs to — the router alone, or engine+decoder together. It is
 written on the unit&#39;s entrypoint Component (the router, or the engine)
 and is absent on a secondary, so a reader never sees two copies of one
-run. Absent when the unit has no canary running.
+run. Absent until the unit&#39;s first canary arms; afterwards it carries
+the unit&#39;s most recent run, a finished one included (see CanaryStatus).
 
 Units advance independently, which is why the state cannot live in the
 single InferenceServiceStatus.Canary: two runs would overwrite each
@@ -5712,9 +5725,7 @@ Used by [`InferenceService`](#ome-io-v1beta1-InferenceService).
 
 InferenceServiceSpec is the desired state of an InferenceService.
 
-Validation: spec.routing.capacityFactors and deprecated spec.placement.capacityFactors must not both be set.
-
-Validation: ClusterAffinity placement policy cannot be removed; drain and recreate the service to use Legacy.
+Validation: ClusterAffinity placement policy cannot be removed; drain and recreate the service to change placement ownership.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -5794,6 +5805,24 @@ based on the model&#39;s size, architecture, format, quantization, and framework
 Router defines the router spec
 
 </td></tr>
+<tr><td><code>replicaRefs</code></td>
+<td><a href="#ome-io-v1beta1-ReplicaRefs"><code>ReplicaRefs</code></a></td>
+<td>
+
+ReplicaRefs names, per role, the standalone InferenceReplicas this
+service fronts instead of rendering the role itself. The service
+creates the role&#39;s stable Service (&lt;name&gt;-engine, -decoder, -router)
+and the route in front of their pods and writes nothing on the
+replicas: their specs, rollouts and scaling stay with their owner. A
+service references either all of its roles this way or none, so
+spec.engine, spec.decoder and spec.router are unset with it, as are
+spec.model and spec.runtime (the replicas carry their own); engine is
+required. Fixed at create. A
+replica that needs a peer&#39;s address (an engine its decoder, a router
+its engine and decoder) is configured by its owner with the stable
+Service names, which exist once the service does.
+
+</td></tr>
 <tr><td><code>acceleratorSelector</code></td>
 <td><a href="#ome-io-v1beta1-AcceleratorSelector"><code>AcceleratorSelector</code></a></td>
 <td>
@@ -5839,12 +5868,9 @@ may change without notice.
 <td>
 
 Since v1.3.
-Placement declares how the multi-cluster control plane selects and orders
-the workload clusters this InferenceService is placed onto. When nil, the
-control plane falls back to the ome.io/accelerator-requirements and
-ome.io/cluster-selector annotations (unchanged legacy behavior). Only
-consulted on the control-plane cluster; ignored in single-cluster
-deployments. Alpha; the API may change without notice.
+Placement declares how the multi-cluster control plane selects workload
+clusters and allocates replicas. An absent block declares no placement
+intent. Derived member services carry allocation authority in metadata.
 
 </td></tr>
 <tr><td><code>routing</code></td>
@@ -5966,8 +5992,11 @@ annotation; otherwise nil so older clients see nothing.
 <td>
 
 Since v1.3.
-Canary tracks an in-progress spec.rollout.canary rollout (the step
-state machine). Absent when no canary is running.
+Canary mirrors the canary run of the unit that owns the ISVC
+entrypoint (the router&#39;s when it has one, else the engine&#39;s); the
+per-unit copy on ComponentStatusSpec.Canary is authoritative. Absent
+until a canary first arms; afterwards it carries that unit&#39;s most
+recent run, a finished one included (see CanaryStatus).
 
 </td></tr>
 <tr><td><code>placement</code></td>
@@ -8606,39 +8635,6 @@ Minimum items: `1`. Maximum items: `3`.
 </tbody>
 </table>
 
-### `PlacementLegacyFields` {#ome-io-v1beta1-PlacementLegacyFields}
-
-Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
-
-PlacementLegacyFields records obsolete fields whose zero values would be omitted.
-
-<table class="doc-api-fields">
-<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
-<tbody>
-<tr><td><code>Requirements</code> <span class="doc-api-required">Required</span></td>
-<td><code>bool</code></td>
-<td>
-
-
-
-</td></tr>
-<tr><td><code>ClusterSelector</code> <span class="doc-api-required">Required</span></td>
-<td><code>bool</code></td>
-<td>
-
-
-
-</td></tr>
-<tr><td><code>CapacityFactors</code> <span class="doc-api-required">Required</span></td>
-<td><code>bool</code></td>
-<td>
-
-
-
-</td></tr>
-</tbody>
-</table>
-
 ### `PlacementMode` {#ome-io-v1beta1-PlacementMode}
 
 Used by [`PlacementPlanStatus`](#ome-io-v1beta1-PlacementPlanStatus), [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec), [`TrafficMapSpec`](#ome-io-v1beta1-TrafficMapSpec).
@@ -8795,7 +8791,7 @@ PlacementPolicy selects the matching and allocation contract.
 
 Underlying type: `string`.
 
-Allowed values: `Legacy`, `ClusterAffinity`.
+Allowed values: `ClusterAffinity`.
 
 ### `PlacementSingleMoveStatus` {#ome-io-v1beta1-PlacementSingleMoveStatus}
 
@@ -8827,30 +8823,25 @@ Cursor identifies the last nominated replacement for fair bounded retries.
 
 Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec).
 
-PlacementSpec declares multi-cluster intent. Policy omission preserves the
-legacy selector and allocation contract, including its mode defaults.
-
-Validation: ClusterAffinity requires an explicit mode.
+PlacementSpec declares explicit multi-cluster matching and allocation intent.
 
 Validation: replacementTimeout requires ClusterAffinity Single placement.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
-<tr><td><code>policy</code></td>
+<tr><td><code>policy</code> <span class="doc-api-required">Required</span></td>
 <td><a href="#ome-io-v1beta1-PlacementPolicy"><code>PlacementPolicy</code></a></td>
 <td>
 
-Policy explicitly opts into ClusterAffinity semantics. Omission is Legacy.
-ClusterAffinity cannot be removed from an existing service; migrating back
-requires draining and recreating the source and its derived workloads.
+Policy selects ClusterAffinity matching and persisted allocation plans.
 
 </td></tr>
-<tr><td><code>mode</code></td>
+<tr><td><code>mode</code> <span class="doc-api-required">Required</span></td>
 <td><a href="#ome-io-v1beta1-PlacementMode"><code>PlacementMode</code></a></td>
 <td>
 
-Mode is required for ClusterAffinity. Legacy omission means Single.
+Mode selects the placement cardinality and replica allocation strategy.
 
 </td></tr>
 <tr><td><code>clusterAffinity</code></td>
@@ -8884,44 +8875,12 @@ move. Omission retains pending probes; a positive duration allows rotation.
 Validation: replacementTimeout must be a positive duration.
 
 </td></tr>
-<tr><td><code>-</code> <span class="doc-api-required">Required</span></td>
-<td><a href="#ome-io-v1beta1-PlacementLegacyFields"><code>PlacementLegacyFields</code></a></td>
-<td>
-
-LegacyFields retains explicit zero-valued obsolete fields during JSON round trips.
-It is serialization bookkeeping and is not a wire field.
-
-</td></tr>
-<tr><td><code>requirements</code></td>
-<td><code>string</code></td>
-<td>
-
-Requirements is a Legacy label selector, ANDed with ClusterSelector.
-Deprecated: opt into ClusterAffinity and use clusterAffinity.
-
-</td></tr>
-<tr><td><code>clusterSelector</code></td>
-<td><code>string</code></td>
-<td>
-
-ClusterSelector is a Legacy selector over labels and virtual metadata.name.
-Deprecated: opt into ClusterAffinity and use clusterAffinity.
-
-</td></tr>
 <tr><td><code>split</code></td>
 <td><a href="#ome-io-v1beta1-SplitSpec"><code>SplitSpec</code></a></td>
 <td>
 
 Split provides the requested floor and optional per-home ceiling for
 Split and SplitByCapacity. ClusterAffinity rejects it in other modes.
-
-</td></tr>
-<tr><td><code>capacityFactors</code></td>
-<td><a href="https://pkg.go.dev/k8s.io/apimachinery/pkg/api/resource#Quantity"><code>map[string]Quantity</code></a></td>
-<td>
-
-CapacityFactors is the Legacy alias for routing capacity factors.
-Deprecated: use spec.routing.capacityFactors.
 
 </td></tr>
 </tbody>
@@ -9544,6 +9503,41 @@ Default: `engine`.
 Ratios maps each follower Component to its replica ratio relative to the
 anchor. A ratio of 1.0 means parity; 0.25 means one follower per four
 anchor replicas (rounded up). Components not listed scale independently.
+
+</td></tr>
+</tbody>
+</table>
+
+### `ReplicaRefs` {#ome-io-v1beta1-ReplicaRefs}
+
+Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec).
+
+ReplicaRefs names the standalone InferenceReplicas an InferenceService
+fronts, per role. Each list names one replica of that component in the
+service&#39;s namespace.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>engine</code></td>
+<td><code>[]string</code></td>
+<td>
+
+Engine names the replicas that serve the engine role.
+
+</td></tr>
+<tr><td><code>decoder</code></td>
+<td><code>[]string</code></td>
+<td>
+
+Decoder names the replicas that serve the decoder role.
+
+</td></tr>
+<tr><td><code>router</code></td>
+<td><code>[]string</code></td>
+<td>
+
+Router names the replicas that serve the router role.
 
 </td></tr>
 </tbody>
@@ -10274,9 +10268,12 @@ Duration to pause at this step; see the type doc for how each gate uses it.
 
 Used by [`ComponentStatusSpec`](#ome-io-v1beta1-ComponentStatusSpec).
 
-RolloutPhase reflects the current rollout state for a Component.
-Operators read it to understand which rollout strategy is active and
-whether it has succeeded. Lives on ComponentStatusSpec.RolloutPhase.
+RolloutPhase is the canary step machine&#39;s projected state for a Component
+that a spec.rollout canary group governs. The canary executor writes it on
+the Component it drives (the unit&#39;s entrypoint) and nothing clears it, so
+it persists between runs. Lives on ComponentStatusSpec.RolloutPhase.
+Components that blueGreen/rollingUpdate groups drive carry no phase; their
+state is under status.rolloutCoordination.
 
 Underlying type: `string`.
 
@@ -11759,32 +11756,6 @@ would pin if the inline progression were removed.
 </tbody>
 </table>
 
-### `SplitLegacyFields` {#ome-io-v1beta1-SplitLegacyFields}
-
-Used by [`SplitSpec`](#ome-io-v1beta1-SplitSpec).
-
-SplitLegacyFields records obsolete fields whose zero values would be omitted.
-
-<table class="doc-api-fields">
-<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
-<tbody>
-<tr><td><code>Spread</code> <span class="doc-api-required">Required</span></td>
-<td><code>bool</code></td>
-<td>
-
-
-
-</td></tr>
-<tr><td><code>MinReplicasPerCluster</code> <span class="doc-api-required">Required</span></td>
-<td><code>bool</code></td>
-<td>
-
-
-
-</td></tr>
-</tbody>
-</table>
-
 ### `SplitSpec` {#ome-io-v1beta1-SplitSpec}
 
 Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
@@ -11795,14 +11766,6 @@ falls back only to an explicitly declared positive engine.minReplicas.
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
-<tr><td><code>-</code> <span class="doc-api-required">Required</span></td>
-<td><a href="#ome-io-v1beta1-SplitLegacyFields"><code>SplitLegacyFields</code></a></td>
-<td>
-
-LegacyFields retains explicit zero-valued obsolete fields during JSON round trips.
-It is serialization bookkeeping and is not a wire field.
-
-</td></tr>
 <tr><td><code>replicas</code></td>
 <td><code>int32</code></td>
 <td>
@@ -11816,31 +11779,14 @@ ceiling that stays a per-home local concern).
 Minimum: `1`.
 
 </td></tr>
-<tr><td><code>spread</code></td>
-<td><code>bool</code></td>
-<td>
-
-Spread requests ceil(replicas/candidates) on each Legacy candidate.
-False uses admission-driven packing in candidate name order.
-Deprecated: ClusterAffinity uses exact shares and optional affinity weights.
-
-</td></tr>
 <tr><td><code>maxReplicasPerCluster</code></td>
 <td><code>int32</code></td>
 <td>
 
-MaxReplicasPerCluster is an optional local ceiling. ClusterAffinity holds
-plans exceeding it; Legacy clips requests to it. Zero leaves it uncapped.
+MaxReplicasPerCluster is an optional local ceiling. Plans exceeding it
+are held; zero follows the assigned allocation without an extra ceiling.
 
 Minimum: `0`.
-
-</td></tr>
-<tr><td><code>minReplicasPerCluster</code></td>
-<td><code>int32</code></td>
-<td>
-
-MinReplicasPerCluster discards Legacy homes admitted below this count.
-Deprecated: ClusterAffinity exact shares cannot discard a small admission.
 
 </td></tr>
 </tbody>
@@ -11896,6 +11842,7 @@ StorageUri specifies the source URI of the model in a supported storage backend.
 Supported formats:
 
 - OCI Object Storage:   oci://n/{namespace}/b/{bucket}/o/{object_path}
+- CNCF ModelPack:       modelpack://{registry}/{repository}[:{tag}]
 - Persistent Volume:    pvc://{pvc-name}/{sub-path}
 - Vendor-specific:      vendor://{vendor-name}/{resource-type}/{resource-path}
 - Hugging Face:         hf://{org}/{repo}[@{revision}]
