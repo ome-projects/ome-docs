@@ -42,3 +42,13 @@ Review the current src/lib/content/ pages here, even though AGENTS.md says fixes
 to the live Hugo site go to site/ in OME. Check website writing conventions, /ome/
 section routes, navigation/section-card placement, and draft redirect metadata.
 Old Hugo PRs are not proof this website concern is already covered.
+
+RELEASE CLAIMS REQUIRE RELEASE EVIDENCE:
+For every added or changed since badge or release comparison, require source
+evidence for the named release as well as the pinned current code. Existing
+page conventions, style-guide examples, commit dates, and the writer's
+explanation are not release evidence. In particular, a "Since v1.3 / On v1.2.2"
+comparison is not accurate merely because neighboring paragraphs use it.
+The model tools cannot run git show to inspect a tag. Reject a new historical
+claim when readable release-specific evidence is absent; describing verified
+current behavior without claiming a release boundary is acceptable.

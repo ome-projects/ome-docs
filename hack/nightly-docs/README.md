@@ -205,6 +205,16 @@ review verdict. A successful run with a rejected verdict is not a successful
 repair: require an accepted verdict, a useful existing-page diff, and a passing
 build when evaluating a pilot.
 
+## Release-version evidence
+
+Writer and reviewer prompts require release-specific source evidence for new
+since badges and release comparisons. The pinned checkout proves current
+behavior; neighboring prose, style-guide examples and commit dates do not
+prove what a named release implemented. The restricted model tools cannot run
+`git show` against tags, so without supplied readable release sources, writers
+must avoid speculative version boundaries and reviewers must reject them.
+If the historical distinction is essential, the writer leaves the tree unchanged.
+
 ## Setup
 
 Install the latest Node 22 before `pnpm/action-setup@v6` in every build job.
