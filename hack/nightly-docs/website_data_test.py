@@ -1,6 +1,7 @@
 """Website migration and the non-executable metadata boundary."""
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -51,6 +52,23 @@ class WebsiteDataTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             docs.validate_item(proposal(doc_paths=[data.NAV]))
         docs.validate_item(proposal(doc_paths=[docs.DOC_ROOT + 'guides/x.md', data.NAV, data.REDIRECTS]))
+
+    def test_handwritten_api_pages_are_editable_and_in_inventory(self):
+        paths = [docs.DOC_ROOT + 'reference/api/' + name for name in
+                 ['labels-and-annotations.md', 'traffic-annotations.md']]
+        for path in paths:
+            self.assertTrue(docs.authored_page(path), path)
+        def git(*args):
+            return subprocess.check_output(['git', '-C', str(ROOT), *args], text=True).strip()
+        with patch.object(docs, 'git', side_effect=git):
+            pages = placement.inventory('HEAD')
+        known = {page['path'] for page in pages}
+        self.assertTrue(set(paths) <= known)
+        self.assertNotIn(docs.DOC_ROOT + 'reference/api/ome.v1beta1.md', known)
+        for path in paths:
+            item = docs.validate_item(proposal(doc_paths=[path], placement={
+                'examined_pages': paths, 'canonical_pages': [path], 'new_page_reason': ''}))
+            placement.validate(item, pages)
 
     def test_metadata_is_not_a_new_page(self):
         page = docs.DOC_ROOT + 'guides/x.md'

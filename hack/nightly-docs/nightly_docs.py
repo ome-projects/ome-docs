@@ -14,7 +14,11 @@ import website_data
 
 
 DOC_ROOT = "src/lib/content/"
-GENERATED = DOC_ROOT + "reference/api/index.md"
+GENERATED = DOC_ROOT + "reference/api/ome.v1beta1.md"
+# This directory mixes generated types with two handwritten reference pages.
+# Keep other API paths closed to automated edits, including future generators.
+AUTHORED_API = {DOC_ROOT + "reference/api/" + name for name in
+                ("labels-and-annotations.md", "traffic-annotations.md")}
 MAX_LINES = 1000
 MAX_PRS = 100
 # The documented code is in another repository. Every documentation revision
@@ -76,7 +80,7 @@ def pages(endpoint):
 def authored_page(path):
     return (path.startswith(DOC_ROOT) and website_data.page_path(path)
             and path.removeprefix(DOC_ROOT).split('/')[0] in website_data.SECTIONS
-            and not path.startswith(DOC_ROOT + "reference/api/"))
+            and (not path.startswith(DOC_ROOT + "reference/api/") or path in AUTHORED_API))
 
 
 def doc_path(path):

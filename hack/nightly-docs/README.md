@@ -205,7 +205,25 @@ review verdict. A successful run with a rejected verdict is not a successful
 repair: require an accepted verdict, a useful existing-page diff, and a passing
 build when evaluating a pilot.
 
+## Release-version evidence
+
+Writer and reviewer prompts require release-specific source evidence for new
+since badges and release comparisons. The pinned checkout proves current
+behavior; neighboring prose, style-guide examples and commit dates do not
+prove what a named release implemented. The restricted model tools cannot run
+`git show` against tags, so without supplied readable release sources, writers
+must avoid speculative version boundaries and reviewers must reject them.
+If the historical distinction is essential, the writer leaves the tree unchanged.
+
 ## Setup
+
+Install the latest Node 22 before `pnpm/action-setup@v6` in every build job.
+Its bootstrap selects a bundled executable when system Node is below 22.13;
+that executable needs `libatomic.so.1`, absent on the minimal CPU runners.
+Setting `version: 10` or `standalone: false` does not bypass that bootstrap.
+Disable setup-node's automatic package-manager cache during this initial
+step and let the subsequent pnpm action cache the store using `pnpm-lock.yaml`.
+
 
 - `ome-runner-cpu` is one runner scale set registered to the ome-projects
   organization and shared with ome-projects/ome. The organization's Default
@@ -372,7 +390,10 @@ are marked `needs-human` rather than repeatedly launching workers.
 ## Website migration
 
 Only authored pages in `src/lib/content/` are editable; generated
-`reference/api/` pages are excluded. `src/lib/config/nav.ts` and
+`reference/api/ome.v1beta1.md` is excluded. The handwritten
+`reference/api/labels-and-annotations.md` and `reference/api/traffic-annotations.md`
+are explicitly eligible for inventory, planning, publication and maintenance;
+all other paths in that API directory remain protected. `src/lib/config/nav.ts` and
 `redirects.json` may accompany a concern as narrowly validated data.
 Navigation must retain its literal array export and fixed type-only import;
 expressions, functions, extra imports and statements are rejected before any
