@@ -154,7 +154,7 @@ The canary's phase is in `status.components.<component>.rolloutPhase` of the gro
 
 | When | The canary |
 | --- | --- |
-| A change gives the group a newer revision | Starts again at step 1 with the newest revision, and keeps the same stable revision. A `Failed` canary stays `Failed`: see [`readyTimeout`](#readytimeout). |
+| A change gives the group a newer revision | Starts again at step 1 with the newest revision, and keeps the same stable revision. A `Failed` canary starts again too, when the newest revision is neither its own nor the stable one: see [`readyTimeout`](#readytimeout). |
 | You pause the rollout | Holds its step, but its clocks keep running, so it can advance or fail as soon as you resume. See [Pause and resume a rollout](../../guides/roll-out-changes/pause-and-resume-a-rollout.md). |
 | You run the alpha `kubectl ome rollout rollback`, or [its analysis](canary-analysis.md#how-a-sample-is-judged) rolls it back | Records 0% for the new revision at once, and moves every Instance back to the stable revision. The component stays on the stable revision until a change produces a revision other than those two. See [Roll back the canary](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary). |
 | A step runs past its [ready timeout](#readytimeout) | Goes to `Failed`. A stalled analysis with `onInconclusive: RollbackOnStall` rolls it back instead. |
@@ -185,7 +185,7 @@ The ready timeout bounds how long a step waits in `Pending` for its new Instance
 
 With none set, the canary never fails: a step waits in `Pending` until its Instances are ready. The timeout counts from when the step last entered `Pending`. For an analysis, it counts from the last conclusive sample, or from when the step's new Instances were ready if there's none yet.
 
-When it expires, the phase is `Failed`. The canary keeps its Instances and its recorded traffic, the stable Instances keep serving, and `promote` refuses. A new change leaves a failed canary at `Failed`, so [roll it back](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) first, then apply the fix, as [When a step never becomes ready](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#when-a-step-never-becomes-ready) shows. This is a known bug.
+When it expires, the phase is `Failed`. The canary keeps its Instances and its recorded traffic, the stable Instances keep serving, and `promote` refuses. Apply a fix that gives the group a revision other than the failed canary's and the stable one, and a fresh canary starts at step 1 toward it, with the same stable revision. A [rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) also works on a failed canary: every Instance returns to the stable revision, as [When a step never becomes ready](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#when-a-step-never-becomes-ready) shows.
 
 ## What admission rejects
 

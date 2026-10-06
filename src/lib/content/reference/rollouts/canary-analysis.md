@@ -164,7 +164,7 @@ With `Rollback`, a Prometheus outage, a missing token Secret or a `no data` resu
 
 The analysis stalls when its samples stay inconclusive for longer than the canary's [ready timeout](canary-progression.md#readytimeout), 15 minutes with the chart's defaults.
 
-A `Failed` canary stays at its step, even after you fix the metrics source, and `promote --override-analysis` refuses there. A new revision doesn't start a fresh canary either, which is a known bug. Roll the canary back with the alpha `kubectl ome rollout rollback`, then apply your fix, as [When a step never becomes ready](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#when-a-step-never-becomes-ready) shows.
+A `Failed` canary stays at its step, even after you fix the metrics source, and `promote --override-analysis` refuses there. A change that gives the component a revision other than the failed canary's and the stable one starts a fresh canary at step 1. You can also roll the canary back with the alpha `kubectl ome rollout rollback`, then apply your fix, as [When a step never becomes ready](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#when-a-step-never-becomes-ready) shows.
 
 ## Analysis in status
 
