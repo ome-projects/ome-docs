@@ -194,7 +194,7 @@ These are the messages you're most likely to see. [Refusals](../../reference/kub
 | `traffic drain requires --workload-cluster; --cluster selects the Kubernetes API cluster` | Name the cluster to drain with `--workload-cluster`, not `--cluster`. |
 | `required Kubernetes API request failed; check access and connectivity` | The service isn't in that namespace, you lack permission, or the API server is unreachable. After the preview, see [The command fails after you confirm](#the-outcome-is-unknown). |
 | `action refused: placement sources and derived services cannot be mutated` | The target is placement's copy on a workload cluster. Switch to the control-plane cluster's context. |
-| `traffic action refused: target is not eligible for cross-cluster traffic routing` | Routing skips the service: its `spec.placement` has no `requirements` or `clusterSelector`. |
+| `traffic action refused: target is not eligible for cross-cluster traffic routing` | The service has no `spec.placement` block, and no obsolete `ome.io/accelerator-requirements` or `ome.io/cluster-selector` annotation, so routing ignores it. Set `spec.placement`, as the prerequisites describe. |
 | `traffic drain refused: override ID already exists` | The service already has a drain with this ID. Choose another ID, or undrain it first. |
 | `traffic undrain refused: override ID does not exist` | The service has no drain with this ID. List its drains as in [Step 2](#step-2-check-the-drain). |
 | `action not confirmed; noninteractive input requires --yes` | Answer `y` at the prompt. In a script, pass `--yes`. |
