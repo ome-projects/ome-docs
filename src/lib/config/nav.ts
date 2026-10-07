@@ -110,6 +110,7 @@ export const nav: NavSection[] = [
 					'operate-ome/model-agent.md',
 					'operate-ome/configure-model-artifact-retention.md',
 					'operate-ome/shared-hf-artifacts.md',
+					'operate-ome/replicate-model-weights.md',
 					'operate-ome/metrics.md',
 					'operate-ome/alerting.md',
 					'operate-ome/move-to-the-helm-charts.md'
