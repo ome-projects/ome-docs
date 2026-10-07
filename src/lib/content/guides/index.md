@@ -259,6 +259,10 @@ Multi-cluster placement and routing are alpha, still in development, and off by 
 
     Keep one downloaded copy of a Hugging Face snapshot per node and share it across BaseModels and ClusterBaseModels with downloadPolicy ReuseIfExists.
 
+-   **[Replicate model weights](operate-ome/replicate-model-weights.md)**
+
+    Copy model weights between Hugging Face, OCI Object Storage and PVCs with the ome-agent replica command, run as a one-shot Kubernetes Job.
+
 -   **[Collect metrics](operate-ome/metrics.md)**
 
     Tune or turn off the short-retention Prometheus that the ome-resources chart deploys for KEDA autoscaling and canary analysis, or scrape OME with your own.
