@@ -170,6 +170,11 @@
 		"rewrittenFrom": "ca69dc7d"
 	},
 	{
+		"old": "administration/model-replication.md",
+		"new": "guides/operate-ome/replicate-model-weights.md",
+		"rewrittenFrom": "35564530"
+	},
+	{
 		"old": "administration/metrics.md",
 		"new": "guides/operate-ome/metrics.md",
 		"rewrittenFrom": "23c15a51"

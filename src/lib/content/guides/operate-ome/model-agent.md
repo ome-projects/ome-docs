@@ -146,7 +146,7 @@ The chart writes these values into the DaemonSet in plain text, so give each mod
 
 ## How downloads run {#workers-and-queues}
 
-The chart runs two download workers, so at most two models download at once on a node, and the others wait their turn. After a restart, the agent's checks of its models queue up the same way.
+The chart runs two download workers, so at most two models download at once on a node, and the others wait their turn. After a restart, the agent checks its models again, and downloads go first: the agent re-checks an `oci://` model that was `Ready` before the restart, and that still has its files on the node, only when no download is waiting. Checks of `hf://` models, and of models that weren't `Ready` or that lost their files, queue up with the downloads, so a new model's download can wait behind them.
 
 The agent doesn't retry a failed model by itself. It tries again when [its pod restarts](#a-model-stays-updating), or when [a change to the model](../../concepts/models/base-models.md#choose-the-nodes) makes the nodes process it again.
 
