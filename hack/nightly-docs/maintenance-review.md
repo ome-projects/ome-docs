@@ -27,5 +27,19 @@ fixes to the live Hugo site go to site/ in OME. Read
 src/lib/content/contributing/writing-docs.md. Use /ome/<section>/<page> URLs,
 not /ome/docs/.
 Only planned literal nav.ts and redirects.json data may accompany Markdown;
-no executable code or generated reference/api/ edits. Completing drafts needs
+no executable code or generated reference/api/ome.v1beta1.md edits. Completing drafts needs
 consistent redirect metadata; new pages need navigation and section cards.
+
+The handwritten reference/api/labels-and-annotations.md and
+reference/api/traffic-annotations.md pages are editable canonical homes and
+appear in doc_inventory. Other reference/api/ paths remain protected.
+
+RELEASE CLAIMS REQUIRE RELEASE EVIDENCE:
+For every added or changed since badge or release comparison, require source
+evidence for the named release as well as the pinned current code. Existing
+page conventions, style-guide examples, commit dates, and the writer's
+explanation are not release evidence. In particular, a "Since v1.3 / On v1.2.2"
+comparison is not accurate merely because neighboring paragraphs use it.
+The model tools cannot run git show to inspect a tag. Reject a new historical
+claim when readable release-specific evidence is absent; describing verified
+current behavior without claiming a release boundary is acceptable.

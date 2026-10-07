@@ -43,5 +43,5 @@ repos:
         additional_dependencies: [PyYAML==6.0.2, jsonschema==4.25.1]
         # The tests also read the real navigation and redirects, which the
         # automation accepts only as literal data.
-        files: ^(hack/nightly-docs/|\.github/workflows/(nightly-docs|docs-pr-maintenance|docs-pr-worker|move-ome-pin)\.yml|\.github/actions/nightly-docs-setup/|src/lib/config/nav\.ts$|redirects\.json$)
+        files: ^(hack/nightly-docs/|\.github/workflows/(nightly-docs|docs-pr-maintenance|docs-pr-worker|move-ome-pin|website)\.yml|\.github/actions/nightly-docs-setup/|src/lib/config/nav\.ts$|redirects\.json$)
         pass_filenames: false
