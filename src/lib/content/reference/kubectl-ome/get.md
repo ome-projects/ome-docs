@@ -17,7 +17,7 @@ Give one RESOURCE from [Resources](#resources), in any letter case, and at most 
 | Resource | Also accepted | Scope | What it lists |
 | --- | --- | --- | --- |
 | `inferenceservices` | `inferenceservice`, `isvc`, `isvcs` | Namespaced | InferenceServices |
-| `inferencereplicas` | `inferencereplica`, `ir` | Namespaced | The InferenceReplicas that OME creates, one for each OMENative component |
+| `inferencereplicas` | `inferencereplica`, `ir` | Namespaced | InferenceReplicas, both the ones OME creates for OMENative components and the ones you create directly |
 | `models` | `model` | Merged | BaseModels, then ClusterBaseModels |
 | `basemodels` | `basemodel`, `bm` | Namespaced | BaseModels |
 | `clusterbasemodels` | `clusterbasemodel`, `cbm` | Cluster | ClusterBaseModels |
@@ -86,12 +86,12 @@ The RolloutPolicy, AutoscalerPolicy and TrafficMap tables hide stale values: a c
 
 ### `inferencereplicas` {#inferencereplicas-columns}
 
-OME writes an InferenceReplica for each OMENative component of an InferenceService. It holds the component's replicas, each one an [Instance](../../concepts/omenative/instances.md): one pod, or a leader and its workers. [`kubectl ome instance`](instance.md) lists the Instances themselves.
+OME writes an InferenceReplica for each OMENative component of an InferenceService, and you can also create one directly, with no parent InferenceService: a standalone replica. The view lists both. An InferenceReplica holds its component's replicas, each one an [Instance](../../concepts/omenative/instances.md): one pod, or a leader and its workers. [`kubectl ome instance`](instance.md) lists the Instances themselves.
 
 | Column | What it shows |
 | --- | --- |
 | COMPONENT | `spec.component`. |
-| PARENT | `spec.parentRef.name`, the InferenceService. |
+| PARENT | `spec.parentRef.name`, the InferenceService, or `-` for a standalone replica, which sets no `spec.parentRef`. |
 | DESIRED | `spec.replicas`, the number of Instances the component should run. |
 | CURRENT | `status.replicas`, the number of Instances, in any phase. |
 | READY | `status.readyReplicas`, as [Readiness and availability](../../concepts/omenative/instances.md#readiness-and-availability) defines it. |
@@ -264,9 +264,10 @@ kubectl ome get ir -n demo
 ```output
 NAME          COMPONENT   PARENT   DESIRED   CURRENT   READY   LIFECYCLE    AGE
 chat-engine   engine      chat     4         3         2       Ready=True   -
+pool-a        engine      -        2         2         2       Ready=True   -
 ```
 
-The engine of `chat` should run 4 Instances. It has 3, of which 2 are ready, and its `Ready` condition is `True`.
+The engine of `chat` should run 4 Instances. It has 3, of which 2 are ready, and its `Ready` condition is `True`. `pool-a` is a standalone replica, created with no parent InferenceService, so its PARENT shows `-`.
 
 List the accelerator quotas:
 
