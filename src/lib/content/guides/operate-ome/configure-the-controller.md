@@ -3,7 +3,7 @@ title: Configure the controller
 description: "Tune the OME controller manager's command-line flags, including reconcile concurrency, leader election and runtime-revision garbage collection."
 ---
 
-Set the OME controller manager's command-line flags to speed up changes to your InferenceServices, keep its leader stable during API server slowdowns, or apply ConfigMap edits sooner. [Controller manager flags](../../reference/operate-ome/controller-manager-flags.md) lists them all, with their defaults.
+Set the OME controller manager's command-line flags to speed up changes to your InferenceServices, keep its leader stable during API server slowdowns, or apply ConfigMap edits sooner. [Controller manager flags](../../reference/operate-ome/controller-manager-flags.md) lists them all, with their defaults. The chart can also [add environment variables and files to the manager pod](#add-environment-variables-and-files-to-the-manager-pod), such as proxy settings and a private CA bundle.
 
 <div class="prerequisites" markdown>
 
@@ -66,7 +66,7 @@ deployment.apps/ome-controller-manager patched
 The pods roll, as with a Helm value. When a flag appears twice, the manager uses the last one, so a patch can also override a flag that the chart passes, such as `--zap-encoder`.
 
 !!! warning "`helm upgrade` can remove patched flags"
-    A `helm upgrade` of the release can set the arguments back to what the chart renders, even when no value changed, and the pods then roll without your flags. After an upgrade, check the flags as in [Step 2](#step-2-check-the-running-flags), and patch again if they're gone.
+    A `helm upgrade` of the release can set the arguments back to what the chart renders, even when no value changed, and the pods then roll without your flags. After an upgrade, check the flags as in [Step 2](#step-2-check-the-running-flags), and patch again if they're gone. The same goes for environment variables and mounts that you patch in: add those with values instead, as in [Add environment variables and files to the manager pod](#add-environment-variables-and-files-to-the-manager-pod).
 
 ## Step 2: Check the running flags
 
@@ -185,6 +185,70 @@ The manager reads these settings only when it starts, so a `kubectl` edit to one
 Set the TTL with `ome.controller.configCacheTTL`, as a quoted string such as `"10s"`. Lower it when 30 seconds is too long to wait for a `kubectl` edit. Raise it when the manager's reads of the ConfigMap are a noticeable part of your API server traffic.
 
 `"0"` turns the cache off: all reads go to the API server, and OME rechecks the metric providers that policies name only when something else changes. Prefer a small positive value. Keep the quotes: for an unquoted `0`, the chart leaves out the flag, and the manager keeps its 30-second default.
+
+## Add environment variables and files to the manager pod
+
+Three values under `ome.controller` add environment variables and files to the manager pod, such as proxy settings or a private CA bundle. All three default to empty lists, which leave the rendered Deployment unchanged:
+
+- `extraEnv`: environment variables for the `manager` container, written like a container's `env`, so `valueFrom` works too. The chart appends them after the `POD_NAMESPACE` and `SECRET_NAME` variables that it sets itself.
+- `extraVolumes`: volumes for the pod, written like a Pod's `volumes`, appended after the chart's webhook certificate volume.
+- `extraVolumeMounts`: their mounts in the `manager` container, written like a container's `volumeMounts`.
+
+Because they're values, an upgrade with your values file keeps them, where the next upgrade can undo a `kubectl` patch to the Deployment.
+
+This example sends the manager's outbound requests through a corporate proxy and trusts a private CA. First create a ConfigMap from your bundle file, `ca-bundle.crt` here:
+
+```bash
+kubectl create configmap corp-ca-bundle -n ome --from-file=ca-bundle.crt
+```
+
+```output
+configmap/corp-ca-bundle created
+```
+
+Then add the values:
+
+```yaml title="values.yaml"
+ome:
+  controller:
+    extraEnv:
+      - name: HTTPS_PROXY
+        value: "http://proxy.example.com:3128"
+      - name: NO_PROXY
+        value: "10.0.0.0/8,.svc,.cluster.local"
+      - name: SSL_CERT_FILE
+        value: /etc/corp-ca/ca-bundle.crt
+    extraVolumes:
+      - name: corp-ca
+        configMap:
+          name: corp-ca-bundle
+    extraVolumeMounts:
+      - name: corp-ca
+        mountPath: /etc/corp-ca
+        readOnly: true
+```
+
+The proxy variables take Go's standard form: the manager sends requests through the proxy in `HTTPS_PROXY`, except to the hosts, domains and CIDR ranges that `NO_PROXY` lists. `SSL_CERT_FILE` names the file the manager reads root certificates from, in place of the image's default bundle, so put every certificate authority it must trust in the bundle, not only the private one. `SSL_CERT_FILE` doesn't change the connection to the Kubernetes API server, which uses the cluster's CA from the pod's ServiceAccount.
+
+!!! warning "`NO_PROXY` must cover the cluster"
+    The manager's requests to the Kubernetes API server honor the proxy variables too. Keep the cluster's service network and internal domains in `NO_PROXY`, as the example's `10.0.0.0/8`, `.svc` and `.cluster.local` do, with the range your cluster uses. Otherwise the manager sends its API requests to the proxy.
+
+Upgrade with your values file, as in [Step 1](#with-a-helm-value), and wait for the rollout. Then print the names of the `manager` container's environment variables:
+
+```bash
+kubectl get deployment ome-controller-manager -n ome \
+  -o jsonpath='{range .spec.template.spec.containers[?(@.name=="manager")].env[*]}{.name}{"\n"}{end}'
+```
+
+```output
+POD_NAMESPACE
+SECRET_NAME
+HTTPS_PROXY
+NO_PROXY
+SSL_CERT_FILE
+```
+
+The chart's two variables come first, and your `extraEnv` entries follow them. The volumes work the same way: the pod has `cert`, the webhook certificate volume, then your `extraVolumes`, and the `manager` container mounts the certificate, then your `extraVolumeMounts`.
 
 ## Tune runtime-revision garbage collection
 
