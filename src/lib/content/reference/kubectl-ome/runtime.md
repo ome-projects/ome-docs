@@ -370,7 +370,7 @@ kubectl ome runtime tree RUNTIME [flags]
 
 `tree` shows how a runtime fits into [runtime inheritance](../../concepts/runtimes/runtime-inheritance.md): the chain of runtimes it inherits from, the runtimes that inherit from it, and the InferenceServices that name any of them in `spec.runtime`. It lists runtimes and InferenceServices, and prints no specs, status, labels, annotations or resourceVersions.
 
-Without `--kind`, the CLI looks for a ServingRuntime with the name in the namespace and a ClusterServingRuntime with the name. When both exist, it fails with `runtime "<name>" is ambiguous; pass --kind ServingRuntime or --kind ClusterServingRuntime: runtime target is ambiguous: "<name>" matched 2 runtimes`. For a ServingRuntime, it lists the ClusterServingRuntimes, and the ServingRuntimes and InferenceServices in its namespace. For a ClusterServingRuntime, it lists the ServingRuntimes and InferenceServices in every namespace, since any of them can use it. Each list holds at most 1,000 objects, read in two pages of 500.
+Without `--kind`, the CLI looks for a ServingRuntime with the name in the namespace and a ClusterServingRuntime with the name. When both exist, it fails with `runtime "<name>" is ambiguous; pass --kind ServingRuntime or --kind ClusterServingRuntime: runtime target is ambiguous: "<name>" matched 2 runtimes`. For a ServingRuntime, it lists the ClusterServingRuntimes, and the ServingRuntimes and InferenceServices in its namespace. For a ClusterServingRuntime, it lists the ServingRuntimes and InferenceServices in every namespace, since any of them can use it. Each list holds at most 1,000 objects, read in two pages of 500. A list whose snapshot expires between pages starts over once, as [`history`](#history) describes, and its `Collection:` line counts only the pages of the list it kept.
 
 ### Flags {#tree-flags}
 
@@ -494,6 +494,8 @@ kubectl ome runtime history INFERENCESERVICE [flags]
 
 `history` lists the revisions of the runtime behind an InferenceService: the ControllerRevisions labeled `ome.io/runtime-of=<runtime name>` in the OME namespace, newest first. It finds the runtime the way `effective` does. OME deletes unused revisions beyond the newest ones, as [Garbage collection](../../concepts/runtimes/runtime-revisions.md#garbage-collection) describes, so the list shows what OME kept. The CLI lists at most 1,000 revisions, in two pages of 500.
 
+A paginated list reads one snapshot of the API server's state, and the server can expire that snapshot between pages, refusing the next request with HTTP 410. The CLI then discards the pages it has and lists again from the start, once, so the report never mixes two snapshots. With the restart, it sends at most four list requests in all. When the second snapshot expires too, the list fails, and the report shows a partial or unavailable window instead of the command failing.
+
 Runtimes with the same name share the label, so revisions of a same-named runtime in another namespace or scope show up too, and fail the check with `RevisionSourceMismatch`.
 
 ### Flags {#history-flags}
@@ -511,7 +513,7 @@ The table keeps each line within 80 columns:
 
 | Column | What it shows |
 | --- | --- |
-| WINDOW | What the CLI saw, as `OBS/BOUND/SEEN/ASKED`. OBS is `C` when the list is complete, `P` when it's partial, and `U` when it's unavailable. BOUND is `B` when the list is complete within what OME keeps, and `I` when it's incomplete. SEEN is the number of pages the API server returned, and ASKED the number of list requests the CLI sent. |
+| WINDOW | What the CLI saw, as `OBS/BOUND/SEEN/ASKED`. OBS is `C` when the list is complete, `P` when it's partial, and `U` when it's unavailable. BOUND is `B` when the list is complete within what OME keeps, and `I` when it's incomplete. SEEN is the number of pages in the list the report keeps, and ASKED the number of list requests the CLI sent. |
 | REVISION | The revision's name, when it fits in 14 characters. A longer name shows its first two characters, `...`, `#` and eight hex digits of a digest of the full name. The digest only tells names apart: it isn't the runtime hash. |
 | CREATED | When the revision was created, as `YY-MM-DDTHH:MMZ`. |
 | ROLES | `A` when the revision is the Active view, `Q` when `spec.runtime.revision` names it, `R` when `status.pinnedRevisionName` names it, and `H` for every listed revision. |
@@ -519,9 +521,11 @@ The table keeps each line within 80 columns:
 | LIVE | `MATCH` when the revision holds the live spec, `DIFF` when it doesn't, `AMB` when only the short hash matches, and `?` when the CLI can't tell. |
 | ISSUES | The number of issues for the revision and for the whole report, as `R<n>/G<n>`, with `9+` for more than nine. |
 
+ASKED counts failed requests and the pages of a snapshot the CLI discarded, so it can exceed SEEN. In a window that's still `C`, the gap means the read recovered an expired snapshot: `C/B/2/4` says the CLI read a page, lost the snapshot, and read the complete list again in two pages, so the discarded page and the refused request put ASKED two past SEEN. When the restarted list's snapshot expires too, or a request fails for another reason, OBS is `P` with the pages the CLI kept, or `U` when it kept none, and BOUND is `I`.
+
 The command's help also lists `N` for OBS, which `history` never prints, since it always asks for the list. When the CLI lists no revisions, as when it can't find a runtime name, the table has one row with the window, `-` in the next five columns, and the issues.
 
-Use `-o wide` for the name to put in `spec.runtime.revision`. It prints OBSERVATION, COMPLETENESS, PAGES, REVISION, CREATED, HASH, ROLES, SOURCE, CONSISTENCY, RELATION, REVISION-ISSUES and REPORT-ISSUES, with full names, times and hashes, and the issue codes that [`effective`](#effective-output-fields) uses. It adds two report issues: `HistoryUnavailable` when the list failed, and `HistoryTruncated` when it holds more than the CLI read. `-o json` and `-o yaml` print the RuntimeHistoryReport.
+Use `-o wide` for the name to put in `spec.runtime.revision`. It prints OBSERVATION, COMPLETENESS, PAGES, REVISION, CREATED, HASH, ROLES, SOURCE, CONSISTENCY, RELATION, REVISION-ISSUES and REPORT-ISSUES, with full names, times and hashes, and the issue codes that [`effective`](#effective-output-fields) uses. PAGES repeats the window's last two counts, as `SEEN/ASKED`. It adds two report issues: `HistoryUnavailable` when the list failed, and `HistoryTruncated` when it holds more than the CLI read. `-o json` and `-o yaml` print the RuntimeHistoryReport.
 
 `history` fails the same ways as [`effective`](#effective-output-fields).
 
