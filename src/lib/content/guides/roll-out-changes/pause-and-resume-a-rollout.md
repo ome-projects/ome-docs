@@ -244,7 +244,11 @@ Either no component of `chat` uses OMENative, or the runtime that OME reports di
 error: required Kubernetes API request failed; check access and connectivity
 ```
 
-The InferenceService doesn't exist, RBAC denied a request, the admission webhook rejected the patch, or the server or the network failed. The command doesn't show the API server's message. The patch may have been stored anyway, so check the annotation, as at the end of [Step 1](#step-1-pause-the-rollout), before you run the command again. Do the same after `context deadline exceeded` or `API response is not bound to the request; outcome unknown, check rollout status`.
+The InferenceService doesn't exist, RBAC denied a request, the admission webhook rejected the patch, the server or the network failed, or a runtime revision that `chat` names is missing or unreadable. The command doesn't show the API server's message.
+
+When the error comes after the preview and your confirmation, the patch may have been stored anyway, so check the annotation, as at the end of [Step 1](#step-1-pause-the-rollout), before you run the command again. Do the same after `context deadline exceeded` or `API response is not bound to the request; outcome unknown, check rollout status`. An error before the preview means the command refused during its reads and sent nothing.
+
+The error doesn't always mean the API server is unreachable. When `chat` sets `spec.runtime.name`, `pause` and `resume` read the [runtime revisions](../../concepts/runtimes/runtime-revisions.md) named by `spec.runtime.revision` and `status.pinnedRevisionName` from the OME namespace, and refuse before the preview unless every read succeeds, even with `--yes`. A pinned revision that was deleted, a missing `get` permission on ControllerRevisions in the OME namespace, or a wrong `--ome-namespace` all end this way, even when `chat` follows the live runtime with `autoSync`. To tell them apart, run `kubectl ome runtime effective chat -n prod`: it reports the same failed read as a `RevisionNotFound` or `RevisionUnavailable` issue instead of failing, and its [output fields](../../reference/kubectl-ome/runtime.md#effective-output-fields) explain the codes.
 
 To see a webhook's message, make the same change with `kubectl annotate` and `--dry-run=server`, which stores nothing:
 
