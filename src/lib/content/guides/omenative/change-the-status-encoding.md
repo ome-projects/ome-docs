@@ -22,7 +22,7 @@ since: v1.3
 
 Under `ColumnarV2`, OME writes the list instead when it's no larger than the columns, or when the InferenceReplica has more rows than `maxDecodedInstances`. A `ColumnarV2` cluster therefore holds both encodings, and that's normal.
 
-A script that reads `status.instanceStatuses` sees no rows on an InferenceReplica stored as columns, while [`kubectl ome instance`](../../reference/kubectl-ome/instance.md) reads both encodings.
+A script that reads `status.instanceStatuses` sees no rows on an InferenceReplica stored as columns, while [`kubectl ome instance`](../../reference/kubectl-ome/instance.md) reads both encodings. The [guarded kubectl-ome actions](../../reference/kubectl-ome/guarded-actions.md#instance-status-decoding), `scale` and `migration start` among them, decode both too, so their safety checks see lifecycle work that the columns store.
 
 ### The `omenativeStatus` settings
 
@@ -39,7 +39,7 @@ The manager reads the block only when it starts. It won't start when the block i
 
 Keep the chart's `20000` unless one InferenceReplica can hold more rows, counting the extra Instances of a surge, migration or replacement, and its `Failed` and `Deleting` rows. A larger one is stored as a list, where the compact form would help most.
 
-OME stops managing a ColumnarV2 InferenceReplica with more rows than the bound. Never lower the bound below `largestColumnarV2Rows` in the [preflight report](#check-a-fleet-with-ome-status-preflight). [`kubectl ome instance`](../../reference/kubectl-ome/instance.md) reads ColumnarV2 InferenceReplicas of up to 20,000 rows, whatever the bound.
+OME stops managing a ColumnarV2 InferenceReplica with more rows than the bound. Never lower the bound below `largestColumnarV2Rows` in the [preflight report](#check-a-fleet-with-ome-status-preflight). [`kubectl ome instance`](../../reference/kubectl-ome/instance.md) reads ColumnarV2 InferenceReplicas of up to 20,000 rows, whatever the bound. The [guarded kubectl-ome actions](../../reference/kubectl-ome/guarded-actions.md#instance-status-decoding) decode at most 2048 rows for each InferenceReplica, also whatever the bound, so one that `kubectl ome instance` still reads can be too large to act on.
 
 ## Step 1: Set the encoding
 
@@ -245,6 +245,8 @@ The message names the InferenceReplica and the reason, in `per-Instance status c
 
 - `cardinality_limit`: the object is stored as ColumnarV2 with more rows than `maxDecodedInstances`, or the block sets no bound. Raise or restore the bound, as in [Step 1](#step-1-set-the-encoding).
 - Any other reason, such as `coverage` or `range_syntax`: the stored status is damaged. [Repair it](#repair-a-damaged-status).
+
+A damaged status also refuses the guarded kubectl-ome actions that read the InferenceReplica, `scale` and `migration start` among them: they decode it themselves, under their own 2048-row bound in place of `maxDecodedInstances`. [Instance status decoding](../../reference/kubectl-ome/guarded-actions.md#instance-status-decoding) lists the actions and their messages.
 
 ### Status writes are rejected as too large
 
