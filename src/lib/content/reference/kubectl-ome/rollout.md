@@ -521,12 +521,17 @@ If the patch fails with anything but a refusal or a conflict, it may have been s
 
 Every action also refuses a target that's being deleted, has an unsafe identity, or exceeds the CLI's inspection bounds. The same goes for a target in multi-cluster placement, which is alpha and still in development. [Target checks](guarded-actions.md#target-checks) lists these messages.
 
+Among the reads in step 1, `pause`, `resume`, `promote` and `rollback` resolve the runtime, and when `spec.runtime.name` is set, the [runtime revisions](../../concepts/runtimes/runtime-revisions.md) the InferenceService names: the ControllerRevisions in the `--ome-namespace` namespace that `spec.runtime.revision` and `status.pinnedRevisionName` name. Every one of those reads must succeed. A named revision that doesn't exist or can't be read refuses the action with `required Kubernetes API request failed; check access and connectivity` and exit code `1`, before the preview, in every dry-run mode and with `--yes`. `repin` reads only the InferenceService, so these reads don't apply to it.
+
+That message is the same fixed text as for any failed API request, so it can appear while the API server is healthy: a pinned revision that was deleted, a ControllerRevision read that RBAC denies, or the wrong `--ome-namespace` all refuse this way, even when the service follows the live runtime with `autoSync`. The read-only [`kubectl ome runtime effective`](runtime.md#effective-output-fields) reports the same failed read as a `RevisionNotFound` or `RevisionUnavailable` issue instead of refusing, so run it to tell a missing revision from a connectivity problem.
+
 ### Refusals {#pause-and-resume-refusals}
 
 `pause` and `resume` also refuse in these cases:
 
 | Message | Cause |
 | --- | --- |
+| `required Kubernetes API request failed; check access and connectivity` | A read the action needs failed, including a [runtime revision the InferenceService names](#how-the-actions-run) that's missing or unreadable. |
 | `action refused: service is already paused; freeze is preserved` | `pause` when the annotation is already `true` or `freeze`. |
 | `action refused: service has no recognized pause` | `resume` when the service isn't paused. |
 | `action refused: a rollout promote or rollback mailbox is present` | The promote or rollback annotation is present. On a paused service, `resume --discard-pending-actions --yes` removes it. |
@@ -650,6 +655,7 @@ Besides the refusals [every action shares](guarded-actions.md#target-checks), `p
 
 | Message | Cause |
 | --- | --- |
+| `required Kubernetes API request failed; check access and connectivity` | A read the action needs failed, including a [runtime revision the InferenceService names](#how-the-actions-run) that's missing or unreadable. |
 | `action refused: promote requires an active indefinite manual gate; analysis requires explicit override` | `promote` when the canary isn't waiting at a gate it can pass, as the list below describes. |
 | `action refused: globally paused canary cannot consume a request` | The service is paused. |
 | `action refused: a rollout promote or rollback mailbox is present` | A promote request still waits for the controller, or the rollback annotation remains. |
