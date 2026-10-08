@@ -137,7 +137,7 @@ kubectl apply -f a100-flavor.yaml
 resourceflavor.kueue.x-k8s.io/a100 created
 ```
 
-The quota manager measures capacity once a minute and reports it on `root`:
+The quota manager measures capacity when nodes change, and at least once a minute by default: see [Check that capacity reporting is alive](#check-that-capacity-reporting-is-alive). It reports the measurement on `root`:
 
 ```bash
 kubectl get aq root -o jsonpath='{range .status.capacity[*]}{.resourceName}{" "}{.resourceFlavor}{" "}{.allocatable}{" "}{.highWaterMark}{"\n"}{end}'
@@ -326,6 +326,25 @@ Then set `hysteresisPercent` back to 10, or remove it from the file, and upgrade
     At 0, the mark follows every dip of the installed capacity, such as a node the cluster autoscaler is replacing. A budget over the dip reports `CapacityExceeded`, and the quota manager freezes the node and its descendants until the mark recovers. At 100 or more, the other extreme, the mark never comes down.
 
 A pair that stops being measured at all, because the last node that carried it is gone, you delete its ResourceFlavor, or you remove its resource from `quotaManager.capacity.resources`, keeps its last mark and reports 0 allocatable, whatever the band. Turning the damping off doesn't lower this mark either: the band judges measurements, and a pool with no hardware isn't measured at zero, it isn't measured at all, so no reading arrives for the mark to follow down. The entry stays in `root`'s status as the record of what the pair once held, and the mark moves again only when nodes report the pair again: at once when the new installed capacity is above it, past the band when it's below. So when you retire a pool for good, also delete the budgets that name its resource and flavor. Each one keeps passing its check against the stale mark, promising teams accelerators that no node has.
+
+## Check that capacity reporting is alive
+
+On stable hardware, the numbers on `root` stop changing, so they can't tell a healthy cluster from a quota manager that stopped measuring. What tells the two apart is [`observedAt`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorCapacityStatus) on each entry of `root`'s `status.capacity`, the time of the last measurement:
+
+```bash
+kubectl get aq root -o jsonpath='{range .status.capacity[*]}{.resourceName}{" "}{.resourceFlavor}{" "}{.observedAt}{"\n"}{end}'
+```
+
+```output
+google.com/tpu a100 2026-10-05T09:41:12Z
+nvidia.com/gpu a100 2026-10-05T09:41:12Z
+```
+
+The quota manager measures on a timer: the smaller of `quotaManager.resyncInterval`, 10 minutes by default, and the report interval, `quotaManager.capacity.reportInterval`, 1 minute by default, which the chart passes to the quota manager as its `--capacity-report-interval` flag. It also measures at once when an AcceleratorQuota is written, or when a node is added or deleted, cordoned or uncordoned, relabeled, or changes its readiness or its accelerators. Creating a ResourceFlavor triggers no measurement, so a new flavor shows up on `root` with the next one: the wait before the tree in [Step 2](#step-2-create-the-quota-tree).
+
+A measurement that changes what `root` reports is written at once. The report interval bounds the rest: a measurement that finds the stamps a report interval old writes them anew, even though the numbers stand. So with the defaults, a quota manager that measures keeps every `observedAt` within about a minute of now, and the stamps say that the reporting is alive, not that the hardware changed.
+
+A stamp well past the report interval means that the measuring stopped, and with it everything this page describes: nothing raises the mark for new nodes, or lowers it for retired ones. A measurement that fails, such as a node list the API server refuses, doesn't refresh the stamps either, so check the quota manager's pods and their logs. Setting `reportInterval` to `""` or `0s` turns the refresh off, and the timer falls back to `resyncInterval`: `observedAt` then dates the last change of the numbers, and a reporter that stopped no longer shows.
 
 ## Budget other accelerators
 
