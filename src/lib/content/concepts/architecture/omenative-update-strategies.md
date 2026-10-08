@@ -59,7 +59,7 @@ Changing the strategy doesn't start a rollout. Instance updates that start after
 
 For a single-pod Instance, the new pod takes the Instance's other ordinal: `llama-3-2-3b-instruct-engine-0-default-1` replaces `llama-3-2-3b-instruct-engine-0-default-0`. If the new pod fails, the old one keeps serving while OME tries the update again. For a leader and its workers, OME starts a whole replacement Instance at a new [index](../omenative/instances.md#index), so the indices can have gaps. If the replacement fails, OME deletes it, records a `GangSurgeAbandoned` warning event, and the old Instance keeps serving.
 
-When OME drains the old pods, their `preStop` hook and `terminationGracePeriodSeconds` cover the requests they're still serving. The Instance's surge slot stays held until a drained pod exits or its grace elapses, even after the update itself finishes, so a long grace period can make the next Instance wait. See [Extra pods hold surge slots](#extra-pods-hold-surge-slots).
+When OME drains the old pods, their `preStop` hook and `terminationGracePeriodSeconds` cover the requests they're still serving. The update isn't finished, and the Instance's surge slot isn't free, until the drained pods are gone, so a long grace period can make the next Instance wait. Pods that no update owns hold slots of their own: see [Extra pods hold surge slots](#extra-pods-hold-surge-slots).
 
 While the extra pods can't be scheduled, the old pods keep serving. After [`unschedulableGracePeriod`](../../guides/omenative/set-instance-readiness-deadlines.md), 15 minutes with the chart, OME fails the update and tries it again later.
 
@@ -204,13 +204,13 @@ kubectl get inferenceservice llama-3-2-3b-instruct -n llama-demo \
 ```
 
 ```output
-{"gate":"Budget","reason":"per-Component surge budget 1 exhausted (would become 2); Terminating pod llama-3-2-3b-instruct-engine-0-default-0 still counts against the surge budget until its deletion grace elapses","since":"2026-09-27T08:14:02Z","target":"llama-3-2-3b-instruct-engine-7b4c2e19"}
+{"gate":"Budget","reason":"per-Component surge budget 1 exhausted (would become 2); Terminating pod llama-3-2-3b-instruct-engine-0-default-1 still counts against the surge budget until its deletion grace elapses","since":"2026-09-27T08:14:02Z","target":"llama-3-2-3b-instruct-engine-7b4c2e19"}
 ```
 
-- A Terminating pod, usually one that a finished update [drained](#surgethendrain), holds its slot until it exits or its deletion grace elapses: the moment its deletion was requested plus its `terminationGracePeriodSeconds`. The pod stops counting then even if it lingers, for example on a stuck finalizer, and OME wakes at that moment to retry the waiting update. Don't raise `maxSurge` for this hold: it clears by itself.
+- A Terminating pod is one OME already deleted but the API still lists, such as the replacement of a [failed attempt](#surgethendrain) or a pod of an Instance the component scaled away. It counts until it exits or its deletion grace elapses, at the pod's `metadata.deletionTimestamp`. The pod stops counting then even if it lingers, for example on a stuck finalizer, and OME wakes at that moment to retry the waiting update. Don't raise `maxSurge` for this hold: it clears by itself.
 - A live extra pod, which the reason reports as `extra pod llama-3-2-3b-instruct-engine-1-default-1 holds a surge slot until a start on its Instance replaces it`, is a replacement that a failed update attempt left running. Its slot frees when OME next starts an update on its Instance: that start evicts the pod before it creates anything, so it takes the slot the pod held and isn't charged twice. Until then, updates on the component's other Instances can't use the slot.
 
-For a leader and its workers, extra pods count in whole Instances: their number is divided by the Instance's pod count and rounded up, so the eight draining pods of an abandoned eight-pod replacement hold one slot.
+A pod that an in-flight update still owns isn't named: a drained old pod holds its Instance's surge slot through the update itself, which doesn't finish until the pod is gone. For a leader and its workers, extra pods count in whole Instances: their number is divided by the Instance's pod count and rounded up, so the eight draining pods of a scaled-away eight-pod Instance hold one slot.
 
 ## Changing the strategy mid-rollout
 
