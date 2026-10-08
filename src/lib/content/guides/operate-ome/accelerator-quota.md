@@ -417,11 +417,17 @@ The quota manager serves Prometheus metrics on port 8080, at `/metrics`. OME's b
 | --- | --- | --- |
 | `ome_quota_capacity_allocatable` | `resource`, `flavor` | Accelerators on Ready, uncordoned nodes. |
 | `ome_quota_capacity_unavailable` | `resource`, `flavor` | Accelerators on cordoned or not-Ready nodes. |
+| `ome_quota_capacity_nodes` | `resource`, `flavor`, `state` | The nodes behind the two counts above: `state` is `schedulable` for the Ready, uncordoned ones, `unavailable` for the rest. It tells a one-machine shortfall from a rack. |
 | `ome_quota_capacity_unattributed` | `resource`, `reason` | Accelerators on nodes that match no flavor (`NoMatchingFlavor`) or several (`AmbiguousFlavor`). |
+| `ome_quota_capacity_unattributed_nodes` | `reason` | The nodes behind the unattributed accelerators, by the same reasons. A node counts once, even when several of its resources match no flavor. |
 | `ome_quota_budget_nominal` | `plane`, `quota`, `role`, `resource`, `flavor` | A budget's `nominal`. `quota` is the node's name. |
 | `ome_quota_budget_admitted` | Same | Accelerators admitted against the budget, borrowed ones included. |
 | `ome_quota_budget_reserved` | Same | Accelerators held by workloads with a quota reservation, admitted or not. |
 | `ome_quota_budget_borrowed` | Same | Accelerators admitted above `nominal`. |
+| `ome_quota_backend_applied_total` | None | Kueue objects written. The writes repeat on every pass, changed or not, so the count grows with how often the quota manager writes, not with your edits to the tree. |
+| `ome_quota_backend_swept_total` | `trigger` | Kueue objects deleted as orphans, by `trigger`: `materialize` for a pass that finds objects the tree no longer names, `finalize` for a deleted node's own objects. |
+
+The capacity gauges are a snapshot of the last measurement, rewritten whole, so a series disappears when its cause does: create the flavor that `NoMatchingFlavor` points at, and the unattributed series are gone with the next measurement. The two counters say whether the writing to Kueue is alive. `ome_quota_backend_applied_total` keeps rising while the quota manager materializes, even on a cluster where nothing changes; a counter that stands still means that nothing is written, because `enrolledNamespaces` is empty, every node is frozen or the quota manager stopped. `ome_quota_backend_swept_total` moves only when a sweep deletes something, so standing still is its steady state.
 
 ## Let a group manage quotas
 
