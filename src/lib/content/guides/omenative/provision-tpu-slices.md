@@ -24,14 +24,14 @@ OME provisions slices only for OMENative components, and only on node pools that
 
 - One Slice serves the pods of one Instance. The leader and workers of a multi-pod Instance share it. A single-pod Instance gets one Slice per pod, so during an update's surge the new pod gets its own Slice while the pod it replaces keeps its own.
 - The Slice's shape comes from what the pods already declare: the accelerator and topology node labels they select, and the TPU chips their containers request. The chips must fill the topology exactly: see [Multi-host slices](#multi-host-slices).
-- OME creates an Instance's pods only once their Slice is ready: its `Ready` condition's reason is one of the configured `readyStates`. Each pod gets a node selector on the slice-name label, which confines it to the Slice's nodes.
+- OME creates an Instance's pods only once their Slice is ready: its `Ready` condition's reason is one of the configured `readyStates`. Each pod gets a node selector on the slice-name label, which confines it to the Slice's nodes. With `slice.readyTimeout` set, a Slice that has its partition but stays out of a ready state longer than the timeout is released and provisioned again, once no pod holds it.
 - OME deletes a ready Slice that no pod holds when no Instance wants it anymore: after a scale-down, a shape change, or when one of its hosts can't take the pods. Deleting the Slice is what returns the capacity; GKE can hold it behind a finalizer while it releases the partition.
 
 A Slice is named after the component's [InferenceReplica](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica), cut to fit, then the Instance's index, the pod's ordinal and an 8-character hash of the owner's identity, such as `qwen3-tpu-engine-0-0-8f3a21c7`. The `ome.io/slice-owner-uid` label alone makes a Slice OME's: OME never adopts, modifies or deletes a Slice without it. OME also labels its Slices with `ome.io/managed-by: OMENative`, the Instance's `ome.io/instance-index`, the pod's `ome.io/pod-ordinal` and the owner kind and name labels from Step 1, and annotates them with the owner as `ome.io/slice-owner: {namespace}/{name}`.
 
 ## Step 1: Turn on slice provisioning
 
-Describe the pools in the `ome.controller.tpuSliceProvisioning` Helm value. This example is the `ome-resources` chart's with a two-host topology added, for GKE dynamic slicing with single-host and two-host Ironwood slices:
+Describe the pools in the `ome.controller.tpuSliceProvisioning` Helm value. This example is the `ome-resources` chart's with a two-host topology and a ten-minute ready timeout added, for GKE dynamic slicing with single-host and two-host Ironwood slices:
 
 ```yaml title="values.yaml"
 ome:
@@ -57,6 +57,7 @@ ome:
           cloud.google.com/managed-by: slice-scheduler
           slice.gke.io/retry-on-failure: "true"
         readyStates: [ACTIVE, ACTIVE_DEGRADED]
+        readyTimeout: 10m
 ```
 
 | Field | What it sets |
@@ -69,9 +70,10 @@ ome:
 | `slice.ownerKindLabel`, `slice.ownerNameLabel` | Labels that trace a Slice to the InferenceReplica it serves. They don't decide which Slices OME may delete: only `ome.io/slice-owner-uid` does. |
 | `slice.annotations` | Annotations written on every Slice OME creates, such as the ones that hand it to GKE's slice scheduler. Required: `{}` for none. |
 | `slice.readyStates` | The `Ready` condition reasons under which pods may bind to a Slice. |
+| `slice.readyTimeout` | Optional. How long a Slice that has its partition may stay out of a ready state before OME releases it and provisions the slot again, once no pod holds it: see [A SliceReadyTimeout event appears](#a-slicereadytimeout-event-appears). A positive duration, such as `10m`. Unset, OME never times a Slice out. |
 
-!!! warning "Every field is required"
-    The chart's default, `{}`, provisions no slices. Once you set the block, every field is required, with no default in the binary, and the manager reads it only when it starts: a missing or invalid field stops the manager from starting. See [The manager doesn't start after the upgrade](#the-manager-doesnt-start-after-the-upgrade).
+!!! warning "The required fields have no defaults"
+    The chart's default, `{}`, provisions no slices. Once you set the block, every field the table doesn't mark optional is required, with no default in the binary, and the manager reads the block only when it starts: a field that is missing or invalid, such as a `readyTimeout` that isn't a positive duration, stops the manager from starting. See [The manager doesn't start after the upgrade](#the-manager-doesnt-start-after-the-upgrade).
 
 Upgrade the release with the chart version that you already run, keeping your other values in the file, as [Configure the controller](../operate-ome/configure-the-controller.md#with-a-helm-value) explains:
 
@@ -97,7 +99,7 @@ kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.tpuSlic
 ```
 
 ```output
-{"accelerators":{"tpu7x":{"chipsPerHost":4,"sliceType":"tpu7x","topologies":["2x2x1","2x2x2"]}},"chipResource":"google.com/tpu","nodeLabels":{"accelerator":"cloud.google.com/gke-tpu-accelerator","slice":"cloud.google.com/gke-tpu-slice","topology":"cloud.google.com/gke-tpu-topology"},"provisionOnly":{"key":"cloud.google.com/gke-accelerator-topology-mode","value":"PROVISION_ONLY"},"slice":{"annotations":{"cloud.google.com/managed-by":"slice-scheduler","slice.gke.io/retry-on-failure":"true"},"ownerKindLabel":"cloud.google.com/slice-owner-kind","ownerNameLabel":"cloud.google.com/slice-owner-name","readyStates":["ACTIVE","ACTIVE_DEGRADED"]}}
+{"accelerators":{"tpu7x":{"chipsPerHost":4,"sliceType":"tpu7x","topologies":["2x2x1","2x2x2"]}},"chipResource":"google.com/tpu","nodeLabels":{"accelerator":"cloud.google.com/gke-tpu-accelerator","slice":"cloud.google.com/gke-tpu-slice","topology":"cloud.google.com/gke-tpu-topology"},"provisionOnly":{"key":"cloud.google.com/gke-accelerator-topology-mode","value":"PROVISION_ONLY"},"slice":{"annotations":{"cloud.google.com/managed-by":"slice-scheduler","slice.gke.io/retry-on-failure":"true"},"ownerKindLabel":"cloud.google.com/slice-owner-kind","ownerNameLabel":"cloud.google.com/slice-owner-name","readyStates":["ACTIVE","ACTIVE_DEGRADED"],"readyTimeout":"10m"}}
 ```
 
 ## Step 2: Opt the engine in
@@ -264,7 +266,25 @@ The webhook rejects only a write that introduces the problem, and admits the Inf
 
 ### Pods wait for a slice
 
-The Instance stays in `Creating` with no pods, and its operation holds on `CapacityProvisioning`, as in [Step 3](#step-3-watch-the-slice-and-the-pod). The Instance's last failure says what the Slice is waiting for, and `kubectl describe slices.accelerator.gke.io qwen3-tpu-engine-0-0-8f3a21c7` shows GKE's `Ready` condition with its message. OME waits as long as the Slice isn't ready, with the deadline clock stopped: free capacity in the pool, or fix what GKE reports.
+The Instance stays in `Creating` with no pods, and its operation holds on `CapacityProvisioning`, as in [Step 3](#step-3-watch-the-slice-and-the-pod). The Instance's last failure says what the Slice is waiting for, and `kubectl describe slices.accelerator.gke.io qwen3-tpu-engine-0-0-8f3a21c7` shows GKE's `Ready` condition with its message. The deadline clock is stopped either way, and what ends the wait depends on what the Slice waits for:
+
+- A Slice waiting for its partition waits for capacity, which a new Slice would wait for too, so OME waits as long as it takes, with or without `slice.readyTimeout`: free capacity in the pool.
+- A Slice that has its partition but doesn't reach a ready state is recycled after `slice.readyTimeout`, when you set it: see [A SliceReadyTimeout event appears](#a-slicereadytimeout-event-appears). Without it, OME waits as long as the Slice isn't ready: fix what GKE's `Ready` condition reports.
+
+### A SliceReadyTimeout event appears
+
+With `slice.readyTimeout` set in Step 1's values, a Slice that got its partition but has stayed out of a ready state for longer than the timeout is recycled once no pod holds it: OME withholds the pods, records the Warning event on the InferenceService, deletes the Slice and provisions the slot again. The new Slice gets a new partition, so a one-off Slice stuck short of ready heals on its own. The wait is measured from the `Ready` condition's last transition, or from the Slice's creation while GKE reports no condition. Read the event:
+
+```bash
+kubectl get events -n qwen3-tpu --field-selector reason=SliceReadyTimeout \
+  -o jsonpath='{range .items[*]}{.message}{"\n"}{end}'
+```
+
+```output
+OMENative component=engine instance=0 withheld: slice qwen3-tpu-engine-0-0-8f3a21c7 is ACTIVATING for 11m3s, longer than the 10m0s ready timeout; it is released and provisioned again once no pod holds it
+```
+
+A Slice still waiting for its partition is never timed out, however long it waits: a new Slice would wait for the same capacity. A Slice whose pods are already running is left alone. When every replacement runs past the timeout too, the recycling repeats until you fix what GKE's `Ready` condition reports.
 
 ### A SliceHostUnavailable event appears
 
