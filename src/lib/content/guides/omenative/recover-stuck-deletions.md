@@ -143,7 +143,7 @@ When you delete an OMENative InferenceService, Kubernetes deletes its InferenceR
 
 `teardown.deadline` caps that wait, counted from the InferenceReplica's delete. At the deadline, OME removes the finalizer, and Kubernetes deletes what's left in the background. A pod on a dead node can then stay `Terminating` until you [force-delete it by hand](#manual-recovery).
 
-Pick a deadline longer than your pods take to drain, plus their grace period, `overdueSlack` and `nodeUnreachableThreshold`, so that the escalation removes pods on dead nodes first. The chart's `30m` fits the default 30-second grace period and the values from Step 1. For a long grace period, like `terminationGracePeriodSeconds: 1800`, raise it:
+Pick a deadline longer than your pods take to drain, plus their grace period, `overdueSlack` and `nodeUnreachableThreshold`, so that the escalation removes pods on dead nodes first. The chart's `30m` fits its default [grace period for serving pods](../../concepts/serving/inference-services.md#components), 600 seconds, and the values from Step 1. For a long grace period, like `terminationGracePeriodSeconds: 1800`, raise it:
 
 ```yaml title="values.yaml"
 ome:
