@@ -259,8 +259,8 @@ The `Ready` condition is `True` when both `EngineReady` and `IngressReady` are. 
 | Condition | What it says |
 | --- | --- |
 | `EngineReady` | The engine's workload is available. |
-| `DecoderReady` | The decoder's workload is available. Only when you declare a decoder. |
-| `RouterReady` | The router's workload is available. Only when you declare a router. |
+| `DecoderReady` | The decoder's workload is available. Only when you declare or [reference](#referenced-replicas) a decoder. |
+| `RouterReady` | The router's workload is available. Only when you declare or reference a router. |
 | `IngressReady` | The Ingress or HTTPRoutes that OME creates are ready, or ingress creation is off. |
 | `OverlaysReady` | Since v1.3. Only when you declare overlays: `True` with reason `AllOverlaysMounted`, or `False` with reason `OverlaysSkipped` and the overlays it left out. |
 | `RuntimeReady` | Since v1.3. Only after a runtime problem: `False` with reason `RuntimeNotFound`, then `True` with reason `RuntimeResolved` once a runtime resolves. |
