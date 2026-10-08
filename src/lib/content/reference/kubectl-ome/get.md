@@ -212,7 +212,7 @@ Alpha. A TrafficMap is the routing table of a multi-cluster InferenceService, an
 
 | Column | What it shows |
 | --- | --- |
-| MODE | `spec.mode`, the InferenceService's placement mode: `Single`, `All` or `Split`. |
+| MODE | `spec.mode`, the InferenceService's placement mode: `Single`, `All`, `Split` or `SplitByCapacity`, or `-` when the TrafficMap records none. |
 | TARGETS | The number of entries, including those with weight 0. |
 | ROUTABLE, PUBLISHED | The [Routable](../../concepts/rollouts-and-traffic/traffic-map.md#routable) and [Published](../../concepts/rollouts-and-traffic/traffic-map.md#published) conditions. |
 | SERVICE | Wide. `spec.service`, the InferenceService. |

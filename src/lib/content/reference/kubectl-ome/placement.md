@@ -1,11 +1,11 @@
 ---
 title: kubectl ome placement
-description: "Inspect the alpha multi-cluster placement of an InferenceService: its reported status, the workload clusters its selectors match and its routing table."
+description: "Inspect the alpha multi-cluster placement of an InferenceService: its reported status, the registered workload clusters and its routing table."
 status: preview
 since: v1.3
 ---
 
-`kubectl ome placement` shows where an [InferenceService](../../concepts/serving/inference-services.md) runs across workload clusters. It shows the placement that the control plane reports, the [WorkloadClusters](../api/ome.v1beta1.md#ome-io-v1beta1-WorkloadCluster) that the InferenceService's selectors match and the routing table in its [TrafficMap](../../concepts/rollouts-and-traffic/traffic-map.md). The command reads multi-cluster placement and routing, which are alpha, still in development and off by default, so what it reports can change between releases. [Turn on routing](../../concepts/rollouts-and-traffic/traffic-map.md#turn-on-routing) shows the Helm values for the control-plane cluster. Run the command with the control plane as your current context. It reads what the control plane recorded and changes nothing. [`kubectl ome cluster`](cluster.md) shows the workload clusters themselves.
+`kubectl ome placement` shows where an [InferenceService](../../concepts/serving/inference-services.md) runs across workload clusters. It shows the placement that the control plane reports, the registered [WorkloadClusters](../api/ome.v1beta1.md#ome-io-v1beta1-WorkloadCluster) and the routing table in its [TrafficMap](../../concepts/rollouts-and-traffic/traffic-map.md). The command reads multi-cluster placement and routing, which are alpha, still in development and off by default, so what it reports can change between releases. [Turn on routing](../../concepts/rollouts-and-traffic/traffic-map.md#turn-on-routing) shows the Helm values for the control-plane cluster. Run the command with the control plane as your current context. It reads what the control plane recorded and changes nothing. [`kubectl ome cluster`](cluster.md) shows the workload clusters themselves.
 
 ```text
 kubectl ome placement SUBCOMMAND INFERENCESERVICE [flags]
@@ -14,7 +14,7 @@ kubectl ome placement SUBCOMMAND INFERENCESERVICE [flags]
 | Subcommand | What it does |
 | --- | --- |
 | [`status`](#status) | Shows the placement phase and the workload clusters chosen for the InferenceService, with their endpoints. |
-| [`explain`](#explain) | Shows which workload clusters its placement selectors match, and sums up its routing settings. |
+| [`explain`](#explain) | Shows each registered workload cluster with its reported readiness, and sums up its routing settings. |
 | [`endpoint`](#endpoint) | Shows its routing table: each cluster's endpoint, weight, drains and recorded probe. |
 
 Each subcommand prints a FIELD and VALUE table, one row per fact. The table cuts long field names and values and ends them with `...`, so `Selector compat...` is the Selector compatible row. The `-o wide` output adds rows, and `-o json` and `-o yaml` print the whole report, uncut, as [Output formats](overview.md#output-formats) describes. The problems that the CLI finds are in the Issue rows and in `content.issues`, and `warnings` is always empty. [Required RBAC](overview.md#required-rbac) lists the permissions that each subcommand needs.
@@ -50,7 +50,7 @@ Rows named inspection or inspect show how the CLI read a list, as `<state> <kept
 kubectl ome placement status INFERENCESERVICE [flags]
 ```
 
-`status` shows the placement that the controller reports in the InferenceService's `status.placement`: its phase, and each home with its endpoint. It also shows the placement inputs that the InferenceService declares. OME places an InferenceService that sets `spec.placement.requirements` or `spec.placement.clusterSelector`. Without `spec.placement`, the legacy `ome.io/accelerator-requirements` or `ome.io/cluster-selector` annotation does the same. Placement reads `NotRecorded` for an InferenceService that OME hasn't tried to place, and on a cluster that isn't a control plane. When Placement reads `Pending`, [`explain`](#explain) shows which clusters match and whether they're `Ready`.
+`status` shows the placement that the controller reports in the InferenceService's `status.placement`: its phase, and each home with its endpoint. It also shows the placement inputs that the InferenceService declares. OME places an InferenceService that sets [`spec.placement`](../api/ome.v1beta1.md#ome-io-v1beta1-PlacementSpec), which requires `policy: ClusterAffinity` and a `mode`; its optional `clusterAffinity` terms restrict which WorkloadClusters match, and without them every registered cluster matches. OME rejects the legacy `ome.io/accelerator-requirements` and `ome.io/cluster-selector` annotations on write and no longer places an InferenceService stored with one, but the reports still read such an object's annotations as its declared selectors. Placement reads `NotRecorded` for an InferenceService that OME hasn't tried to place, and on a cluster that isn't a control plane. When Placement reads `Pending`, [`explain`](#explain) shows the registered clusters and whether they're `Ready`.
 
 ### Flags {#status-flags}
 
@@ -66,17 +66,19 @@ All three subcommands start with these rows:
 
 | Row | What it shows |
 | --- | --- |
-| Mode | The placement mode, `Single`, `All` or `Split`, then `(Declared)` when `spec.placement.mode` sets it, or `(Defaulted)` for the default, `Single`. |
+| Mode | The placement mode, `Single`, `All` or `Split`, then `(Declared)` when `spec.placement.mode` sets it, or `(Defaulted)` for the default, `Single`. The CLI doesn't recognize the mode `SplitByCapacity`, so an InferenceService that declares it reads `Unknown (Declared)`. |
 | Placement | The phase that the controller reports, then `(reported)`: `Pending` until a matching workload cluster is connected, `Admitting` until one admits the InferenceService, `Placed` once at least one has, and `Failed` when placement failed for good. `NotRecorded` when the status has no placement. |
 | Freshness | Always `Unverifiable`: `status.placement` records no generation. |
 | Input source | `Structured` when the InferenceService sets `spec.placement`, and `LegacyAnnotations` otherwise, even when it sets neither annotation. |
-| Selectors | Whether the requirements and the cluster selector, from `spec.placement` or the annotations, parse as label selectors: `Valid`, `InvalidSelector`, or `NoRequirements` when neither is set. `BudgetExceeded` when one is too long. |
-| Reported cluster | The cluster the controller chose, from `status.placement.cluster`. Only mode `Single` chooses one, so the row is empty in modes `All` and `Split`. |
+| Selectors | Whether the legacy annotations' requirements and cluster selector parse as label selectors: `Valid`, `InvalidSelector`, or `NoRequirements` when neither applies. `BudgetExceeded` when one is too long. Structured placement carries no selectors — the CLI doesn't read `clusterAffinity` — so an InferenceService that sets `spec.placement` always reads `NoRequirements`. |
+| Reported cluster | The cluster the controller chose, from `status.placement.cluster`. Only mode `Single` chooses one, so the row is empty in the other modes. |
 | Endpoint origin | The origin of `status.placement.endpoint`, which only mode `Single` records. |
 | Service origin | The origin of the InferenceService's `status.url`. On a control plane, it's the chosen cluster's endpoint in mode `Single`, and empty in the other modes. |
 | Home inspection | How the CLI read `status.placement.candidates`. |
 | Provenance inspect | How the CLI read the AutoscalerPolicies and rollout groups recorded for each home. `Unavailable` when a home's record is malformed or too large. |
 | Issue | A problem that the CLI found in what it read, as `<group>: <code> (<count>)`, for example `PlacementPhase: UnknownValue (1)`. One row per problem. |
+
+The table has no row for a declared `spec.placement.split`: only the JSON and YAML reports record it, under `inputs.split`.
 
 Then each home gets these rows:
 
@@ -99,7 +101,7 @@ The table ends with the hint `Placed does not prove replica floor met`: a cluste
 
 ### Examples {#status-examples}
 
-On a control plane, show the placement of `chat` in `prod`. It sets `spec.placement.mode: All` and `clusterSelector: pool=gpu`, and OME placed it on the two workload clusters labeled `pool=gpu`:
+On a control plane, show the placement of `chat` in `prod`. It sets `spec.placement` with `policy: ClusterAffinity`, `mode: All` and a `clusterAffinity` term that requires the label `pool=gpu`, and OME placed it on the two workload clusters labeled `pool=gpu`:
 
 ```bash
 kubectl ome placement status chat -n prod
@@ -111,7 +113,7 @@ Mode                 All (Declared)
 Placement            Placed (reported)
 Freshness            Unverifiable
 Input source         Structured
-Selectors            Valid
+Selectors            NoRequirements
 Reported cluster
 Endpoint origin      NotRecorded
 Service origin       NotRecorded
@@ -124,6 +126,8 @@ Home origin          https://chat.worker-b.example.com
 Hint                 Placed does not prove replica floor met
 View                 Bounded cells; use -o json for complete identities
 ```
+
+Selectors reads `NoRequirements` because `chat` declares its restriction in `clusterAffinity`, not in the legacy annotations.
 
 With `-o wide`, each home also gets its replica counts and provenance. For `worker-a`, these rows follow its Home origin row:
 
@@ -171,7 +175,7 @@ The only address is the origin of its `status.url`.
 kubectl ome placement explain INFERENCESERVICE [flags]
 ```
 
-`explain` checks the InferenceService's placement selectors against the labels of each registered WorkloadCluster, and sums up the routing settings in its `spec.routing`. A match doesn't make a cluster eligible: `explain` doesn't say where the controller can place the InferenceService.
+`explain` lists each registered WorkloadCluster with its reported readiness, and sums up the routing settings in the InferenceService's `spec.routing`. For an InferenceService stored with the legacy annotations, it also checks their selectors against each cluster's labels. It doesn't evaluate `clusterAffinity` terms, so for an InferenceService that sets `spec.placement`, Selector compatible reads `NotApplicable` on every cluster. A match doesn't make a cluster eligible: `explain` doesn't say where the controller can place the InferenceService.
 
 ### Flags {#explain-flags}
 
@@ -187,7 +191,7 @@ The table starts with the same rows as [`status`](#status-output-fields), withou
 
 | Row | What it shows |
 | --- | --- |
-| Routing intent | `Declared` when the InferenceService sets `spec.routing` or the deprecated `spec.placement.capacityFactors`, and `Absent` otherwise. `Invalid` when a setting fails the routing checks, for example a capacity factor that isn't positive, and `BudgetExceeded` when there are too many entries. |
+| Routing intent | `Declared` when the InferenceService sets `spec.routing`, and `Absent` otherwise. `Invalid` when a setting fails the routing checks, for example a capacity factor that isn't positive, and `BudgetExceeded` when there are too many entries. |
 | Routing enablement | `spec.routing.enabled`: `OptIn` for `true`, `OptOut` for `false` and `Inherited` when unset. |
 | Install routing | Always `Gate/defaults unobserved`: the CLI doesn't read whether routing is on for the installation or what its defaults are. |
 
@@ -195,7 +199,7 @@ When Routing intent isn't `Absent`, four rows follow:
 
 | Row | What it shows |
 | --- | --- |
-| Capacity factors | Their source, then their count, as in `Routing (1)`: `Routing` for `spec.routing.capacityFactors`, `LegacyPlacement` for the deprecated `spec.placement.capacityFactors`, `Conflict` for both and `Inherited` for neither. |
+| Capacity factors | Their source, then their count, as in `Routing (1)`: `Routing` when `spec.routing.capacityFactors` sets them, and `Inherited (0)` when `spec.routing` leaves them out. |
 | Routing probe | `spec.routing.probe`: `Inherited` when unset, `Disabled` when it sets `disabled: true` and `Configured` otherwise. |
 | Capacity poll | `spec.routing.capacity`, with the same values. |
 | Publisher options | `spec.routing.publisher`: `Configured` or `Inherited`, then the number of options it sets. |
@@ -216,7 +220,7 @@ Then each cluster gets these rows:
 | Row | What it shows |
 | --- | --- |
 | Cluster | The WorkloadCluster's name. |
-| `Selector compat...` | Selector compatible: `True` when the cluster's labels match all the InferenceService's selectors, and `False` otherwise. A selector can also match the cluster's name, as `metadata.name`. `NotApplicable` without a selector, and `Unknown` when a selector is invalid or the cluster's labels are malformed. |
+| `Selector compat...` | Selector compatible: `True` when the cluster's labels match all the selectors the legacy annotations declare, and `False` otherwise. A selector can also match the cluster's name, as `metadata.name`. `NotApplicable` without a selector — always, when the InferenceService sets `spec.placement` — and `Unknown` when a selector is invalid or the cluster's labels are malformed. |
 | Reported WLC Ready | The status of the cluster's `Ready` condition, then its freshness, as in `True (Current)`. `Ready` means that the control plane can reach the cluster, not that it has capacity. `Unknown (Unverifiable)` without a `Ready` condition, and `Unknown (Invalid)` when it's malformed or its copies disagree. |
 | Condition inspect | How the CLI read the cluster's conditions: `<kept>` counts the `Ready` condition, the only one it reads, and `<total>` all of them. |
 
@@ -244,7 +248,7 @@ Mode                 All (Declared)
 Placement            Placed (reported)
 Freshness            Unverifiable
 Input source         Structured
-Selectors            Valid
+Selectors            NoRequirements
 Reported cluster
 Endpoint origin      NotRecorded
 Service origin       NotRecorded
@@ -261,15 +265,15 @@ Fleet Pages          1
 Fleet Complete       true
 Fleet Truncated      false
 Cluster              worker-a
-Selector compat...   True
+Selector compat...   NotApplicable
 Reported WLC Ready   True (Current)
 Condition inspect    Validated 1/1; truncated=false
 Cluster              worker-b
-Selector compat...   True
+Selector compat...   NotApplicable
 Reported WLC Ready   True (Current)
 Condition inspect    Validated 1/1; truncated=false
 Cluster              worker-c
-Selector compat...   False
+Selector compat...   NotApplicable
 Reported WLC Ready   True (Current)
 Condition inspect    Validated 1/1; truncated=false
 Hint                 WLC Ready is reachability, not capacity
@@ -277,7 +281,7 @@ Hint                 Partial fleet: no global eligibility verdict
 View                 Bounded cells; use -o json for complete identities
 ```
 
-`pool=gpu` matches `worker-a` and `worker-b`. `chat` sets no `spec.routing`, so Routing intent is `Absent` and the table leaves out the four routing detail rows.
+`chat` restricts placement with a `clusterAffinity` term, which `explain` doesn't evaluate, so Selector compatible reads `NotApplicable` on all three clusters, including `worker-c`, where OME didn't place it. `chat` sets no `spec.routing`, so Routing intent is `Absent` and the table leaves out the four routing detail rows.
 
 With `-o wide`, these rows follow the Condition inspect row of `worker-a`:
 
@@ -377,7 +381,7 @@ Mode                 All (Declared)
 Placement            Placed (reported)
 Freshness            Unverifiable
 Input source         Structured
-Selectors            Valid
+Selectors            NoRequirements
 Reported cluster
 Endpoint origin      NotRecorded
 Service origin       NotRecorded
