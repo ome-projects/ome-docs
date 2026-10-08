@@ -116,8 +116,13 @@ spec:
     minReplicas: 1
     maxReplicas: 1
   placement:
+    policy: ClusterAffinity
     mode: All
-    clusterSelector: "metadata.name in (worker-a,worker-b)"
+    clusterAffinity:
+      - matchFields:
+          - key: metadata.name
+            operator: In
+            values: [worker-a, worker-b]
   routing:
     probe:
       path: /v1/models
