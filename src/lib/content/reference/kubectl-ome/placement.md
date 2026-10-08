@@ -91,7 +91,7 @@ Then each home gets these rows:
 
 | Row | What it shows |
 | --- | --- |
-| Admitted replicas | The replicas the home's cluster admitted, as in `2 (Reported)`, or `Unknown` when the count is 0 or missing. |
+| Admitted replicas | The replicas the home's cluster admitted, as in `2 (Reported)`, or `Unknown` when the count is 0 or missing. `NotApplicable` when the Mode row reads `Unknown`: the CLI doesn't interpret the counts of a mode it doesn't recognize, such as `SplitByCapacity`. |
 | Ready replicas | The home's ready replicas, in the same form. |
 | Provenance | Whether the controller recorded the AutoscalerPolicies or rollout groups for the home, `Reported` or `NotRecorded`, then `freshness unverifiable`. |
 | Policy inspection | How the CLI read the home's AutoscalerPolicies. |
