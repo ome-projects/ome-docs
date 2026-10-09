@@ -3,7 +3,7 @@ title: InferenceService
 description: An InferenceService names a model, a serving runtime or both, and declares the engine, decoder and router components that OME turns into workloads.
 ---
 
-An InferenceService serves a model. It names a [base model](../models/base-models.md), a [serving runtime](../runtimes/serving-runtimes.md) or both, and declares the components that serve the model: an engine, and optionally a decoder and a router. OME fills in each component from the runtime, runs it as a Deployment or on [OMENative](../omenative/overview.md), and reports in `status` when the InferenceService is ready and where to send requests.
+An InferenceService serves a model. It names a [base model](../models/base-models.md), a [serving runtime](../runtimes/serving-runtimes.md) or both, and declares the components that serve the model: an engine, and optionally a decoder and a router. OME fills in each component from the runtime, runs it as a Deployment or on [OMENative](../omenative/overview.md), and reports in `status` when the InferenceService is ready and where to send requests. A service can instead front replicas you run yourself: see [Referenced replicas](#referenced-replicas).
 
 ## A minimal InferenceService
 
@@ -82,7 +82,7 @@ An InferenceService names a model, a runtime or both:
 | `spec.model` and `spec.runtime` | Serves the model with the runtime you name. |
 | `spec.runtime` | Since v1.3. Serves with the runtime, which loads the weights itself: see [The runtime](#the-runtime). |
 
-The webhook rejects an InferenceService that sets neither: `at least one of spec.model or spec.runtime must be set`.
+The webhook rejects an InferenceService that sets neither: `at least one of spec.model or spec.runtime must be set`. The one exception is a service over [referenced replicas](#referenced-replicas): it runs no model server of its own, and the replicas carry their own model and runtime.
 
 ### The model
 
@@ -138,11 +138,11 @@ An InferenceService has up to three components:
 
 | Component | What it does |
 | --- | --- |
-| `engine` | Runs the model server. Every InferenceService needs one: without it, OME creates no workload and records a `DeploymentModeError` event. With a decoder, the engine runs the prefill phase. |
+| `engine` | Runs the model server. Every InferenceService needs one, declared here or [referenced](#referenced-replicas): with neither, OME creates no workload and records a `DeploymentModeError` event. With a decoder, the engine runs the prefill phase. |
 | `decoder` | Runs the decode phase, for prefill-decode disaggregated serving: see [Serve a prefill-decode model](../../guides/omenative/serve-a-prefill-decode-model.md). Needs an engine. |
 | `router` | Receives requests and spreads them across the engine, or the engine and decoder. Without a router, requests go to the engine. |
 
-A component exists only when you declare it. The runtime's `engineConfig`, `decoderConfig` and `routerConfig` fill in the components you declare, and your values win, so a runtime's `routerConfig` adds no router by itself.
+A component exists only when you declare it, or when [`spec.replicaRefs`](#referenced-replicas) names a replica for its role. The runtime's `engineConfig`, `decoderConfig` and `routerConfig` fill in the components you declare, and your values win, so a runtime's `routerConfig` adds no router by itself.
 
 Each component is a pod spec, so it takes pod fields such as `nodeSelector` and `tolerations`. It also has these fields:
 
@@ -180,6 +180,40 @@ Each component runs as a Deployment, the default, or, since v1.3, on [OMENative]
 An engine or decoder with a `leader` or `worker`, set in the InferenceService or its runtime, runs on OMENative by default. Any component can [opt in](../architecture/deployment-modes.md#opt-in-to-omenative) for per-Instance status, held revisions when updates keep failing, and updates that by default bring the new Instance up before the old one drains. Opt in the whole InferenceService with `spec.deploymentMode: OMENative`, or one component with its `ome.io/deploymentMode` annotation. `MultiNode` (deprecated), which only that annotation selects, runs a component as a LeaderWorkerSet and needs the LeaderWorkerSet controller.
 
 [Deployment modes and OMENative](../architecture/deployment-modes.md) compares the modes and shows how OME resolves a component's mode.
+
+## Referenced replicas
+
+Instead of declaring components, an InferenceService can front standalone [InferenceReplicas](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica): replicas you create directly, with no parent InferenceService. `spec.replicaRefs` names, per role, the replica the service fronts. The service puts its stable names in front of the replicas' pods and reports the replicas in its `status`, and it writes nothing on them: their specs, rollouts and scaling stay with you.
+
+```yaml title="isvc-replica-refs.yaml"
+apiVersion: ome.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama-fronted
+  namespace: llama-demo
+spec:
+  replicaRefs:
+    engine:
+      - llama-pool
+```
+
+This service fronts the standalone engine replica `llama-pool`: OME creates the stable Service `llama-fronted-engine` in front of the replica's pods, and routes requests to the service as it would to a declared engine, as [Ingress and external access](../rollouts-and-traffic/ingress.md) describes.
+
+A referenced role runs on OMENative, and the replicas carry their own model and runtime, so such a service sets no other workload fields. The webhook enforces:
+
+- `engine` is required; `decoder` and `router` are optional. Without an engine, the rejection starts with `spec.replicaRefs.engine is required when spec.replicaRefs is set`.
+- Each role's list holds one name, and no replica is named for two roles.
+- A service references all of its roles this way or none: no `spec.engine`, `spec.decoder` or `spec.router` next to `spec.replicaRefs`.
+- No `spec.model` or `spec.runtime` — the [model-or-runtime rule](#model-and-runtime-references) doesn't apply — and no `spec.rollout`, `spec.scalingPolicy`, `spec.acceleratorSelector`, `spec.placement` or `spec.routing`.
+- `spec.deploymentMode` is unset or `OMENative`.
+
+When you create the service, the webhook also reads each named replica. It must exist in the service's namespace — otherwise the rejection is `spec.replicaRefs.engine names InferenceReplica llama-demo/llama-pool, which does not exist; create it first` — be standalone, serve the role's component with its `spec.component`, and be fronted by no other InferenceService in the namespace: a replica has one service. Two services created at the same moment can both pass that last check; both then front the replica until you delete one of them.
+
+`spec.replicaRefs` is fixed at create. The Services and the route are named for the service, so to front other replicas, delete the InferenceService and create a new one: the webhook rejects any change to the block with `spec.replicaRefs is fixed at create; delete and recreate the InferenceService to front other replicas`.
+
+In `status`, each referenced role mirrors its replica: `status.components.<component>` names the replica in `scaleTargetRef` and carries its [revisions and Instance counts](../architecture/deployment-modes.md#lifecycle-status), and `EngineReady`, `DecoderReady` and `RouterReady` follow those counts, so `kubectl wait --for=condition=Ready` works as usual. When a named replica is missing or wrong later — deleted, or no longer a standalone replica of the role's component — OME can't create what it doesn't own: it sets the role's ready condition to `False` with reason `ReplicaRefMissing` or `ReplicaRefInvalid`, records a Warning event with the same reason, and the role stops backing the route. It watches the replicas, so the service catches up on its own when the replica is back.
+
+OME doesn't point the replicas at one another. A replica that needs a peer's address — an engine its decoder's, a router the engine's and the decoder's — needs the stable Service names, `llama-fronted-engine` and `llama-fronted-decoder`, in its own spec. They exist once the service does.
 
 ## Multi-node serving
 
@@ -225,8 +259,8 @@ The `Ready` condition is `True` when both `EngineReady` and `IngressReady` are. 
 | Condition | What it says |
 | --- | --- |
 | `EngineReady` | The engine's workload is available. |
-| `DecoderReady` | The decoder's workload is available. Only when you declare a decoder. |
-| `RouterReady` | The router's workload is available. Only when you declare a router. |
+| `DecoderReady` | The decoder's workload is available. Only when you declare or [reference](#referenced-replicas) a decoder. |
+| `RouterReady` | The router's workload is available. Only when you declare or reference a router. |
 | `IngressReady` | The Ingress or HTTPRoutes that OME creates are ready, or ingress creation is off. |
 | `OverlaysReady` | Since v1.3. Only when you declare overlays: `True` with reason `AllOverlaysMounted`, or `False` with reason `OverlaysSkipped` and the overlays it left out. |
 | `RuntimeReady` | Since v1.3. Only after a runtime problem: `False` with reason `RuntimeNotFound`, then `True` with reason `RuntimeResolved` once a runtime resolves. |
