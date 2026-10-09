@@ -25,7 +25,7 @@ HTTPRoutes need v1.3 or later. On v1.2.2, `enableGatewayAPI: true` makes the ing
 
 Turning ingress creation on deletes the external Service, so move clients in the cluster to a route, or to a component's Service such as `llama-chat-engine`. Turning it off, or switching between an Ingress and HTTPRoutes, leaves the old Ingress or HTTPRoutes serving traffic until you delete them, as [Turn off ingress creation](../../guides/networking/configure-ingress.md#turn-off-ingress-creation) shows.
 
-The Ingress and HTTPRoutes send requests to the Services that OME creates for the InferenceService's [components](../serving/inference-services.md#components): `<name>-engine`, `<name>-decoder` and `<name>-router`. So they work the same for [OMENative](../omenative/overview.md) components as for `RawDeployment` ones. Keep InferenceService names to 56 characters, or 55 with a decoder. With longer names, the routes point at Services that don't exist.
+The Ingress and HTTPRoutes send requests to the Services that OME creates for the InferenceService's [components](../serving/inference-services.md#components): `<name>-engine`, `<name>-decoder` and `<name>-router`. So they work the same for [OMENative](../omenative/overview.md) components as for `RawDeployment` ones. They also work the same when the InferenceService fronts standalone replicas with `spec.replicaRefs`; the Services then select the replicas' pods, as [Referenced replicas](#referenced-replicas) describes. Keep InferenceService names to 56 characters, or 55 with a decoder. With longer names, the routes point at Services that don't exist.
 
 ## The external Service
 
@@ -199,7 +199,7 @@ The InferenceService is `Ready` only when `IngressReady` is `True`, as [Status](
 | --- | --- |
 | The external Service | Always, with the reason `IngressDisabled`. |
 | A Kubernetes Ingress | OME has created the Ingress. It waits for the router, or the decoder when there's no router, or else the engine. It doesn't check your ingress controller. |
-| HTTPRoutes | Every declared component is ready, or is an OMENative component with a serving Instance. The Gateway has accepted every HTTPRoute, with no `False` condition. The Gateway can reject the default BackendTrafficPolicy without changing `IngressReady`. |
+| HTTPRoutes | Every declared or [referenced](#referenced-replicas) component is ready, or is an OMENative component with a serving Instance. The Gateway has accepted every HTTPRoute, with no `False` condition. The Gateway can reject the default BackendTrafficPolicy without changing `IngressReady`. |
 
 When `IngressReady` is `False`, its reason and message say why:
 
@@ -210,6 +210,19 @@ When `IngressReady` is `False`, its reason and message say why:
 | The Gateway's reason, such as `NotAllowedByListeners` | `Engine`, then the Gateway's message | The Gateway reports a `False` condition on the HTTPRoute. |
 
 The messages name the component, the engine in these examples. [Troubleshooting](../../guides/networking/configure-ingress.md#troubleshooting) in Configure ingress says what to do.
+
+## Referenced replicas
+
+An InferenceService that fronts standalone [InferenceReplicas](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica) gets the same external access as one that declares its components. A role that `spec.replicaRefs` names, as [Referenced replicas](../serving/inference-services.md#referenced-replicas) on the InferenceServices page describes, counts as its component in every choice on this page: whether requests go to the router or the engine, the "with a router" and "with a decoder" rows of the hostname and route tables, and `status.url`. For `llama-fronted`, which fronts the standalone engine replica `llama-pool`, `status.url` with ingress creation off is `http://llama-fronted.llama-demo.svc.cluster.local:8080`, and otherwise the address in the [Status](#status) table, with `llama-fronted` in place of `llama-chat`.
+
+What changes is whose pods serve the requests. A standalone replica's pods are named and labeled for the replica, not for the service that fronts it:
+
+- The Ingress and the HTTPRoutes send requests to the component Services, `llama-fronted-engine` here. Such a Service selects its replica's pods — `llama-pool-engine-0-default-0` and so on — by the label `ome.io/inferenceservice: llama-pool`. When the replica runs each Instance as a leader and workers, the Service selects only the leader pods.
+- [The external Service](#the-external-service) `llama-fronted` also selects the replica's pods: the referenced router's, or the referenced engine's when there's no router.
+
+A component Service takes its ports from the replica's runners — the leader's when it has one — or, when the replica carries no runners, from the replica's current revision. Until the replica reports a revision, the Service publishes the default port, 8080.
+
+A referenced role backs its route by the same rules as a declared component. The Ingress waits for the role it targets to be ready, and a referenced role's ready condition follows the replica's counts. For HTTPRoutes, the [Routes](#routes) relaxation applies as written: a role whose ready condition turns `False` gets and keeps its route while the replica reports `readyReplicas` and `servingReplicas` above `0`. When the named replica is missing or invalid, the role's condition turns `False` with the reason `ReplicaRefMissing` or `ReplicaRefInvalid`, and the role stops backing its route: OME stops creating and updating the role's routes, and `IngressReady` turns `False` with the reason `ComponentNotReady`.
 
 ## Security
 
