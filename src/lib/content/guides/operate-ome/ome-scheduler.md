@@ -41,7 +41,7 @@ customresourcedefinition.apiextensions.k8s.io/podgroups.scheduling.x-k8s.io crea
 
 A gang is the set of pods whose `scheduling.x-k8s.io/pod-group` label names the same PodGroup, and the PodGroup's `minMember` is the gang's size. An accelerator domain is the set of nodes that share one value of a topology label. The PodGroup's `ome.io/topology-key` annotation names the label, or the chart's [fallback](#set-a-fallback-topology-key) does. Gang members land only on nodes that carry the label.
 
-The scheduler waits until `minMember` members of a gang exist, and picks a domain with room for all of them, one node per member. It holds that domain while the gang forms, and binds the members together once `minMember` of them have a node. A gang that fits in no domain waits until one has room, since the chart turns preemption off by default. [How it places a gang](../../concepts/scheduling/ome-scheduler.md#how-it-places-a-gang) explains the choice of domain, the hold and the timeout.
+The scheduler waits until `minMember` members of a gang exist, and picks a domain with room for all of them. It counts room the way placement fills a node: each node takes as many members as its free resources fit, so small members can share one, and a required pod anti-affinity between members keeps them one per node. It holds that domain while the gang forms, and binds the members together once `minMember` of them have a node. A gang that fits in no domain waits until one has room, since the chart turns preemption off by default. [How it places a gang](../../concepts/scheduling/ome-scheduler.md#how-it-places-a-gang) explains the choice of domain, the hold and the timeout.
 
 ## Step 1: Install the chart
 
@@ -133,7 +133,7 @@ podgroup.scheduling.x-k8s.io/gang-demo created
 !!! warning "Create a gang's pods together"
     The scheduler places none of a gang's pods until `minMember` of them exist. A controller that creates one pod at a time and waits for each to become Ready never completes the gang, so its first pod stays `Pending`. A StatefulSet does this with its default `OrderedReady` policy: give it `podManagementPolicy: Parallel`, or use a Deployment or a Job.
 
-Then create the gang: a Deployment of two pods that set `schedulerName: ome-scheduler`, carry the PodGroup's label and request one GPU each. The scheduler plans a separate node per member but doesn't keep members apart, so the pod anti-affinity keeps the two pods on separate nodes. Add the tolerations and node selector that your GPU nodes need.
+Then create the gang: a Deployment of two pods that set `schedulerName: ome-scheduler`, carry the PodGroup's label and request one GPU each. The required pod anti-affinity keeps the two pods on separate nodes: the scheduler reads it and plans one member per node. Without it, both pods could land on one node with two free GPUs. Add the tolerations and node selector that your GPU nodes need.
 
 ```yaml title="gang.yaml"
 apiVersion: apps/v1
