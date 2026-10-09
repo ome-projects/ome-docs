@@ -198,7 +198,7 @@ The placement state is:
 | `Partial` | Part of the placement status is missing, cut short or unknown to the CLI. The other placement rows show which part. |
 | `Unavailable` | The CLI couldn't make sense of the placement data. The row reads `Unavailable / Unknown / NotRecorded`. |
 
-The mode is `Single`, `All`, `Split`, `Unknown` or `NotApplicable`. [`kubectl ome placement status`](placement.md#status-output-fields) explains the phase, candidate and endpoint values. While the controller admits the service, this report shows the phase `Unknown` and the state `Partial`, where `placement status` shows `Admitting`. This is a known bug.
+The mode is `Single`, `All`, `Split`, `Unknown` or `NotApplicable`. [`kubectl ome placement status`](placement.md#status-output-fields) explains the phase, candidate and endpoint values.
 
 ### Traffic
 
