@@ -106,7 +106,7 @@ spec:
     maxReplicas: 1
 ```
 
-- The engine runs prefill. When a pod of a ready prefill Instance fails, OME rebuilds the Instance in a new pod. `maxUnavailable: 1` lets the [crash-loop repair](#the-crash-loop-repair) rebuild one prefill Instance at a time.
+- The engine runs prefill. When a pod of a ready prefill Instance fails, OME rebuilds the Instance in a new pod. `maxUnavailable: 1` keeps the `EngineReady` condition `True` while no more than one Instance is out of service: see [Observe a restart](#observe-a-restart).
 - The decoder states its default, `None`, which also overrides any value in the runtime. OME repairs only the decoder pod that fails.
 - The router keeps its default, `None`.
 
@@ -128,10 +128,12 @@ Some pod states, such as `CrashLoopBackOff` and `ImagePullBackOff`, [don't clear
 
 The ome-resources chart sets the grace period, `ome.controller.lifecycle.stuckPodGracePeriod`, to `60s`. Without the setting, the repair is off.
 
-!!! warning "Repairs can rebuild a whole component"
-    One cause can wedge every Instance of a component at once. Under the default `SurgeThenDrain` strategy, and outside a [rollout group](../rollouts-and-traffic/rollout-groups.md), OME can then rebuild them all together. To pace the repairs, set `maxUnavailable` in the component's `lifecycle.updateStrategy.rollingUpdate`, as the engine in [Choose a policy per component](#choose-a-policy-per-component) does.
+The chart also sets `ome.controller.lifecycle.repairBatchSize`, to `10`: how many of these repairs OME opens per component in one reconcile pass. The bound counts Instances, so a leader and its workers count as one. Only a fresh crash-loop repair counts against it: a repair that's already running, a restart that the policy starts and the replacement of pods that are already gone don't count, and don't wait. Instances past the bound are repaired on the following passes, with no `RepairHeld` event while they wait. Without the setting, OME opens every repair in one pass. The manager reads the value once, when it starts, and won't start on zero or a negative value, so change it with a Helm upgrade, as [Change ConfigMap settings](../../guides/operate-ome/configure-the-controller.md#tune-the-config-cache) describes.
 
-With `maxUnavailable: 1`, OME starts a repair only while no other Instance of the component is restarting or out of service for an update. A repair that waits records a `RepairHeld` warning event that names what holds it: `Budget` for `maxUnavailable`, or the rollout group's gate. Restarts that the policy starts don't wait for either, and `SurgeThenDrain` updates ignore `maxUnavailable`.
+!!! warning "Repairs can still take a whole component down"
+    One cause can wedge every Instance of a component at once. The repair batch only staggers the rebuilds: repairs opened on an earlier pass don't count against it, so each pass opens more while the first ones still run, and the whole component can soon be rebuilding at once. For an Instance whose pods no longer serve, a rebuild costs nothing: the Instance is already out of service, and the rebuild is its way back. But a multi-pod Instance can still serve through its leader while a worker is wedged, and its repair takes a serving Instance offline. To bound how many of them rebuild at a time, set `maxUnavailable` in the component's `lifecycle.updateStrategy.rollingUpdate`.
+
+`maxUnavailable` holds only a repair that takes a serving Instance offline: at `maxUnavailable: 1`, such a repair starts only while no other Instance of the component is restarting or out of service for an update. A repair of an Instance whose pods serve nothing starts without waiting, and no repair waits for its [rollout group](../rollouts-and-traffic/rollout-groups.md): a wedged Instance is already out of the group's serving count, so holding its repair would only prolong the outage it ends. When `maxUnavailable` keeps a component from opening any repair in a pass, a `RepairHeld` warning event names the Instance that waits and the budget. Restarts that the policy starts don't wait for `maxUnavailable`. Repairs honor it under every update strategy, `SurgeThenDrain` included.
 
 ## What a restart does
 
@@ -149,7 +151,7 @@ OME records a restart's events on the InferenceService:
 | --- | --- | --- |
 | `RestartTriggered` | Warning | A restart starts. The message names the Instance, the trigger and the new incarnation. |
 | `RestartCompleted` | Normal | The Instance is `Ready` again. |
-| `RepairHeld` | Warning | A crash-loop repair waits for `maxUnavailable` or its rollout group. |
+| `RepairHeld` | Warning | A crash-loop repair that takes a serving Instance offline waits for `maxUnavailable`. |
 | `FoundOrphan` | Warning | A pod without the `ome.io/instance-incarnation` label holds up the restart until the pod is gone. |
 | `InstanceFailed` | Warning | The restart ran out of time, or a new pod stayed stuck, and the Instance is `Failed`. |
 
