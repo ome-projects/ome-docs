@@ -25,7 +25,7 @@ OME provisions slices only for OMENative components, and only on node pools that
 - One Slice serves the pods of one Instance. The leader and workers of a multi-pod Instance share it. A single-pod Instance gets one Slice per pod, so during an update's surge the new pod gets its own Slice while the pod it replaces keeps its own.
 - The Slice's shape comes from what the pods already declare: the accelerator and topology node labels they select, and the TPU chips their containers request. The chips must fill the topology exactly: see [Multi-host slices](#multi-host-slices).
 - OME creates an Instance's pods only once their Slice is ready: its `Ready` condition's reason is one of the configured `readyStates`. Each pod gets a node selector on the slice-name label, which confines it to the Slice's nodes. With `slice.readyTimeout` set, a Slice that has its partition but stays out of a ready state longer than the timeout is released and provisioned again, once no pod holds it.
-- OME deletes a ready Slice that no pod holds when no Instance wants it anymore: after a scale-down, a shape change, or when one of its hosts can't take the pods. Deleting the Slice is what returns the capacity; GKE can hold it behind a finalizer while it releases the partition.
+- OME deletes a ready Slice that no pod holds when no Instance wants it anymore: after a scale-down, a shape change, or when one of its hosts can't take the pods. While pods of another workload hold TPU chips on the Slice's hosts, OME keeps it, because deleting it would deactivate the partition under them: see [A SliceReleaseDeferred event appears](#a-slicereleasedeferred-event-appears). Deleting the Slice is what returns the capacity; GKE can hold it behind a finalizer while it releases the partition.
 
 A Slice is named after the component's [InferenceReplica](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica), cut to fit, then the Instance's index, the pod's ordinal and an 8-character hash of the owner's identity, such as `qwen3-tpu-engine-0-0-8f3a21c7`. The `ome.io/slice-owner-uid` label alone makes a Slice OME's: OME never adopts, modifies or deletes a Slice without it. OME also labels its Slices with `ome.io/managed-by: OMENative`, the Instance's `ome.io/instance-index`, the pod's `ome.io/pod-ordinal` and the owner kind and name labels from Step 1, and annotates them with the owner as `ome.io/slice-owner: {namespace}/{name}`.
 
@@ -230,12 +230,13 @@ By default, an update surges: the new pods come up on a Slice of their own while
 
 ## Metrics
 
-The manager reports provisioning on its metrics endpoint, labeled by `slice_type` and `topology`. The created, released and duration series of every configured type and topology start at zero when the manager starts. [Collect metrics](../operate-ome/metrics.md) shows how to scrape them.
+The manager reports provisioning on its metrics endpoint, labeled by `slice_type` and `topology`. The created, released, release-deferred and duration series of every configured type and topology start at zero when the manager starts. [Collect metrics](../operate-ome/metrics.md) shows how to scrape them.
 
 | Metric | What it reports |
 | --- | --- |
 | `ome_tpu_slice_created_total` | Slices the controller created. |
 | `ome_tpu_slice_released_total` | Slices the controller provisioned that the API server has removed, whoever deleted them. A Slice GKE holds behind a finalizer counts once GKE lets it go. Counted from the leader's watch. |
+| `ome_tpu_slice_release_deferred_total` | Releases of Slices the controller provisioned that it kept back because pods of another workload hold chips on the Slice's hosts: see [A SliceReleaseDeferred event appears](#a-slicereleasedeferred-event-appears). The reconcile retries, and each deferred attempt counts. |
 | `ome_tpu_slice_create_failures_total` | Creates that failed, with a `reason` label: the API server's status reason, such as `Forbidden` or `Invalid`; `OwnershipConflict` when another owner's Slice has the name; or `Unknown`. The reconcile retries, and each failed attempt counts. |
 | `ome_tpu_slice_provision_duration_seconds` | A histogram of the seconds from creating a Slice to first seeing it ready. Only Slices the current leader created are timed. |
 | `ome_tpu_slices` | A gauge of the Slices the controller provisioned that exist now, by `state`: `terminating`, `orphaned` when the InferenceReplica it was provisioned for no longer exists, `ready`, or `pending` in any other state, a failed one included. Reported by the leader. |
@@ -273,7 +274,7 @@ The Instance stays in `Creating` with no pods, and its operation holds on `Capac
 
 ### A SliceReadyTimeout event appears
 
-With `slice.readyTimeout` set in Step 1's values, a Slice that got its partition but has stayed out of a ready state for longer than the timeout is recycled once no pod holds it: OME withholds the pods, records the Warning event on the InferenceService, deletes the Slice and provisions the slot again. The new Slice gets a new partition, so a one-off Slice stuck short of ready heals on its own. The wait is measured from the `Ready` condition's last transition, or from the Slice's creation while GKE reports no condition. Read the event:
+With `slice.readyTimeout` set in Step 1's values, a Slice that got its partition but has stayed out of a ready state for longer than the timeout is recycled once no pod holds it: OME withholds the pods, records the Warning event on the InferenceService, deletes the Slice and provisions the slot again. The new Slice gets a new partition, so a one-off Slice stuck short of ready heals on its own. The wait is measured from the `Ready` condition's last transition, or from the Slice's creation while GKE reports no condition. The delete itself waits while pods of another workload hold chips on the Slice's hosts: see [A SliceReleaseDeferred event appears](#a-slicereleasedeferred-event-appears). Read the event:
 
 ```bash
 kubectl get events -n qwen3-tpu --field-selector reason=SliceReadyTimeout \
@@ -288,7 +289,7 @@ A Slice still waiting for its partition is never timed out, however long it wait
 
 ### A SliceHostUnavailable event appears
 
-A ready Slice that no pod holds has a node the pods can't be scheduled on: cordoned, not ready, or unreachable, and the pods don't tolerate the matching taint. OME withholds the pods, records the Warning event on the InferenceService, deletes the Slice and provisions the slot again, so a one-off broken host heals on its own. Read the event:
+A ready Slice that no pod holds has a node the pods can't be scheduled on: cordoned, not ready, or unreachable, and the pods don't tolerate the matching taint. OME withholds the pods, records the Warning event on the InferenceService, deletes the Slice and provisions the slot again, so a one-off broken host heals on its own. The delete itself waits while pods of another workload hold chips on the Slice's hosts: see [A SliceReleaseDeferred event appears](#a-slicereleasedeferred-event-appears). Read the event:
 
 ```bash
 kubectl get events -n qwen3-tpu --field-selector reason=SliceHostUnavailable \
@@ -300,6 +301,21 @@ OMENative component=engine instance=0 withheld: slice qwen3-tpu-engine-0-0-8f3a2
 ```
 
 A Slice whose pods are already running is left alone. When every replacement Slice comes up broken too, fix the node pool.
+
+### A SliceReleaseDeferred event appears
+
+OME has a Slice to release, after a scale-down, a shape change, a recycle or a deletion, but pods of another workload hold TPU chips on its hosts, so it keeps the Slice: deleting it would deactivate the partition under those pods. OME records the Warning event on the component's InferenceReplica and retries on each reconcile, and it releases the Slice once the pods are gone. Read the event:
+
+```bash
+kubectl get events -n qwen3-tpu --field-selector reason=SliceReleaseDeferred \
+  -o jsonpath='{range .items[*]}{.message}{"\n"}{end}'
+```
+
+```output
+TPU slice qwen3-tpu-engine-0-0-8f3a21c7 is kept: pods of other workloads hold chips on its hosts (tpu-batch/indexer-0); it is released once they are gone
+```
+
+A pod holds the Slice's hosts while it is bound to one of its nodes, requests chips under `chipResource`, isn't confined to this Slice by the slice-name node selector, and hasn't succeeded or failed. The message names each one as `{namespace}/{name}`: wait for them to finish, or remove them where they come from. Each deferred attempt counts on `ome_tpu_slice_release_deferred_total`: see [Metrics](#metrics).
 
 ### A SliceOwnershipConflict event appears
 
@@ -329,7 +345,7 @@ The pods exist but stay `Pending`, or nothing happens at all, and `kubectl get s
 
 ## Clean up
 
-Delete the InferenceService and its namespace. OME releases each Instance's Slices as part of removing it, so the deletion waits until GKE lets them go:
+Delete the InferenceService and its namespace. OME releases each Instance's Slices as part of removing it, so the deletion waits while pods of other workloads hold chips on their hosts (see [A SliceReleaseDeferred event appears](#a-slicereleasedeferred-event-appears)) and until GKE lets them go:
 
 ```bash
 kubectl delete inferenceservice qwen3-tpu -n qwen3-tpu
