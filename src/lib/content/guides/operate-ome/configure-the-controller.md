@@ -175,7 +175,7 @@ The manager reads these settings only when it starts, so a `kubectl` edit to one
 
 - the `omeAgent`, `multicluster` and `omenativeStatus` entries;
 - `enableGatewayAPI` in the `ingress` entry;
-- `scaleUpPodBatchSize`, `scaleDownPodBatchSize` and `scaleDownRequeueInterval` in the `lifecycle` entry;
+- `scaleUpPodBatchSize`, `scaleDownPodBatchSize`, `scaleDownRequeueInterval` and `repairBatchSize` in the `lifecycle` entry;
 - `maxConcurrency` and `cacheTTL` in the `canaryAnalysis` entry;
 - `maxPinnedPlanBytes` in the `rollout` entry;
 - `preflight` in the `autoscalerPolicy` entry.

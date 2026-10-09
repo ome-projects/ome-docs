@@ -132,7 +132,8 @@ When the scheduler places a pod, the pod gets a `Scheduled` event from `ome-sche
 
 | Reason | What it means |
 | --- | --- |
-| `no domain has room for gang {namespace}/{name}` | No domain has room for the whole gang. The gang waits until one does. |
+| `no domain has room for gang {namespace}/{name}` | No domain has the capacity for the whole gang. The gang waits until one does. |
+| `no domain has room for gang {namespace}/{name}: every fitting domain is reserved for a forming gang` | A domain has the capacity, but every domain that fits is reserved for a forming gang. The plugin wakes the gang's pods when a reservation drains or is released. |
 | `PodGroup {namespace}/{name} not resolvable yet` | No PodGroup of that name exists in the pod's namespace. Create it, or fix the label. For OMENative pods, install the CRD and restart OME's manager, as [Opt in OMENative components](../../guides/operate-ome/ome-scheduler.md#opt-in-omenative-components) shows. |
 | `PodGroup {namespace}/{name} must declare ome.io/topology-key or the scheduler must configure topologyKey` | The gang has no topology label. Set the component's `topologyKey`, or `scheduler.plugin.topologyKey`. |
 | `waiting for all PodGroup member templates for {namespace}/{name}` | Fewer than `minMember` member pods exist. |
@@ -155,9 +156,9 @@ Each replica serves kube-scheduler's standard metrics and OMEGangPack's metrics 
 
 | Metric | Type | Labels | What it counts |
 | --- | --- | --- | --- |
-| `ome_scheduler_gang_pin_total` | Counter | `result` | Domain decisions for gangs, by `result`, as the next table lists. A gang that fits in no domain adds a `no_fit` each time the scheduler tries one of its pods. |
+| `ome_scheduler_gang_pin_total` | Counter | `result` | Domain decisions for gangs, by `result`, as the next table lists. A gang still waiting for a domain adds a `no_fit` or a `reserved` each time the scheduler tries one of its pods. |
 | `ome_scheduler_gang_gate_total` | Counter | `result` | Permit checks of gang members, by `result`: `wait` while the rest of the gang still needs nodes, and `admit` when a member completes the gang and lets it bind. |
-| `ome_scheduler_gang_activation_total` | Counter | `trigger` | Times the plugin sent a gang's pods back to the scheduling queue, by `trigger`: `permit` when a member reached Permit, and `templates_complete` when a waiting gang reached `minMember` pods. |
+| `ome_scheduler_gang_activation_total` | Counter | `trigger` | Times the plugin sent pods back to the scheduling queue, by `trigger`, as the trigger table lists. A wake-up counts once, however many pods it moves. |
 | `ome_scheduler_gang_unwind_total` | Counter | None | Times the plugin released a gang's pin and rejected its members waiting at Permit, for example after a member failed to schedule. It also grows when a gang ends, its PodGroup is deleted or re-created, or its topology label changes, so it isn't a failure count on its own. |
 | `ome_scheduler_pinned_groups` | Gauge | None | Gangs pinned to a domain now, including gangs whose members all have nodes. |
 
@@ -166,10 +167,20 @@ The `result` values of `ome_scheduler_gang_pin_total`:
 | `result` | When the plugin counts it |
 | --- | --- |
 | `pinned` | It picked a domain with room for the whole gang, and pinned the gang to it. |
-| `no_fit` | No domain has room for the gang. |
+| `no_fit` | No domain has the capacity for the gang. |
+| `reserved` | A domain has the capacity, but every domain that fits is reserved for a forming gang. The pod parks until a reservation drains or is released. |
 | `adopted` | It pinned a gang to the domain where its members already have nodes, for example after a restart or a failover. |
 | `stale_replan` | It released a gang's pin to pick again, because the domain lost its nodes, or lost room for the gang while no member had a node there. |
 | `topology_replan` | It released a gang's pin to pick again, because the PodGroup's topology label changed. |
+
+The `trigger` values of `ome_scheduler_gang_activation_total`:
+
+| `trigger` | When the plugin counts it |
+| --- | --- |
+| `permit` | A gang member reached Permit, and the gang's other pods retry. A member with a required pod affinity to it, like a worker to its leader, can now place. |
+| `templates_complete` | A waiting gang reached `minMember` pods, and the members that parked while it was short retry. |
+| `reservation_released` | A forming gang's domain reservation drained, when its last member got a node, or was released. The plugin wakes every pod that a reservation parked: standalone pods that hit `node is reserved for a forming gang`, and gangs whose fitting domains were all reserved. |
+| `podgroup_change` | The plugin's PodGroup informer stored a new or edited PodGroup, and the gang's members retry against it. This wakes a member that retried before the plugin saw the change, which would otherwise stay parked. |
 
 ## Scheduler profile
 

@@ -22,14 +22,14 @@ For gang scheduling without domain packing, the scheduler-plugins Coscheduling p
 
 The scheduler finds domains by a topology label: a node label whose value is the same on every node of one domain, such as `nvidia.com/gpu.clique`. OME copies a component's `topologyKey` into the `ome.io/topology-key` annotation of the component's PodGroups, and the scheduler reads the gang's label from there. For a PodGroup without the annotation, it uses the chart's `scheduler.plugin.topologyKey`, which is empty by default. With neither, the gang's pods stay `Pending`.
 
-Gang members land only on nodes that carry the label. A domain has room for a gang when it has a separate node that can run each member. This rule only picks the domain, so small members can still share a node.
+Gang members land only on nodes that carry the label. A domain has room for a gang when its nodes can hold all the members at once: each node counts for as many members as its free resources fit, sized by the gang's largest member that fits it, so small members can share a node. When a member carries a required pod anti-affinity that matches its siblings, the scheduler plans one member per node.
 
 ## How it places a gang
 
 A gang's members are the pods whose `scheduling.x-k8s.io/pod-group` label names the same PodGroup, and the PodGroup's `minMember` is the gang's size. For each gang, the scheduler:
 
 1. Waits until at least `minMember` members exist.
-2. Picks, of the domains with room for the gang, the one with the fewest nodes that can run a member. This leaves larger domains for larger gangs.
+2. Picks, of the domains with room for the gang, the one with the least room, counted in members. This leaves domains with more room for larger gangs.
 3. Holds that domain until the last member has a node. Meanwhile, no other gang or pod on the OME scheduler can use its nodes, even the ones the gang doesn't need. The default scheduler can still place its pods there.
 4. Binds the members together. They wait at the scheduler's Permit stage until `minMember` of them have a node.
 
