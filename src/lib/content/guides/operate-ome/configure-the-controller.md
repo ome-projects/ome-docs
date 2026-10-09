@@ -173,7 +173,7 @@ deployment.apps/ome-controller-manager restarted
 
 The manager reads these settings only when it starts, so a `kubectl` edit to one of them needs a restart:
 
-- the `omeAgent`, `multicluster` and `omenativeStatus` entries;
+- the `omeAgent`, `multicluster`, `omenativeStatus` and `eventRecorder` entries;
 - `enableGatewayAPI` in the `ingress` entry;
 - `scaleUpPodBatchSize`, `scaleDownPodBatchSize`, `scaleDownRequeueInterval` and `repairBatchSize` in the `lifecycle` entry;
 - `maxConcurrency` and `cacheTTL` in the `canaryAnalysis` entry;
@@ -185,6 +185,34 @@ The manager reads these settings only when it starts, so a `kubectl` edit to one
 Set the TTL with `ome.controller.configCacheTTL`, as a quoted string such as `"10s"`. Lower it when 30 seconds is too long to wait for a `kubectl` edit. Raise it when the manager's reads of the ConfigMap are a noticeable part of your API server traffic.
 
 `"0"` turns the cache off: all reads go to the API server, and OME rechecks the metric providers that policies name only when something else changes. Prefer a small positive value. Keep the quotes: for an unquoted `0`, the chart leaves out the flag, and the manager keeps its 30-second default.
+
+## Tune the per-object event budget
+
+The manager bounds the Kubernetes Events that it records about any one object. For each object and event type (Normal or Warning), it keeps a bucket of `burstSize` events, which regains one event every `refillInterval`, and it silently drops an event whose bucket is empty. Every emission counts, including a repeat that only raises the count of an event the object already shows. So when new events about an InferenceService stop appearing during a busy rollout, with no error anywhere, the InferenceService has spent its budget: the manager keeps working, and its events return as the bucket refills.
+
+The chart sets the budget with `ome.controller.eventRecorder`, which it writes to the `eventRecorder` entry of the `inferenceservice-config` ConfigMap: a burst of 400 events, refilled one every 5 seconds. Every recorder in the manager uses the same budget, so it also bounds the events about InferenceReplicas, runtimes and OME's other objects, each with its own buckets. It doesn't touch events from other processes, such as the kubelet's and the scheduler's events about pods.
+
+The manager itself has no default: for a field that the entry leaves out, it keeps the default of client-go, its Kubernetes client library — a burst of 25 events, or a refill of one event every five minutes. That's little for an [OMENative](../../concepts/omenative/overview.md) component: OME records an event on the InferenceService when it creates an Instance, when the Instance becomes ready, and when an update of an Instance starts and completes, so one rollout of a component with a few Instances spends the 25, and restarts and repairs draw on the same bucket. Keep both fields set, and raise them when events about one InferenceService still stop during busy periods:
+
+```yaml title="values.yaml"
+ome:
+  controller:
+    eventRecorder:
+      burstSize: 800
+      refillInterval: "2s"
+```
+
+Upgrade with your values file, as in [Step 1](#with-a-helm-value), and check the rendered entry:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.eventRecorder}{"\n"}'
+```
+
+```output
+{"burstSize":800,"refillInterval":"2s"}
+```
+
+The manager reads the entry once, when it starts, and the upgrade's restart applies it; a `kubectl` edit to the ConfigMap needs a restart, as [Change ConfigMap settings](#tune-the-config-cache) describes. Both fields must be positive: with a zero or negative `burstSize`, or a `refillInterval` that isn't a positive duration such as `"2s"`, the manager exits at startup. To hand a field back to client-go's default, set it to `null`, and the chart leaves it out of the entry.
 
 ## Add environment variables and files to the manager pod
 
@@ -292,7 +320,7 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E 
 | `Failed to create Kubernetes client set`, with `burst is required to be greater than 0` | `kubeAPIQPS` is set without `kubeAPIBurst`. Set `kubeAPIBurst` above 0. |
 | `invalid --multicluster-role` | Set `ome.multicluster.role` to `control-plane`, or leave it empty. |
 | `flag provided but not defined`, `invalid value` or `invalid boolean value` | A patched argument is misspelled, isn't in your OME version, or has a bad value, such as `3d` for a duration. |
-| `Failed to initialize deployment configuration`, or the same for another entry | That entry of the `inferenceservice-config` ConfigMap is invalid, and the rest of the line says why. For `replicas` in the `deploy` entry, see [Set replica defaults](set-replica-defaults.md). |
+| `Failed to initialize deployment configuration`, or the same for another entry | That entry of the `inferenceservice-config` ConfigMap is invalid, and the rest of the line says why. For `replicas` in the `deploy` entry, see [Set replica defaults](set-replica-defaults.md). For `Failed to initialize event recorder configuration`, the `eventRecorder` entry breaks a rule in [Tune the per-object event budget](#tune-the-per-object-event-budget). |
 
 Fix the value and upgrade again, as in Step 1. Correct a patched argument with `kubectl edit deployment ome-controller-manager -n ome`, which prints `deployment.apps/ome-controller-manager edited` when you save a change.
 
