@@ -183,7 +183,7 @@ An engine or decoder with a `leader` or `worker`, set in the InferenceService or
 
 ## Referenced replicas
 
-Instead of declaring components, an InferenceService can front standalone [InferenceReplicas](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica): replicas you create directly, with no parent InferenceService. `spec.replicaRefs` names, per role, the replica the service fronts. The service puts its stable names in front of the replicas' pods and reports the replicas in its `status`, and it writes nothing on them: their specs, rollouts and scaling stay with you.
+Instead of declaring components, an InferenceService can front standalone [InferenceReplicas](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica): replicas you create directly, with no parent InferenceService, as [Run a standalone InferenceReplica](../../guides/omenative/run-a-standalone-inferencereplica.md) shows. `spec.replicaRefs` names, per role, the replica the service fronts. The service puts its stable names in front of the replicas' pods and reports the replicas in its `status`, and it writes nothing on them: their specs, rollouts and scaling stay with you.
 
 ```yaml title="isvc-replica-refs.yaml"
 apiVersion: ome.io/v1beta1
