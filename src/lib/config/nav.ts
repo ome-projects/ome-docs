@@ -41,6 +41,7 @@ export const nav: NavSection[] = [
 					'omenative/serve-a-model-on-omenative.md',
 					'omenative/serve-a-multi-node-model.md',
 					'omenative/serve-a-prefill-decode-model.md',
+					'omenative/run-a-standalone-inferencereplica.md',
 					'omenative/provision-tpu-slices.md',
 					'omenative/move-from-leaderworkerset.md',
 					'omenative/spread-instances-across-fault-domains.md',

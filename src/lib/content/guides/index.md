@@ -63,6 +63,10 @@ Start with the smallest InferenceService, then add what you need: a runtime you 
 
     Serve a model with prefill on the engine and decode on the decoder, each with its own InferenceReplica on OMENative, and scale prefill on its own.
 
+-   **[Run a standalone InferenceReplica](omenative/run-a-standalone-inferencereplica.md)**
+
+    Create an InferenceReplica directly, with no parent InferenceService: give it a model, a runtime or rendered pod templates, then scale, update and pause the pod set yourself.
+
 -   **[Provision TPU slices on demand](omenative/provision-tpu-slices.md)**
 
     Serve an OMENative component on GKE TPU node pools that provision slices on demand: OME creates a Slice for each Instance's pods, holds the pods until it's ready, and releases it when no pod needs it.
