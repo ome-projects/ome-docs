@@ -40,6 +40,8 @@ The quota manager writes a Cohort node to Kueue as a Cohort, and a team as a Clu
 
 The webhook denies a change that breaks the tree's rules. A node can also break one later, when a budget is more than the peak capacity that the quota manager measures. The quota manager then freezes the node and its descendants: their Kueue objects stay as they were, so admitted workloads keep running. Each budget is checked against capacity on its own, so to cap the total, give `root` a budget.
 
+The quota manager itself runs in one of two modes, and an install runs exactly one: the two write different halves of `root`'s status. This page covers `workload`, which turns this cluster's tree into the Kueue objects above. The other mode, `management`, holds a fleet-wide tree and projects each cluster's share onto workload clusters. Its reconciliation is still in development, so don't build on it, or on the fields that exist for it: [`spec.distribution`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorQuotaSpec) and [`budgets[].perCluster`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorBudget) in the API, and the `projection` and `remoteAccess` values in the chart.
+
 ## Step 1: Install the quota manager
 
 The quota manager has no published image, so build one in your OME checkout. The binary is static, so an image built `FROM scratch` can hold it:
@@ -60,7 +62,7 @@ docker push registry.example.com/ome/ome-quota-manager:dev
 
 `docker push` uploads the image, tagged `dev` like the images from Install from source. For Arm nodes, set `GOARCH=arm64` and `--platform linux/arm64`. The chart sets `runAsNonRoot` without a user ID, so the image needs its numeric `USER`.
 
-Write the values. `enrolledNamespaces` lists the namespaces that the quotas govern. While it's empty, as it is by default, the quota manager writes nothing to Kueue:
+Write the values. `mode` picks one of the two modes from [How quotas work](#how-quotas-work), here `workload`. It has no default: the chart fails to render without it, with an error that ends in `quotaManager.mode must be "workload" or "management", got ""`. `enrolledNamespaces` lists the namespaces that the quotas govern. While it's empty, as it is by default, the quota manager writes nothing to Kueue:
 
 ```yaml title="quota-values.yaml"
 global:
@@ -426,6 +428,8 @@ The quota manager serves Prometheus metrics on port 8080, at `/metrics`. OME's b
 | `ome_quota_budget_borrowed` | Same | Accelerators admitted above `nominal`. |
 | `ome_quota_backend_applied_total` | None | Kueue objects written. The writes repeat on every pass, changed or not, so the count grows with how often the quota manager writes, not with your edits to the tree. |
 | `ome_quota_backend_swept_total` | `trigger` | Kueue objects deleted as orphans, by `trigger`: `materialize` for a pass that finds objects the tree no longer names, `finalize` for a deleted node's own objects. |
+
+On the budget gauges, `plane` is the quota manager's [mode](#how-quotas-work), so on this page's install it's always `workload`. The label exists because a management-mode install publishes the same four series with other meanings, `nominal` being the authored fleet total rather than one cluster's share, so a query must never sum the two planes.
 
 The capacity gauges are a snapshot of the last measurement, rewritten whole, so a series disappears when its cause does: create the flavor that `NoMatchingFlavor` points at, and the unattributed series are gone with the next measurement. The two counters say whether the writing to Kueue is alive. `ome_quota_backend_applied_total` keeps rising while the quota manager materializes, even on a cluster where nothing changes; a counter that stands still means that nothing is written, because `enrolledNamespaces` is empty, every node is frozen or the quota manager stopped. `ome_quota_backend_swept_total` moves only when a sweep deletes something, so standing still is its steady state.
 
