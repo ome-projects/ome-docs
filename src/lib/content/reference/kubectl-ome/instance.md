@@ -6,7 +6,7 @@ since: v1.3
 
 `kubectl ome instance` shows the [Instances](../../concepts/omenative/instances.md) of an [InferenceService](../../concepts/serving/inference-services.md)'s [OMENative](../../concepts/architecture/deployment-modes.md#omenative) components. An Instance is one replica of a component: one pod, or a leader pod and its workers, which OME updates, repairs and reports as one unit. Use `list` to find an Instance that isn't `Ready`, `status` to see its pods and their warnings, and `retry-blocks` to see which revisions OME is retrying or holding, and why. Once you've fixed the cause, the alpha `release-held` lets OME try a held revision again.
 
-OME reports the Instances in the status of each component's InferenceReplica, named `<InferenceService>-<component>`, such as `chat-engine`. Only components with an InferenceReplica appear: [Opt in to OMENative](../../concepts/architecture/deployment-modes.md#opt-in-to-omenative) shows how a component gets the mode.
+OME reports the Instances in the status of the InferenceReplica it creates for each component, named `<InferenceService>-<component>`, such as `chat-engine`. Only components with such an InferenceReplica appear: [Opt in to OMENative](../../concepts/architecture/deployment-modes.md#opt-in-to-omenative) shows how a component gets the mode. A standalone InferenceReplica — one you create directly — appears in no report, even when an InferenceService [fronts it](../../concepts/serving/inference-services.md#referenced-replicas): see [Which replicas the command reads](#which-replicas-the-command-reads).
 
 ```text
 kubectl ome instance SUBCOMMAND INFERENCESERVICE [flags]
@@ -29,6 +29,35 @@ kubectl ome instance SUBCOMMAND INFERENCESERVICE [flags]
 | `Stale` | OME hasn't caught up with the latest change, so the rows can be out of date. |
 | `Malformed` | The status contradicts itself or holds invalid values. |
 | `Unavailable` | The CLI has no status it can use, as when OME hasn't written it yet. |
+
+## Which replicas the command reads
+
+Every subcommand takes an InferenceService, never an InferenceReplica. It reads the InferenceService first, so naming a standalone replica — an [InferenceReplica](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica) you create directly, with no parent InferenceService — fails:
+
+```bash
+kubectl ome instance list pool-a -n prod
+```
+
+```output
+error: get InferenceService "prod/pool-a": inferenceservices.ome.io "pool-a" not found
+```
+
+The subcommands then keep only the InferenceReplicas that record the InferenceService as their parent: `spec.parentRef` names it, the `ome.io/inferenceservice` label carries its name, and their controller owner reference points at it. OME writes all three on every InferenceReplica it creates, so those appear. A replica that claims none of them isn't shown and raises no issue, whatever its name. Only a replica that claims the InferenceService but fails the identity checks is reported as left out, as `REJECTED` or `ID_REJECT`.
+
+A standalone replica claims no InferenceService, so no subcommand shows its Instances. Read them from the replica itself: in `kubectl get inferencereplica pool-a -n prod -o yaml`, they're the rows of `status.instanceStatuses`, or of `status.instanceStatusColumns` when `status.instanceStatusEncoding` is `ColumnarV2`. [`kubectl ome get ir`](get.md#inferencereplicas-columns) finds standalone replicas: their PARENT column shows `-`.
+
+An InferenceService whose [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) fronts standalone replicas writes nothing on them, so they don't claim it, and it has no InferenceReplicas of its own. Its report is empty while the fronted pools serve:
+
+```bash
+kubectl ome instance list front -n prod
+```
+
+```output
+COMP   IDX/INC   PHASE   PODS   REVS   AOF   EVIDENCE
+-      -         -       -      -      ---   OK
+```
+
+The empty table isn't an error: the command read everything, found no InferenceReplica that claims `front`, and exits `0`. `status` and `retry-blocks` read the same collection, so they can't see the fronted replicas either. To inspect a fronted pool's Instances, read the replica itself, as above.
 
 ## `list`
 
@@ -134,7 +163,7 @@ The first row, `state`, gives the report's state, the Instance and the component
 | `Reported` | OME reports the Instance on current evidence, and the CLI read everything it looked for. |
 | `Partial` | Part of the report is stale, malformed or missing, as when the CLI couldn't read the pods. The `issue` rows say what. |
 | `Missing` | The component's InferenceReplica has no row with that index. |
-| `NotProjected` | The component has no InferenceReplica. |
+| `NotProjected` | The component has no InferenceReplica that [claims the InferenceService](#which-replicas-the-command-reads). |
 | `NotOMENative` | The component doesn't run in OMENative. |
 | `Unavailable` | The CLI couldn't read the InferenceReplicas, or has nothing it can use for the component, as when OME hasn't written its status yet. |
 
@@ -230,7 +259,7 @@ Each issue adds a row with `ISSUE` in STATE and an alias in REASON:
 | --- | --- |
 | `STATUS_UNOBS` | OME hasn't written status for the InferenceReplica yet. |
 | `STATUS_STALE`, `PARENT_STALE` | OME hasn't caught up with the latest change. Wait, then run the command again. |
-| `NO_COMPONENT` | The component has no InferenceReplica. |
+| `NO_COMPONENT` | The component has no InferenceReplica that [claims the InferenceService](#which-replicas-the-command-reads). |
 | `DUP_COMP` | More than one InferenceReplica claims the component. No blocks show. |
 | `COLL_UNAV` | The CLI couldn't list the InferenceReplicas, or couldn't decode one. |
 | `ID_REJECT` | The CLI left out an InferenceReplica that doesn't belong to the InferenceService. |
