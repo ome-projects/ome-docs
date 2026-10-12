@@ -165,7 +165,7 @@ hint            Use -o json or -o yaml for full values.
 
 A rollback holds the rejected revision. The spec still asks for it, and `explain` shows it in REVISIONS as `rejected=`. The component stays on its stable revision until a change to the spec produces a revision other than the rejected and stable ones.
 
-The `ome.io/rollout-rollback` annotation stays on the InferenceService after the rollback. While it's there, `pause`, `promote`, `rollback` and `repin` refuse, and so do `kubectl ome scale`, `kubectl ome runtime sync` and `kubectl ome migration start`. Remove it before you apply a fix, or to use those commands:
+The `ome.io/rollout-rollback` annotation stays on the InferenceService after the rollback, but the request is spent. You don't have to remove it before you apply a fix: when a change produces such a new revision, OME starts the fresh canary toward it and removes the annotation itself, so the lingering annotation doesn't roll the new canary back. While it's there, `pause`, `promote`, `rollback` and `repin` refuse, and so do `kubectl ome scale`, `kubectl ome runtime sync` and `kubectl ome migration start`. To use those commands, remove it:
 
 ```bash
 kubectl annotate inferenceservice chat -n prod ome.io/rollout-rollback-
@@ -226,8 +226,7 @@ Step 1's new Instance never becomes ready, so `status` shows PHASE `Pending`. Af
 `promote` refuses on a failed canary. To recover:
 
 1. [Roll back the canary](#roll-back-the-canary), and wait until PHASE shows `RolledBack`.
-2. Remove the `ome.io/rollout-rollback` annotation, as that section shows.
-3. Fix the image in `chat.yaml`, and apply it again. The new revision starts a fresh canary at step 1.
+2. Fix the image in `chat.yaml`, and apply it again. The new revision starts a fresh canary at step 1, and OME removes the `ome.io/rollout-rollback` annotation.
 
 ## Troubleshooting
 
@@ -244,7 +243,7 @@ When `promote` or `rollback` refuses, it prints `error:` and the reason, changes
 
 ### A promote or rollback request is present
 
-`error: action refused: a rollout promote or rollback mailbox is present` means the InferenceService has the `ome.io/rollout-promote` or `ome.io/rollout-rollback` annotation, whatever its value, even `false`. A promote request clears once OME advances the step. The rollback annotation stays after a rollback, as [Roll back the canary](#roll-back-the-canary) describes. A promote request that names an earlier canary revision, as when the target changed first, never advances the canary. Remove it:
+`error: action refused: a rollout promote or rollback mailbox is present` means the InferenceService has the `ome.io/rollout-promote` or `ome.io/rollout-rollback` annotation, whatever its value, even `false`. A promote request clears once OME advances the step. The rollback annotation stays after a rollback until a new revision starts a fresh canary, as [Roll back the canary](#roll-back-the-canary) describes. A promote request that names an earlier canary revision, as when the target changed first, never advances the canary. Remove it:
 
 ```bash
 kubectl annotate inferenceservice chat -n prod ome.io/rollout-promote-

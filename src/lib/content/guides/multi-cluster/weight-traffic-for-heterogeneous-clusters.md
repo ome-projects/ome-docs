@@ -121,15 +121,20 @@ If a weight is 0, or isn't what you expect, compare the entry with [Why a cluste
 
 If you [publish a global endpoint](publish-a-global-endpoint.md), check that the publisher has written these weights with the map's [staleness checks](../../concepts/rollouts-and-traffic/traffic-map.md#staleness-checks).
 
-## Move from the deprecated field
+## Move from the removed field
 
-`spec.placement.capacityFactors` is a deprecated alias of `spec.routing.capacityFactors`, with the same form and meaning. Move the map to `spec.routing` in one change, because the API server rejects an InferenceService that sets both:
+Older manifests set the factors in `spec.placement.capacityFactors`, which later became a deprecated alias of `spec.routing.capacityFactors`. The alias is gone: the InferenceService API no longer has a `spec.placement.capacityFactors` field. Move the map to `spec.routing`, with the same keys and values:
 
 ```diff
  spec:
    placement:
+     policy: ClusterAffinity
      mode: All
-     clusterSelector: "metadata.name in (worker-a,worker-b)"
+     clusterAffinity:
+       - matchFields:
+           - key: metadata.name
+             operator: In
+             values: [worker-a, worker-b]
 -    capacityFactors:
 -      worker-b: "3"
 +  routing:
@@ -137,7 +142,10 @@ If you [publish a global endpoint](publish-a-global-endpoint.md), check that the
 +      worker-b: "3"
 ```
 
-If you manage the InferenceService with `kubectl apply`, apply the edited file: kubectl removes the old field in the same update that adds the new one.
+A manifest that keeps the old field sets no factors:
+
+- By default, `kubectl apply` fails: kubectl asks the API server for strict validation, which rejects a field the schema doesn't have. See [The API server rejects the InferenceService](#the-api-server-rejects-the-inferenceservice).
+- A client that doesn't ask for strict validation gets the field dropped instead: the API server prunes `spec.placement.capacityFactors` as an unknown field and accepts the InferenceService, with at most a warning. Every cluster then counts as 1, and [Step 2](#step-2-check-the-weights) shows an empty `factor` on every entry.
 
 ## Troubleshooting
 
@@ -163,13 +171,13 @@ Find the cluster's entry in [Step 2](#step-2-check-the-weights):
 
 | What the entry shows | Cause and fix |
 | --- | --- |
-| Empty `factor` | The key doesn't match the WorkloadCluster's name. OME accepts any key, so compare yours with `kubectl get workloadclusters`. |
+| Empty `factor` | The key doesn't match the WorkloadCluster's name, or the factors sit in the removed `spec.placement.capacityFactors` field. OME accepts any key, so compare yours with `kubectl get workloadclusters`, and keep the map in [`spec.routing.capacityFactors`](#move-from-the-removed-field). |
 | The only entry, with weight 1 | The InferenceService serves from one workload cluster, which gets all the traffic whatever its factor. |
 | Weight 0 | A drain, a probe gate or no ready replicas. See [Why a cluster's weight is zero](../../concepts/rollouts-and-traffic/traffic-map.md#why-a-clusters-weight-is-zero). |
 
 ### The API server rejects the InferenceService
 
-`kubectl apply` fails with an error that ends with `spec.routing.capacityFactors and deprecated spec.placement.capacityFactors must not both be set`. The InferenceService sets both fields. Remove `spec.placement.capacityFactors`, and keep the factors in `spec.routing.capacityFactors`.
+`kubectl apply` fails with an error that ends with `unknown field "spec.placement.capacityFactors"`. The manifest sets the removed field, and kubectl's default strict validation has the API server reject a field the InferenceService schema doesn't have. Move the factors to `spec.routing.capacityFactors`, as [Move from the removed field](#move-from-the-removed-field) shows.
 
 ## Clean up
 
