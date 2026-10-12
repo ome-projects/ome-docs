@@ -54,7 +54,7 @@ Every guarded command runs these steps in order, and stops at the first one that
 
 ### Target checks {#target-checks}
 
-Every guarded command refuses when the InferenceService fails one of these checks. For `scale` and `instance release-held`, that's the InferenceService that owns the InferenceReplica.
+Every guarded command refuses when the InferenceService fails one of these checks. For `scale` and `instance release-held`, that's the InferenceService that owns the InferenceReplica: the commands name the service, never the replica. [Owned replicas](#owned-replicas) says which replicas the actions operate, and what happens on a service that owns none.
 
 | Message | Cause |
 | --- | --- |
@@ -64,6 +64,17 @@ Every guarded command refuses when the InferenceService fails one of these check
 | `action refused: placement sources and derived services cannot be mutated` | The InferenceService uses multi-cluster placement, which is alpha, or placement created it. |
 
 `traffic drain` and `traffic undrain` act on the control-plane InferenceService and have refusals of their own, which [`kubectl ome traffic`](traffic.md#drain-and-undrain-refusals) lists.
+
+### Owned replicas {#owned-replicas}
+
+Every guarded command names an InferenceService — none takes an InferenceReplica — and the commands that read or patch InferenceReplicas operate only the replicas that service projects for its [OMENative](../../concepts/omenative/overview.md) components. They verify the ownership on each replica before they trust it: `spec.parentRef` names the service, the service is the replica's one controller owner reference, and the replica's `ome.io/parent-generation` annotation matches the service's generation. `instance release-held` also requires the `ome.io/controller-write: "true"` annotation, which OME stamps on every replica it projects. A replica that fails these checks stops the action, and nothing is patched.
+
+So the guarded commands never operate a [standalone InferenceReplica](../../concepts/serving/inference-services.md#referenced-replicas): one you create directly, with no parent InferenceService.
+
+- A standalone replica on its own gives you no InferenceService to name.
+- An InferenceService that fronts standalone replicas through `spec.replicaRefs` owns none of them: it writes neither the ownership marks nor anything else on the replicas, and it may not set `spec.model`, `spec.runtime`, `spec.scalingPolicy` or `spec.rollout`. `rollout pause`, `resume`, `promote` and `rollback`, `migration start`, `scale` and `instance release-held` refuse such a service with `action refused: active runtime is unavailable, inconsistent or unbound`, because no active runtime resolves. `rollout repin` and `runtime sync` refuse it too: it never has the active pinned rollout run or the pinned runtime they act on.
+
+Operate a standalone replica directly instead, fronted or not: edit its spec, and set its count through its `/scale` subresource with `kubectl scale inferencereplica` or an `External` autoscaler, as [`kubectl ome scale`](scale.md#standalone-and-fronted-replicas) shows. OME creates no scaler for a standalone replica, and the webhook rejects the `HPA` and `KEDA` autoscaler classes on one.
 
 ### Instance status decoding {#instance-status-decoding}
 
