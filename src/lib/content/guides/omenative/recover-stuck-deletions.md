@@ -268,7 +268,20 @@ Fix the controller that owns the finalizer. Remove the finalizer yourself only i
 
 ### An Instance waits with `NodeUnknown`
 
-A pod that holds a name the Instance needs is in phase `Unknown`: its node stopped reporting, and its containers may still run. With the escalation on, OME force-deletes the pod once its node counts as dead, and the `PodForceDeleted` message says `held in phase Unknown`. A pod that's also `Terminating` follows [the usual rules](#when-it-fires) instead. Without the escalation, the Instance waits until the node comes back, or until you [force-delete the pod by hand](#manual-recovery).
+A pod that holds a name the Instance needs is on a node whose kubelet stopped reporting it, and its containers may still run. Such a pod has one of two shapes:
+
+- It's in phase `Unknown`.
+- It's `Running` with its `Ready` condition `False`, while `ContainersReady` is `True` and every readiness gate it declares is satisfied. When a node stops heartbeating, the node lifecycle controller withdraws `Ready` from every pod on it, so a dead node usually leaves this shape.
+
+With the escalation on, OME force-deletes a pod of either shape once its node counts as dead, by [the same node checks](#when-it-fires). `overdueSlack` doesn't apply, since no one has asked to delete the pod. List the `PodForceDeleted` messages as in [Step 2](#step-2-check-the-recovery):
+
+```output
+OMENative component=engine instance=0: force-deleted pod qwen3-0-6b-engine-0-default-0 on node gpu-node-3, which its kubelet stopped reporting (evidence=node-unreachable-taint)
+```
+
+A pod that's also `Terminating` follows [the usual rules](#when-it-fires) instead, `overdueSlack` included. A `Running` pod that isn't `Ready` on a node whose `Ready` condition is `True` doesn't hold the Instance: that's its kubelet catching up on a readiness write, and OME leaves the pod alone.
+
+Without the escalation, only a pod in phase `Unknown` raises `NodeUnknown`, and the Instance waits until the node comes back, or until you [force-delete the pod by hand](#manual-recovery). A `Running` pod that lost `Ready` doesn't raise it: telling a dead node from a kubelet's lag takes the node read that comes with the escalation, so the Instance just isn't `Ready`.
 
 ### A deleting InferenceReplica has TeardownBlocked events
 
