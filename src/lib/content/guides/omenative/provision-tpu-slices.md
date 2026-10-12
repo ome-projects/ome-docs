@@ -26,6 +26,7 @@ OME provisions slices only for OMENative components, and only on node pools that
 - The Slice's shape comes from what the pods already declare: the accelerator and topology node labels they select, and the TPU chips their containers request. The chips must fill the topology exactly: see [Multi-host slices](#multi-host-slices).
 - OME creates an Instance's pods only once their Slice is ready: its `Ready` condition's reason is one of the configured `readyStates`. Each pod gets a node selector on the slice-name label, which confines it to the Slice's nodes. With `slice.readyTimeout` set, a Slice that has its partition but stays out of a ready state longer than the timeout is released and provisioned again, once no pod holds it.
 - OME deletes a ready Slice that no pod holds when no Instance wants it anymore: after a scale-down, a shape change, or when one of its hosts can't take the pods. While pods of another workload hold TPU chips on the Slice's hosts, OME keeps it, because deleting it would deactivate the partition under them: see [A SliceReleaseDeferred event appears](#a-slicereleasedeferred-event-appears). Deleting the Slice is what returns the capacity; GKE can hold it behind a finalizer while it releases the partition.
+- When a Slice is deleted, or moved onto other nodes, from outside while pods run on it, OME deletes those pods so that their Instance is rebuilt: see [A SliceLost event appears](#a-slicelost-event-appears).
 
 A Slice is named after the component's [InferenceReplica](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica), cut to fit, then the Instance's index, the pod's ordinal and an 8-character hash of the owner's identity, such as `qwen3-tpu-engine-0-0-8f3a21c7`. The `ome.io/slice-owner-uid` label alone makes a Slice OME's: OME never adopts, modifies or deletes a Slice without it. OME also labels its Slices with `ome.io/managed-by: OMENative`, the Instance's `ome.io/instance-index`, the pod's `ome.io/pod-ordinal` and the owner kind and name labels from Step 1, and annotates them with the owner as `ome.io/slice-owner: {namespace}/{name}`.
 
@@ -230,13 +231,14 @@ By default, an update surges: the new pods come up on a Slice of their own while
 
 ## Metrics
 
-The manager reports provisioning on its metrics endpoint, labeled by `slice_type` and `topology`. The created, released, release-deferred and duration series of every configured type and topology start at zero when the manager starts. [Collect metrics](../operate-ome/metrics.md) shows how to scrape them.
+The manager reports provisioning on its metrics endpoint, labeled by `slice_type` and `topology`. The created, released, release-deferred, lost and duration series of every configured type and topology start at zero when the manager starts. [Collect metrics](../operate-ome/metrics.md) shows how to scrape them.
 
 | Metric | What it reports |
 | --- | --- |
 | `ome_tpu_slice_created_total` | Slices the controller created. |
 | `ome_tpu_slice_released_total` | Slices the controller provisioned that the API server has removed, whoever deleted them. A Slice GKE holds behind a finalizer counts once GKE lets it go. Counted from the leader's watch. |
 | `ome_tpu_slice_release_deferred_total` | Releases of Slices the controller provisioned that it kept back because pods of another workload hold chips on the Slice's hosts: see [A SliceReleaseDeferred event appears](#a-slicereleasedeferred-event-appears). The reconcile retries, and each deferred attempt counts. |
+| `ome_tpu_slice_lost_total` | Slices the controller provisioned that were deleted, or moved off the nodes their pods were bound to, from outside while the pods ran on them: see [A SliceLost event appears](#a-slicelost-event-appears). Counted once the controller deletes the pods so that their Instance is rebuilt. |
 | `ome_tpu_slice_create_failures_total` | Creates that failed, with a `reason` label: the API server's status reason, such as `Forbidden` or `Invalid`; `OwnershipConflict` when another owner's Slice has the name; or `Unknown`. The reconcile retries, and each failed attempt counts. |
 | `ome_tpu_slice_provision_duration_seconds` | A histogram of the seconds from creating a Slice to first seeing it ready. Only Slices the current leader created are timed. |
 | `ome_tpu_slices` | A gauge of the Slices the controller provisioned that exist now, by `state`: `terminating`, `orphaned` when the InferenceReplica it was provisioned for no longer exists, `ready`, or `pending` in any other state, a failed one included. Reported by the leader. |
@@ -301,6 +303,27 @@ OMENative component=engine instance=0 withheld: slice qwen3-tpu-engine-0-0-8f3a2
 ```
 
 A Slice whose pods are already running is left alone. When every replacement Slice comes up broken too, fix the node pool.
+
+### A SliceLost event appears
+
+OME deleted an Instance's running pods, and the Warning event on the InferenceService says why: their Slice was deleted, or moved onto other nodes, from outside while they ran on it. OME releases a Slice only once no pod holds it and creates pods only once their Slice is ready, so pods can lose their Slice only through a change from outside, such as an administrator or a script deleting it. The pods' chips go with the partition, so OME deletes the pods and rebuilds the Instance as in [Step 3](#step-3-watch-the-slice-and-the-pod): it provisions a new Slice when the old one is gone, waits until the slot's Slice is ready, and creates new pods confined to it. Read the event:
+
+```bash
+kubectl get events -n qwen3-tpu --field-selector reason=SliceLost \
+  -o jsonpath='{range .items[*]}{.message}{"\n"}{end}'
+```
+
+```output
+TPU slice qwen3-tpu-engine-0-0-8f3a21c7 was deleted while pods qwen3-tpu-engine-0-default-0 ran on it; they are deleted so that their Instance is rebuilt
+```
+
+The message names the pods OME deleted and says how the Slice was lost:
+
+- `was deleted`: the Slice is gone, is being deleted, or was re-created from outside, which makes it younger than its pods.
+- `lost its partitions`: the Slice exists but no longer binds a TPU partition.
+- `moved off node gke-tpu-pool-node-3`: a node a pod is bound to no longer carries the Slice's slice-name label, or is gone. Every bound pod of the Instance is deleted then, those on nodes the Slice still holds too, because they started together on the hosts the Slice held before. A pod not yet bound isn't: its node selector follows the label to the Slice's new hosts.
+
+OME confirms a lost Slice with a live read before it deletes anything, since its cache may lag, and deletes each pod under a UID precondition, so it never deletes a replacement pod. Each recovery counts on `ome_tpu_slice_lost_total`: see [Metrics](#metrics). The Instance heals on its own, but whatever took the Slice can take the replacement too: nothing but OME should delete the Slices it provisions, so find the deleter, starting from the cluster's audit logs for the Slice's name.
 
 ### A SliceReleaseDeferred event appears
 
