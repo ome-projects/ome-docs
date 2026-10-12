@@ -3551,8 +3551,9 @@ Validation: a cluster affinity term must contain a requirement.
 Weight is permitted only for static Split. If any term has an explicit
 weight, matching term weights add and omitted weights contribute one.
 Omission must be preserved to distinguish unweighted overlapping terms.
+Weights are replica ratios, so they have no upper bound.
 
-Minimum: `1`. Maximum: `100`.
+Minimum: `1`.
 
 </td></tr>
 <tr><td><code>matchExpressions</code></td>
@@ -5882,6 +5883,22 @@ Routing configures cross-cluster traffic distribution for this
 InferenceService. Unset fields inherit the operator-level routing
 configuration. Only consulted on the control-plane cluster; ignored in
 single-cluster deployments. Alpha; the API may change without notice.
+
+</td></tr>
+<tr><td><code>ttlSecondsAfterCreation</code></td>
+<td><code>int64</code></td>
+<td>
+
+Since v1.3.
+TTLSecondsAfterCreation limits how long this InferenceService lives.
+Once that many seconds have passed since its creationTimestamp, the
+controller deletes it, and garbage collection removes everything it
+owns. Unset means it lives until deleted. The deadline is computed from
+creationTimestamp on every reconcile, so changing or clearing the field
+moves or cancels it. Placement member copies ignore it; the source
+InferenceService&#39;s TTL governs them.
+
+Minimum: `1`.
 
 </td></tr>
 </tbody>
@@ -8859,8 +8876,8 @@ Minimum items: `1`. Maximum items: `64`.
 <td><code>int32</code></td>
 <td>
 
-MaxSurge is the whole-replica allowance shared by placement transitions
-and local rollout surge. Omission blocks disruptive movement between homes.
+Deprecated: MaxSurge is ignored. A placement move may hold one extra full
+copy of the desired allocation; admission warns when this is set.
 
 Minimum: `0`.
 
