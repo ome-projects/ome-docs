@@ -3324,6 +3324,17 @@ AppliedPlanID identifies the allocation acknowledged by this member.
 ObservationKnown distinguishes a current observation from retained evidence.
 
 </td></tr>
+<tr><td><code>observationFailingSince</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta"><code>Time</code></a></td>
+<td>
+
+Since v1.3.
+ObservationFailingSince is when the control plane&#39;s reads of this home
+started failing. It is unset while reads succeed. While the configured
+observation grace lasts from this time, the home keeps the ready count
+from its last successful read.
+
+</td></tr>
 <tr><td><code>cluster</code></td>
 <td><code>string</code></td>
 <td>
