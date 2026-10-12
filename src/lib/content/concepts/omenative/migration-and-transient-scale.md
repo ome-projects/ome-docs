@@ -63,7 +63,7 @@ The key is `ome.io/migration-request-v1-` followed by a request UUID, and the va
 | `schemaVersion` | Always `v1`. |
 | `component` | `engine`, `decoder` or `router`. |
 | `instance` | The index of the Instance to move. |
-| `from_node` | The node to leave. One of the Instance's pods must run there. |
+| `from_node` | The node to leave. When the Instance no longer runs there, OME moves it off the node it does occupy: see [When a request waits or fails](#what-refuses-a-migration-request). |
 | `hint_target_nodes` | Optional. Nodes the scheduler should prefer for the surge. |
 | `reason` | Optional. Free text that OME keeps in the migration record. |
 | `requested_at` | Optional. When the request was made. |
@@ -145,7 +145,9 @@ Once OME has taken a request, the request waits in `Accepted` while:
 - the source Instance has another operation in progress, has an unscheduled pod, or isn't `Ready`;
 - the `audit` settings aren't set (see [Deadline and caps](#deadline)).
 
-OME fails a request when `from_node` doesn't host the source, when `maxMigrationsPerWindow` is reached or when the deadline passes. The record ends in `Failed`, with a Warning event that says why: see [The migration fails](../../guides/scale-and-migrate/request-an-instance-migration.md#the-migration-fails).
+A `from_node` that no longer matches doesn't fail a request. When the source Instance was rebuilt on another node after the request, OME records a Normal `MigrationFromNodeMismatch` event naming both nodes, and moves the Instance off the node it occupies; the record's `from_node` follows. For an Instance whose pods span nodes, with none of them on `from_node`, the move leaves the leader's node.
+
+OME fails a request when the source names no node to leave, with no live pods at all or a single-pod Instance's leftover pods on two nodes, when `maxMigrationsPerWindow` is reached or when the deadline passes. The record ends in `Failed`, with a Warning event that says why: see [The migration fails](../../guides/scale-and-migrate/request-an-instance-migration.md#the-migration-fails).
 
 When a move can't start now, `kubectl ome migration start` exits `3` with `migration precondition conflicts or is stale; inspect migration status and retry explicitly`. The usual causes are a paused rollout, an Instance that isn't `Ready` or already has a request, and the mode `Never`. An `ome.io/rollout-rollback` annotation left from a [rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) blocks it too. [Refusals](../../reference/kubectl-ome/migration.md#start-refusals) lists the others.
 
@@ -179,7 +181,8 @@ InferenceService   qwen3-0-6b   OMENative migration uuid=3f9c2a1e-7b4d-4c8e-9a6f
 | `MigrationRequestAccepted` | Normal | A move starts. |
 | `MigrationCompleted` | Normal | The surge has replaced the source. |
 | `MigrationRequestRejected` | Warning | OME rejected or failed a request, for any reason but its deadline or a stuck surge pod. |
-| `MigrationFromNodeMismatch` | Warning | `from_node` doesn't host the source's pods. |
+| `MigrationFromNodeMismatch` | Normal | `from_node` doesn't host the source, so the move leaves the node the Instance occupies instead. |
+| `MigrationFromNodeMismatch` | Warning | The source names no node to leave, so the request fails. |
 | `MigrationNodeAffinityConflict` | Warning | The source's node affinity requires `from_node`. |
 | `RateLimited` | Warning | A cap is reached. |
 | `MigrationPolicyUnconfigured` | Warning | The `audit` settings aren't set, so the request waits. |
