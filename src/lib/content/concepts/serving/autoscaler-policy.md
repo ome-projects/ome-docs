@@ -286,7 +286,36 @@ A held component recovers once you create or fix the policy, or bind its provide
 
 A `prometheus` trigger names a metric provider in `providerRef` instead of a Prometheus address, so the same policy works in any cluster that binds the name. The cluster administrator binds provider names in the `ome-resources` value `ome.metricProviders`, as [Turn on the feature](#turn-on-the-feature) does, and canary analysis uses the same [bindings](../../reference/rollouts/canary-analysis.md#metric-provider-bindings).
 
-If a binding has an `authSecretRef`, create its Secret in each namespace that uses the provider. Autoscaling triggers don't send the binding's `headers`. OME picks up a change to the bindings on its own.
+A binding's optional `authSecretRef` names the Secret `name` and `key` that hold a bearer token for the provider. This version of `values.yaml` adds one to `cluster-prometheus`:
+
+```yaml title="values.yaml"
+ome:
+  autoscalerPolicy:
+    enabled: true
+  metricProviders:
+    cluster-prometheus:
+      serverAddress: "http://ome-prometheus.ome.svc:9090"
+      authSecretRef:
+        name: prometheus-bearer
+        key: token
+```
+
+Create the Secret in each namespace that uses the provider. OME renders the provider's triggers with `authModes: bearer` in their metadata and an `authenticationRef` named `ome-metric-provider-<provider>`, so the triggers for `cluster-prometheus` point at `ome-metric-provider-cluster-prometheus`. Before it creates or updates a component's ScaledObject, OME creates a KEDA [TriggerAuthentication](https://keda.sh/docs/latest/concepts/authentication/) with that name in the InferenceService's namespace. The object points KEDA at the binding's Secret:
+
+```bash
+kubectl get triggerauthentication ome-metric-provider-cluster-prometheus -n llama-demo \
+  -o jsonpath='{.spec.secretTargetRef[0].parameter}{"\n"}{.spec.secretTargetRef[0].name}{"\n"}{.spec.secretTargetRef[0].key}{"\n"}'
+```
+
+```output
+bearerToken
+prometheus-bearer
+token
+```
+
+OME never reads the Secret: KEDA resolves it through the TriggerAuthentication when it queries the provider, so the token never passes through OME, and never appears in the policy, the rendered trigger or the InferenceService's status. Don't edit or delete the object: OME restores it the next time it reconciles a component whose policy uses the provider. OME never deletes one, so the object stays in the namespace after the components that used the provider are gone.
+
+Autoscaling triggers don't send the binding's `headers`. OME picks up a change to the bindings on its own.
 
 !!! warning "Every binding needs a serverAddress"
     While the feature is on, one binding without `serverAddress` stops OME from creating or updating the workload of any InferenceService, including the ones that don't use the provider. [InferenceServices stop updating](../../guides/operate-ome/metrics.md#inferenceservices-stop-updating) shows how to find the binding.
