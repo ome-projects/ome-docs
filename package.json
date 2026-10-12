@@ -38,7 +38,7 @@
 		"marked": "^18.0.14",
 		"prettier": "^3.8.1",
 		"prettier-plugin-svelte": "^4.1.1",
-		"svelte": "^5.55.2",
+		"svelte": "^5.57.2",
 		"svelte-check": "^4.4.6",
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.71.0",
