@@ -279,8 +279,10 @@ When `status` shows `Failed`, run it with `-o yaml` to read the full message. OM
 | `deadline exceeded in phase SurgePending: surge pods never became ready` | `MigrationExpired` | The migration missed its deadline while waiting for what the message names, here the replacement's pods. Check them with `kubectl describe pod`. |
 | `deadline exceeded in phase Accepted: surge never allocated`, right after the request | `MigrationExpired` | No Instance readiness timeout is set, or the controller's `lifecycle` settings are invalid. Set a timeout, as [Set Instance readiness deadlines](../omenative/set-instance-readiness-deadlines.md) shows. This is a known bug. |
 | `surge pod <pod> wedged in <reason> past the stuck-pod grace` | `MigrationSurgeWedged` | A replacement pod is stuck in `ImagePullBackOff`, `CrashLoopBackOff` or a similar state. |
-| `request.FromNode=node-a does not match observed source node=<node>` | `MigrationFromNodeMismatch` | The source Instance moved to another node before the migration started. |
+| `source instance has no live pods`, or `source pods span multiple nodes (node-a, node-b)` | `MigrationFromNodeMismatch` | The source names no single node to leave: its pods are gone, or leftover pods of a single-pod Instance sit on two nodes. Wait for the Instance to settle on one node, then send a new request. |
 | `migrations disabled by MigrationPolicy Mode=Never` | `MigrationRequestRejected` | The component's migration mode is `Never`. |
+
+A `MigrationFromNodeMismatch` event isn't a failure when its type is Normal. The message `request.FromNode=node-a does not match observed source node=node-b; component=engine instance=3 leaves node-b` means the source Instance moved to another node after you sent the request: OME migrates it anyway, off the node it occupies, and the record's `from_node` follows.
 
 When a migration fails after its replacement started, OME removes the replacement and keeps the source Instance. [Watch migrations](../../concepts/omenative/migration-and-transient-scale.md#watch-migrations) lists every migration event.
 
