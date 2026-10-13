@@ -137,12 +137,6 @@ To move from one token to another, roll the engine and the decoder out in one bl
 
 ```yaml
 spec:
-  engine:
-    minReplicas: 2
-    maxReplicas: 2
-  decoder:
-    minReplicas: 2
-    maxReplicas: 2
   rollout:
     pairingProtocol: kv-v2
     groups:
@@ -150,7 +144,12 @@ spec:
         blueGreen: {}
 ```
 
-While the change rolls out, OME keeps at least one engine and decoder pair with the same token serving. An update that would take the last such pair out of service waits, with the `rolloutHold` gate `Pairing`. With one engine and one decoder, the change can briefly leave no pair, so this spec runs two of each.
+While the change rolls out, OME keeps at least one engine and decoder pair with the same token serving. Under the default `SurgeThenDrain` update strategy, each component starts and serves its new-token pods before its old pods drain, and an old pod's drain waits, with the `rolloutHold` gate `Pairing`, in two cases:
+
+- The component's own new pods can't pair yet, because no serving pod of the other component runs the new token, and the other component also updates by `SurgeThenDrain`. Retiring an old pod that still pairs would trade serving capacity for pods that can't pair, so the drain waits, with a reason such as `pairing protocol transition to "kv-v2": the replacement engine cannot pair because no serving decoder runs cohort "kv-v2" yet; holding the drain of the serving engine of cohort "kv-v1" until one does`. The other component's first pod to serve the new token releases the hold.
+- The drain would take the last such pair out of service. It waits until the new token serves on both components.
+
+The holds can't deadlock, because a `SurgeThenDrain` component's new pods come up whether or not any drain waits. With that strategy on both components, even one engine and one decoder keep a pair serving through the change. Under `RecreatePod` or an in-place strategy, a component runs the new token only once its old pods leave rotation, and with one engine and one decoder the change can briefly leave no pair.
 
 The webhook rejects a change from one token to another when the engine and the decoder roll out separately or by rolling update (`PairingProtocolChangeUncoordinated`). It always accepts setting a token for the first time, or clearing it.
 
