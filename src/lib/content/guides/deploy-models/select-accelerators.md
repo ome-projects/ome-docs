@@ -32,6 +32,8 @@ The router never gets a class.
 
 A policy picks one of the runtime's classes that pass the [constraints](#constraints). Policies ignore free capacity, so a policy can pick a class whose nodes are full or that has no nodes.
 
+When only one class passes the constraints, every policy picks it, and the comparisons below never run. `Cheapest` then picks the class even when it sets no `cost`. With two or more classes passing:
+
 | Policy | Picks |
 | --- | --- |
 | `BestFit` | The class whose memory comes closest to `minMemory`, with compute performance counting for less. |
@@ -342,7 +344,7 @@ The component got no class. OME records no event for this, so check that:
 - The runtime lists classes, as in [Step 2](#step-2-check-the-runtimes-candidates).
 - The InferenceService names a class or sets a policy. Constraints and the `ome.io/accelerator-class` annotation don't pick a class on their own.
 - At least one class passes the [constraints](#constraints). Compare each class's `memoryGB`, `computeCapability` and `features` with them.
-- For `Cheapest`, at least one class sets `cost`.
+- For `Cheapest`, when two or more classes pass the constraints, at least one of them sets `cost`. A lone passing class needs no `cost`; see [Policies](#policies).
 
 ### The pods stay Pending
 
