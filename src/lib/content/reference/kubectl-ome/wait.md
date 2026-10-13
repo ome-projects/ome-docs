@@ -30,7 +30,7 @@ kubectl ome wait INFERENCESERVICE --for=PREDICATE [flags]
 | [`runtime-sync=acknowledged`](#runtime-sync-acknowledged) | `--request-id` | OME acknowledged the runtime sync with that request ID. |
 | [`held-revision=unheld`](#held-revision-unheld) | `--component`, `--revision`, `--ir-name`, `--ir-uid` | The revision is no longer held on that InferenceReplica. |
 
-The migration, replica and held-revision predicates read a component's InferenceReplica (IR), which OME writes only for components that run on [OMENative](../../concepts/omenative/overview.md).
+The migration, replica and held-revision predicates read a component's InferenceReplica (IR), which OME writes only for components that run on [OMENative](../../concepts/omenative/overview.md). They see only the replicas the service owns, so on a service that fronts pools through [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) they never match: see [Which replicas the predicates read](#which-replicas-the-predicates-read).
 
 Each predicate takes only the flags in its row, and refuses others with an [error](#error-messages). The first check runs at once, so a state that already holds matches immediately. After that, `condition=Ready` and `rollout` watch the InferenceService, and the other predicates check every 5 seconds. Every wait ends with one of these outcomes:
 
@@ -47,6 +47,34 @@ Each predicate takes only the flags in its row, and refuses others with an [erro
 Status that's missing or malformed never matches: the report's validity row shows `Unavailable` or `Invalid`, and the wait goes on. The migration, replica and held-revision predicates also wait while an InferenceReplica lags its own spec, and the last two while it lags the InferenceService's. The replica and held-revision predicates follow one InferenceReplica, the one you name or the one they find at the first check. If it's replaced or deleted, the wait can't match and runs until the timeout. [`kubectl ome instance list`](instance.md) shows what's wrong with an InferenceReplica.
 
 The CLI treats a status timestamp later than your machine's clock as invalid, so when that clock runs behind the cluster's, a match waits until it catches up.
+
+### Which replicas the predicates read
+
+The migration, replica and held-revision predicates keep only the InferenceReplicas that claim the InferenceService: `spec.parentRef` names it, and the service is the replica's controller owner reference. OME writes both on every InferenceReplica it creates for a service, so those appear. A [standalone replica](../../concepts/serving/inference-services.md#referenced-replicas) — an InferenceReplica you create directly — claims no service, whatever its name.
+
+An InferenceService whose `spec.replicaRefs` fronts standalone replicas writes nothing on them, so they don't claim it, and it has no InferenceReplicas of its own. On such a service, these predicates can never match, even while the fronted pools serve. Every check reports the same reason, and the wait runs to `TimedOut`, exit `2`:
+
+| Predicate | Each check reports |
+| --- | --- |
+| `migration=terminal` | `MigrationNotRecorded`: no replica the service owns records migrations. |
+| `replicas=ready` | `ReplicaReadyNotRecorded`: the service owns no InferenceReplica for the component. |
+| `replicas=current` | `InvalidReplicaScaleEvidence`: the component's scale target is the fronted pool replica, which doesn't claim the service. |
+| `held-revision=unheld` | `SourceInvalid`: a fronted pool replica fails the ownership check. [`instance release-held`](instance.md#release-held), where the flag values come from, [refuses a fronting service](guarded-actions.md#owned-replicas), so there's no result to wait on. |
+
+To wait on a fronting service, use `condition=Ready`, which reads the InferenceService itself. `rollout` reads the service too, but a fronting service can't set `spec.rollout`, so that wait reports `NotConfigured` and never matches.
+
+You can't wait on a replica instead: the argument names an InferenceService, which the first read GETs, so naming a standalone replica ends `NotFound`, exit `2`. To follow a pool replica's own counts, read the replica itself. `kubectl get inferencereplica` shows them as DESIRED, CURRENT and READY, and `-w` prints a row on every change:
+
+```bash
+kubectl get inferencereplica pool-a -n prod -w
+```
+
+```output
+NAME     COMPONENT   DESIRED   CURRENT   READY   AVAILABLE   AGE
+pool-a   engine      4         4         3       3           2d
+```
+
+In a script, block on a count with `kubectl wait inferencereplica/pool-a -n prod --for=jsonpath='{.status.readyReplicas}'=4 --timeout=30m`. [`kubectl ome get ir`](get.md#inferencereplicas-columns) shows which replicas a service owns: a standalone replica's PARENT column shows `-`.
 
 ### `condition=Ready` {#condition-ready}
 
@@ -229,7 +257,7 @@ Reported rollout, Rollout state, Rollout epoch and Coordination Ready show REPOR
 | --- | --- |
 | `MigrationMatched` | The record is valid and terminal. |
 | `MigrationInProgress` | The record is valid and still in progress. |
-| `MigrationNotRecorded` | The CLI found no record for the request ID, or the InferenceService was missing, deleted or replaced. |
+| `MigrationNotRecorded` | The CLI found no record for the request ID on any [replica the service owns](#which-replicas-the-predicates-read), or the InferenceService was missing, deleted or replaced. |
 | `InvalidMigration` | The record or the snapshot is incomplete, stale or malformed. |
 
 `-o wide` adds Inspected IR sources and Inspected records, counts of what the CLI read, then Cancellation.
@@ -246,7 +274,7 @@ Reported rollout, Rollout state, Rollout epoch and Coordination Ready show REPOR
 | --- | --- |
 | `ReplicaReadyMatched` | The count is valid and equals `--replicas`. |
 | `ReplicaReadyNotMatched` | The count is valid and differs. |
-| `ReplicaReadyNotRecorded` | The service has no InferenceReplica for the component, or the InferenceService was missing, deleted or replaced. |
+| `ReplicaReadyNotRecorded` | The service [owns](#which-replicas-the-predicates-read) no InferenceReplica for the component, or the InferenceService was missing, deleted or replaced. |
 | `InvalidReplicaReadyEvidence` | An InferenceReplica of the service is stale, malformed or replaced, or has a gap in its Instance indices. |
 
 ### `replicas=current` fields {#replicas-current-fields}
@@ -268,7 +296,7 @@ Spec replicas, Current replicas and Ready replicas show `<unavailable>`, and Sta
 | `ReplicaScaleMatched` | The snapshot is valid, and both counts equal `--replicas`. |
 | `ReplicaScaleNotMatched` | The snapshot is valid, and a count differs. |
 | `ReplicaScaleNotRecorded` | Nothing to check yet: the component has no scale target or InferenceReplica, its InferenceReplica is still catching up, or the InferenceService is gone, replaced or being deleted. |
-| `InvalidReplicaScaleEvidence` | The InferenceReplica isn't the one the wait is bound to, is being deleted, belongs to another InferenceService or generation, or has counts or status the CLI can't use. |
+| `InvalidReplicaScaleEvidence` | The InferenceReplica isn't the one the wait is bound to, is being deleted, [isn't owned by the InferenceService](#which-replicas-the-predicates-read) — a fronted pool replica never is — or isn't stamped with its generation, or has counts or status the CLI can't use. |
 | `UnsupportedReplicaScaleTarget` | The scale target isn't an `ome.io/v1beta1` InferenceReplica. |
 
 ### `runtime-sync=acknowledged` fields {#runtime-sync-acknowledged-fields}
@@ -314,7 +342,7 @@ Spec replicas, Current replicas and Ready replicas show `<unavailable>`, and Sta
 | `UnsupportedPlacement` | Multi-cluster placement owns the service or the InferenceReplica. |
 | `SourceStale` | The InferenceReplica hasn't caught up with the latest change. |
 | `SourceIncomplete` | The InferenceService changed during the check, or is missing, deleted or replaced. |
-| `SourceInvalid` | The InferenceService or the InferenceReplica doesn't match the target. |
+| `SourceInvalid` | The InferenceService or the InferenceReplica doesn't match the target, or the replica [isn't one the service owns](#which-replicas-the-predicates-read). |
 | `InvalidRetryBlocks` | The InferenceReplica's retry blocks are malformed, or too many to inspect. |
 | `InvalidStatus` | The CLI can't decode the Instance status, or it's too large. |
 
