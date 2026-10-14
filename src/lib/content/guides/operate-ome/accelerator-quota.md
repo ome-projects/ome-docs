@@ -40,6 +40,8 @@ The quota manager writes a Cohort node to Kueue as a Cohort, and a team as a Clu
 
 The webhook denies a change that breaks the tree's rules. A node can also break one later, when a budget is more than the peak capacity that the quota manager measures. The quota manager then freezes the node and its descendants: their Kueue objects stay as they were, so admitted workloads keep running. Each budget is checked against capacity on its own, so to cap the total, give `root` a budget.
 
+The tree's depth is bounded: a node can be at most `quotaManager.maxTreeDepth` edges below `root`, 5 by default, counting `root` as 0, so `ml-research` sits at 1 and the teams at 2. The bound is a guardrail against accidental sprawl, not a Kueue limit. The webhook denies a node past it, naming both numbers: `node is 6 levels below the root, exceeding the configured maximum of 5`. To nest deeper, raise `quotaManager.maxTreeDepth` in `quota-values.yaml` and upgrade the release, as in [Lower the high-water mark](#lower-the-high-water-mark): the chart passes the value to the quota manager as its `--max-tree-depth` flag, and 0 turns the check off. Lowering the bound under a stored node's depth doesn't remove the node: it reports `DepthExceeded` and is frozen, like any node that breaks a rule.
+
 The quota manager itself runs in one of two modes, and an install runs exactly one: the two write different halves of `root`'s status. This page covers `workload`, which turns this cluster's tree into the Kueue objects above. The other mode, `management`, holds a fleet-wide tree and projects each cluster's share onto workload clusters. Its reconciliation is still in development, so don't build on it, or on the fields that exist for it: [`spec.distribution`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorQuotaSpec) and [`budgets[].perCluster`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorBudget) in the API, and the `projection` and `remoteAccess` values in the chart.
 
 ## Step 1: Install the quota manager
@@ -516,7 +518,8 @@ Materialized=True Admitted: enforcement objects match this node's budget
 | Condition | Reason | Meaning |
 | --- | --- | --- |
 | `Ready` | `CapacityExceeded` | A budget on the node or an ancestor is over the [high-water mark](#lower-the-high-water-mark) on `root`, or `root` measures nothing for its resource and flavor. |
-| `Ready` | `ContainmentViolated`, `ParentMissing`, `ParentCycle`, `Unreachable`, `DepthExceeded` or `NodeKindInvalid` | The node or an ancestor breaks a rule of the tree. The message says which. |
+| `Ready` | `DepthExceeded` | The node is more than `quotaManager.maxTreeDepth` edges below `root`, 5 by default: see [How quotas work](#how-quotas-work). The message gives its depth and the bound. Flatten the tree, or raise the bound. |
+| `Ready` | `ContainmentViolated`, `ParentMissing`, `ParentCycle`, `Unreachable` or `NodeKindInvalid` | The node or an ancestor breaks a rule of the tree. The message says which. |
 | `Materialized` | `Frozen` | `Ready` is `False`, and the node's Kueue objects keep their last good state. |
 | `Materialized` | `FlavorMissing` | A budget names a missing ResourceFlavor. Create it. The node's other budgets are written. |
 | `Materialized` | `ObjectConflict` | Another owner's Kueue object has the node's name. Delete that object, or recreate the node under another name. |
