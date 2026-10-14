@@ -173,7 +173,7 @@ deployment.apps/ome-controller-manager restarted
 
 The manager reads these settings only when it starts, so a `kubectl` edit to one of them needs a restart:
 
-- the `omeAgent`, `multicluster`, `omenativeStatus` and `eventRecorder` entries;
+- the `omeAgent`, `multicluster`, `omenativeStatus`, `eventRecorder` and `tpuSliceProvisioning` entries;
 - `enableGatewayAPI` in the `ingress` entry;
 - `scaleUpPodBatchSize`, `scaleDownPodBatchSize`, `scaleDownRequeueInterval` and `repairBatchSize` in the `lifecycle` entry;
 - `maxConcurrency` and `cacheTTL` in the `canaryAnalysis` entry;
