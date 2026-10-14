@@ -105,6 +105,8 @@ NAME                            SERVING
 llama-pool-engine-0-default-0   True
 ```
 
+To read the pod's logs, pass the replica's name to [`kubectl ome logs`](../../reference/kubectl-ome/logs.md#standalone-and-fronted-replicas): the command selects pods by this label and never reads an InferenceService, so `kubectl ome logs llama-pool -n llama-demo` prints them, and `-f` follows.
+
 OME also creates the component's headless Service, which the rotation and the pods' DNS use, and PodGroups for multi-pod Instances when the PodGroup CRD is installed, for [gang scheduling](../../concepts/serving/gang-scheduling.md):
 
 ```bash
