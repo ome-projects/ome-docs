@@ -90,10 +90,12 @@ OME counts an Instance's pods in three states, and the InferenceReplica counts t
 | State | A pod counts when | Instance count |
 | --- | --- | --- |
 | Ready | All its containers are ready: its `ContainersReady` condition is `True`. | `readyReplicas` |
-| Serving | It's ready, and OME has set its `ome.io/serving` readiness gate to `True`. | `servingReplicas` |
+| Serving | Its `Ready` condition is `True`, OME has set its `ome.io/serving` readiness gate to `True`, and it isn't terminating. In a multi-pod Instance, no pod counts unless the leader does: a gang serves only through its leader. | `servingReplicas` |
 | Available | It's listed on the component's headless Service and isn't terminating, and, when `minReadySeconds` is more than `0`, its `Ready` condition has been `True` for at least that long. | `availableReplicas` |
 
 An Instance counts toward a state when at least its desired number of pods do, so it still counts during a surge. The `maxUnavailable` budget of the [update strategy](../architecture/omenative-update-strategies.md#pacing-with-rollingupdate) and the InferenceReplica's `Ready` condition count serving Instances.
+
+A gang serves only through its leader. The Services that route the component's requests publish only leader pods, never a worker: a worker runs the distributed runtime and takes no requests, so its readiness says nothing about whether its Instance serves. While the leader serves, every serving pod counts, workers included, and a lost worker just lowers the count by one. When the leader doesn't — its pod is gone or terminating, or its node stopped reporting and the control plane revoked its `Ready` condition — the Instance serves nothing: its `servingPodCount` is `0` and it drops out of `servingReplicas`, however many workers keep the readiness gate `True`.
 
 The headless Service lists pods as soon as they have an IP address, so that a leader and its workers can find each other while they start. With `minReadySeconds` at `0`, `availableReplicas` can therefore be higher than `readyReplicas` while pods start.
 
