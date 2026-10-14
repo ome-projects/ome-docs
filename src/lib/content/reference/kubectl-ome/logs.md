@@ -4,7 +4,7 @@ description: Stream logs from the pods behind an InferenceService, narrowed to o
 since: v1.3
 ---
 
-`kubectl ome logs` prints the logs of every pod behind an [InferenceService](../../concepts/serving/inference-services.md), given only the service's name. Narrow it to one component, one [OMENative](../../concepts/omenative/overview.md) [Instance](../../concepts/omenative/instances.md) or one revision, and add `--follow` to stream new lines as they arrive.
+`kubectl ome logs` prints the logs of every pod behind an [InferenceService](../../concepts/serving/inference-services.md), given only the service's name. Narrow it to one component, one [OMENative](../../concepts/omenative/overview.md) [Instance](../../concepts/omenative/instances.md) or one revision, and add `--follow` to stream new lines as they arrive. The command selects pods purely by label, so it also reads a standalone [InferenceReplica](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica)'s pods, given the replica's name — and finds none for a service that fronts pools through `spec.replicaRefs`: see [Standalone and fronted replicas](#standalone-and-fronted-replicas).
 
 ```text
 kubectl ome logs INFERENCESERVICE [flags]
@@ -14,7 +14,7 @@ The command needs `list` on pods and `get` on `pods/log` in the InferenceService
 
 ## Pods it reads
 
-The command reads the pods that carry the label `ome.io/inferenceservice=<name>`: those of the service's engine, decoder and router. These flags narrow the selection, and you can combine them:
+The command reads the pods that carry the label `ome.io/inferenceservice=<name>`, and never reads the InferenceService itself: the name you pass only fills the selector. On a service that declares its components, those pods are the service's engine, decoder and router. These flags narrow the selection, and you can combine them:
 
 | Flag | Labels it adds | Pods it selects |
 | --- | --- | --- |
@@ -23,6 +23,28 @@ The command reads the pods that carry the label `ome.io/inferenceservice=<name>`
 | `--revision 1a2b3c4d` | `ome.io/managed-by=OMENative` and `ome.io/revision-hash=1a2b3c4d`, plus `component` for a full revision name | The OMENative pods of one revision. |
 
 In prefill-decode serving, the engine runs prefill and the decoder runs decode.
+
+### Standalone and fronted replicas {#standalone-and-fronted-replicas}
+
+What the `ome.io/inferenceservice` label carries depends on the [InferenceReplica](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica)'s form: the parent InferenceService's name on a replica OME projects for a service's component, but the replica's own name on a standalone replica — one you [create directly](../../guides/omenative/run-a-standalone-inferencereplica.md), with no parent InferenceService.
+
+So the command reads a standalone replica's pods when you pass the replica's name, where [`kubectl ome instance`](instance.md#which-replicas-the-command-reads) reads the InferenceService first and fails. Follow the standalone engine replica `llama-pool`:
+
+```bash
+kubectl ome logs llama-pool -n llama-demo -f
+```
+
+It streams the replica's pods. They run on OMENative and carry the same labels as a service's pods, so the narrowing flags work unchanged; a full `--revision` name starts with the name you pass, here `llama-pool-engine-<hash>`.
+
+An InferenceService whose [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) fronts standalone replicas writes nothing on them and has no components of its own, so no pod anywhere carries the service's name. Given the service's name, the command always exits `1` with `no pods found`, even while the fronted pools serve behind its route. Read each pool with its replica's name instead. With `llama-fronted` fronting `llama-pool`:
+
+```bash
+kubectl ome logs llama-fronted -n llama-demo
+```
+
+```output
+error: no pods found for InferenceService "llama-fronted" in namespace "llama-demo" (selector ome.io/inferenceservice=llama-fronted)
+```
 
 ### Instances and revisions
 
@@ -148,7 +170,7 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1
 
 | Error | Meaning |
 | --- | --- |
-| `no pods found for InferenceService "chat" in namespace "prod" (selector component=engine,ome.io/inferenceservice=chat)` | No pod matches. Check the name and the namespace, or pass the selector to `kubectl get pods -n prod -l`. See [The InferenceService gets no pods](../../guides/troubleshoot/troubleshoot-an-inferenceservice.md#the-inferenceservice-gets-no-pods). |
+| `no pods found for InferenceService "chat" in namespace "prod" (selector component=engine,ome.io/inferenceservice=chat)` | No pod matches. Check the name and the namespace, or pass the selector to `kubectl get pods -n prod -l`. A service over `spec.replicaRefs` always gets this error: name each pool replica instead, as [Standalone and fronted replicas](#standalone-and-fronted-replicas) shows. See [The InferenceService gets no pods](../../guides/troubleshoot/troubleshoot-an-inferenceservice.md#the-inferenceservice-gets-no-pods). |
 | `pod discovery was truncated after <n> requests; narrow the query with --component, --instance, or --revision` | More than 200 pods match. |
 | `discover pods: <reason>` | The pod list failed, for example because you can't list pods. |
 | `streaming logs for pod <pod>: container "ome-container" in pod "<pod>" is waiting to start: ContainerCreating` | The pod's container is still starting. Wait, or narrow the selection. |

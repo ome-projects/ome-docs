@@ -207,7 +207,7 @@
 	{
 		"old": "administration/model-artifact-retention.md",
 		"new": "guides/operate-ome/configure-model-artifact-retention.md",
-		"rewrittenFrom": "07d049a8"
+		"rewrittenFrom": "35564530"
 	},
 	{
 		"old": "administration/omenative-status-encoding.md",
@@ -317,7 +317,7 @@
 	{
 		"old": "concepts/base_model.md",
 		"new": "concepts/models/base-models.md",
-		"rewrittenFrom": "bf81aa4c"
+		"rewrittenFrom": "35564530"
 	},
 	{
 		"old": "concepts/fine_tuned_weight.md",
