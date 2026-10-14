@@ -489,6 +489,8 @@ kubectl ome rollout resume INFERENCESERVICE [flags]
 
 `pause` sets `true`; set `freeze` with `kubectl annotate`. A pause covers the [OMENative lifecycle](../../concepts/architecture/omenative-update-strategies.md) of the whole service. Deliberate scale-down and deletion still proceed. Timed canary gates keep aging, so a canary can advance as soon as you resume. [Pause and resume a rollout](../../guides/roll-out-changes/pause-and-resume-a-rollout.md) shows both commands in use.
 
+`resume` acts only on the pause. A canary that ended [`Failed` or `RolledBack`](../rollouts/canary-progression.md#phases) holds until an operator acts, whether or not the service is paused: on a paused service `resume` ends the pause and the canary stays parked, and on a service that isn't paused it refuses with `action refused: service has no recognized pause`. What re-enters a parked canary is the `ome.io/rollout-resume` annotation, a separate controller verb that no `kubectl ome` command sets. Set it with `kubectl annotate` to the parked canary revision hash, from `status.components.<component>.canary.canaryRevisionHash`. OME clears the terminal phase, restarts the canary at its first step on that same revision with every gate running again, and removes the annotation once it acts. [The service has no recognized pause](../../guides/roll-out-changes/pause-and-resume-a-rollout.md#the-service-has-no-recognized-pause) shows the commands.
+
 ### Flags {#pause-and-resume-flags}
 
 | Flag | Default | Description |
@@ -533,7 +535,7 @@ That message is the same fixed text as for any failed API request, so it can app
 | --- | --- |
 | `required Kubernetes API request failed; check access and connectivity` | A read the action needs failed, including a [runtime revision the InferenceService names](#how-the-actions-run) that's missing or unreadable. |
 | `action refused: service is already paused; freeze is preserved` | `pause` when the annotation is already `true` or `freeze`. |
-| `action refused: service has no recognized pause` | `resume` when the service isn't paused. |
+| `action refused: service has no recognized pause` | `resume` when the service isn't paused, whatever else holds the rollout: a canary that ended `Failed` or `RolledBack` [isn't a pause](#pause-and-resume). |
 | `action refused: a rollout promote or rollback mailbox is present` | The promote or rollback annotation is present. On a paused service, `resume --discard-pending-actions --yes` removes it. |
 | `action refused: no applicable active rollout or lifecycle work was observed` | `pause` when no rollout or lifecycle work is in progress. |
 | `action refused: controller safety evidence is stale or inconsistent` | `pause` when the controller's status contradicts itself or the InferenceService. |
