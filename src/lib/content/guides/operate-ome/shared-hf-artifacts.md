@@ -113,7 +113,7 @@ _artifacts/Qwen/Qwen2.5-7B-Instruct/<commit>
 
 Both paths are links, relative to `/mnt/data/models`, to the same directory. `<commit>` stands for the commit that `main` pointed to when the node resolved it. Serving pods mount the model's `path`, and read the shared files through the link.
 
-Don't create, change or delete anything in `_artifacts`, or in the agent's `.hf-artifact-locks` directories next to it and next to each shared `path`.
+Don't create, change or delete anything in `_artifacts`, or in the agent's [`.hf-artifact-locks` directories](model-agent.md#hf-artifact-locks), which sit next to it and next to the `path` of every `hf://`, `oci://` and `modelpack://` model, shared or not.
 
 ## Move an existing model onto the shared copy
 

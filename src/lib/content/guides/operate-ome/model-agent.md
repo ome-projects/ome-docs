@@ -165,6 +165,14 @@ When you delete a model, the agent stops the model's work on each node, so a nod
 
 A canceled download doesn't mark the model `Failed` on the node. The agent then deletes the files that reached the node and removes the model's label, following the rules in [Delete a model](../../concepts/models/base-models.md#deleting-a-model), and the model's deletion finishes once every node reports its copy deleted.
 
+### The `.hf-artifact-locks` directories {#hf-artifact-locks}
+
+The agent keeps lock files in directories named `.hf-artifact-locks`: one appears next to the `path` of each `hf://`, `oci://` and `modelpack://` model on the node, whatever the model's `downloadPolicy`. With the paths directly under `modelAgent.hostPath`, that's one directory for all models, `/mnt/data/models/.hf-artifact-locks`. [Sharing](shared-hf-artifacts.md) keeps one next to `_artifacts` too.
+
+A download or deletion holds the model's lock file while it works on the files, and a task that finds the lock held waits and tries again. The locks are file locks on the node's disk, so they hold across agent pods: while [a replaced agent pod](#step-2-change-a-setting) is still finishing a download, the new pod waits instead of writing to the same `path`.
+
+The lock files are empty, and hold no lock once their operation ends. Deleting a model leaves them and their directory in place. Don't create, change or delete anything in these directories: removing a lock file in use can let two operations write to or delete the same model's files at once.
+
 ### TensorRT-LLM models
 
 For an `oci://` model with `modelFormat.name: tensorrtllm`, the agent downloads only the objects built for its node's GPU, whose names contain `/{gpu}/`, such as `/H100/`. It finds the GPU name by looking up the node's `node.kubernetes.io/instance-type` label in the ConfigMap `model-agent-config-map`, and uses an unlisted instance type as it is. When no object matches, the model fails on the node.
