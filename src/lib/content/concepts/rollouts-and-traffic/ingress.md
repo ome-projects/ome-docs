@@ -199,17 +199,23 @@ The InferenceService is `Ready` only when `IngressReady` is `True`, as [Status](
 | --- | --- |
 | The external Service | Always, with the reason `IngressDisabled`. |
 | A Kubernetes Ingress | OME has created the Ingress. It waits for the router, or the decoder when there's no router, or else the engine. It doesn't check your ingress controller. |
-| HTTPRoutes | Every declared or [referenced](#referenced-replicas) component is ready, or is an OMENative component with a serving Instance. The Gateway has accepted every HTTPRoute, with no `False` condition. The Gateway can reject the default BackendTrafficPolicy without changing `IngressReady`. |
+| HTTPRoutes | Every declared or [referenced](#referenced-replicas) component is ready, or is an OMENative component with a serving Instance. Every Gateway on every HTTPRoute has accepted the route's current generation, with no `False` condition at that generation: see [Route edits and gateway acceptance](#route-edits-and-gateway-acceptance). The Gateway can reject the default BackendTrafficPolicy without changing `IngressReady`. |
 
 When `IngressReady` is `False`, its reason and message say why:
 
 | Reason | Message | Meaning |
 | --- | --- | --- |
 | `ComponentNotReady` | `Target service not ready for ingress creation`, or `engine component not ready for HTTPRoute creation` | OME creates the Ingress once the component is ready, and the HTTPRoute once the component is ready or, for an OMENative component, has a serving Instance: see [Routes](#routes). |
-| `ParentStatusNotAvailable` | `engine HTTPRoute awaiting gateway programming`, or `Engine HttpRouteNotReady` | The Gateway hasn't reported on the HTTPRoute yet. |
-| The Gateway's reason, such as `NotAllowedByListeners` | `Engine`, then the Gateway's message | The Gateway reports a `False` condition on the HTTPRoute. |
+| `ParentStatusNotAvailable` | `engine HTTPRoute awaiting gateway programming`, `engine HTTPRoute awaiting gateway reprogramming`, or `Engine HttpRouteNotReady` | A Gateway hasn't reported on the route's current generation: OME just created the route, just [updated it](#route-edits-and-gateway-acceptance), or a Gateway's report is missing or names an older generation. |
+| The Gateway's reason, such as `NotAllowedByListeners` | `Engine`, then the Gateway's message | The Gateway reports a `False` condition at the route's current generation. |
 
 The messages name the component, the engine in these examples. [Troubleshooting](../../guides/networking/configure-ingress.md#troubleshooting) in Configure ingress says what to do.
+
+### Route edits and gateway acceptance
+
+A Gateway's acceptance counts only for the route generation it observed. An HTTPRoute is ready when every Gateway in its `spec.parentRefs` reports `Accepted: True` at the route's current generation, with no `False` condition at that generation. A Gateway that's missing from the route's `status.parents`, or whose conditions describe an older generation, reads as not accepted, so `IngressReady` is `False` with the reason `ParentStatusNotAvailable`.
+
+So a change that rewrites a route's spec — a component's `timeoutSeconds`, a switch of [host scheme](#hostnames), or a change to the Gateways the routes attach to — drops `IngressReady` to `False` the moment OME updates the route, with the reason `ParentStatusNotAvailable` and the message `engine HTTPRoute awaiting gateway reprogramming`, naming the component whose route changed. The InferenceService's `Ready` condition drops with it. This is the normal reprogramming window, not a failure: the update gave the route a new generation, so the acceptance the Gateways reported for the previous generation no longer counts. While the wait goes on, the message becomes `Engine HttpRouteNotReady`, with the same reason. Both conditions turn `True` again once every Gateway accepts the new generation. If `ParentStatusNotAvailable` persists, a Gateway isn't reporting on the route: see [Troubleshooting](../../guides/networking/configure-ingress.md#troubleshooting).
 
 ## Referenced replicas
 

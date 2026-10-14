@@ -194,7 +194,7 @@ error: action refused: service is already paused; freeze is preserved
 error: action refused: service has no recognized pause
 ```
 
-`resume` found no pause to end: the annotation is missing, or holds a value other than exactly `true` or `freeze`, such as `True`. Nothing is held. To clear such a value, remove the annotation:
+`resume` found no pause to end: the annotation is missing, or holds a value other than exactly `true` or `freeze`, such as `True`. No pause holds the service. To clear such a value, remove the annotation:
 
 ```bash
 kubectl annotate inferenceservice chat -n prod ome.io/rollout-paused-
@@ -203,6 +203,27 @@ kubectl annotate inferenceservice chat -n prod ome.io/rollout-paused-
 ```output
 inferenceservice.ome.io/chat annotated
 ```
+
+You also see this refusal when you run `resume` while a canary sits at `Failed` or `RolledBack` on a service that isn't paused. `resume` ends only a pause, and those phases aren't one: they hold until you act, even through a pause and resume. What re-enters a parked canary, on the revision it parked with, is the `ome.io/rollout-resume` annotation, a separate controller verb that no `kubectl ome` command sets. Set it to the parked canary revision hash, from the component's canary status:
+
+```bash
+kubectl get inferenceservice chat -n prod \
+  -o jsonpath='{.status.components.engine.canary.canaryRevisionHash}'
+```
+
+```output
+bbbbbbbb
+```
+
+```bash
+kubectl annotate inferenceservice chat -n prod ome.io/rollout-resume=bbbbbbbb
+```
+
+```output
+inferenceservice.ome.io/chat annotated
+```
+
+OME clears the phase, restarts the canary at its first step toward that revision, and removes the annotation once it acts. The restart waives nothing: every gate runs again, so a revision that failed fails again unless you fixed the cause. A `Failed` canary can be [rolled back](promote-or-roll-back-a-canary.md#roll-back-the-canary) instead, and a fix that produces a new revision starts a fresh canary either way.
 
 ### A promote or rollback request is present {#discard-pending-actions-on-resume}
 

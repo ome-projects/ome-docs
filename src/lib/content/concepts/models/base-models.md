@@ -43,7 +43,7 @@ kubectl apply -f model.yaml
 clusterbasemodel.ome.io/qwen2-5-7b-instruct created
 ```
 
-Set `storage.storageUri`, and for `hf://`, `oci://` and `local://` models, [`storage.path`](#how-weights-reach-the-nodes). OME fills in the [rest of the metadata](#what-ome-learns-from-the-model) from the model's files, and the [OME API](../../reference/api/ome.v1beta1.md) reference lists every field.
+Set `storage.storageUri`, and for `hf://`, `oci://`, `modelpack://` and `local://` models, [`storage.path`](#how-weights-reach-the-nodes). OME fills in the [rest of the metadata](#what-ome-learns-from-the-model) from the model's files, and the [OME API](../../reference/api/ome.v1beta1.md) reference lists every field.
 
 ## Where the weights come from
 
@@ -53,6 +53,7 @@ Set `storage.storageUri`, and for `hf://`, `oci://` and `local://` models, [`sto
 | --- | --- | --- |
 | `hf` | `hf://{model-id}[@{revision}]` | Downloads the model from Hugging Face to `path` on the selected nodes. The revision defaults to `main`. |
 | `oci` | `oci://n/{namespace}/b/{bucket}/o/{object_path}` | Downloads the model from OCI Object Storage to `path` on the selected nodes. |
+| `modelpack` | `modelpack://{registry}/{repository}[:{tag}]`, or `@{digest}` in place of the tag | Pulls the model, a [CNCF ModelPack](https://github.com/modelpack/model-spec) artifact, from a container registry to `path` on the selected nodes, through an `llmman serve` daemon that you provide. The repository can contain slashes. See [ModelPack models](../../guides/operate-ome/model-agent.md#modelpack-models). |
 | `pvc` | `pvc://{pvc-name}/{sub-path}` for a BaseModel, `pvc://{namespace}:{pvc-name}/{sub-path}` for a ClusterBaseModel | A metadata Job reads the model from the claim. Whatever the kind, only InferenceServices in the claim's namespace can use it. See [Serve models from a PVC](../../guides/deploy-models/serve-models-from-pvc.md). |
 | `local` | `local://{path}` | Reads the model from a directory that's already on the selected nodes. See [Serve models from node-local storage](../../guides/deploy-models/serve-models-from-local-storage.md). |
 | `vendor` | `vendor://{vendor-name}/{resource-type}/{resource-path}` | Downloads and reads nothing. The selected nodes report the model ready. |
@@ -100,6 +101,8 @@ The agent uses the first token it finds:
 Without a token, a gated model fails to download, and the node reports `Failed`.
 
 `oci://` models authenticate with the method in `storage.parameters.auth`: `InstancePrincipal`, the default, `UserPrincipal`, `ResourcePrincipal` or `OkeWorkloadIdentity`. `storage.parameters.region` overrides the region.
+
+`modelpack://` models take no credentials from the model: the `llmman serve` daemon talks to the registry, so `storage.key` and `storage.parameters` play no role. Give the daemon the registry's credentials in its own configuration. See [ModelPack models](../../guides/operate-ome/model-agent.md#modelpack-models).
 
 ## How weights reach the nodes
 
@@ -219,7 +222,7 @@ When you delete a model, a finalizer keeps it until the agent on each node that 
 
 You don't have to wait for the download. On a node that's still downloading the model, the agent cancels the download, and a queued download never starts, so the nodes don't keep downloading weights you deleted. A canceled download doesn't mark the model `Failed` on the node. [How a delete stops a download](../../guides/operate-ome/model-agent.md#how-a-delete-stops-a-download) in the model agent guide says how quickly a running download stops; on v1.2.2, the agent can't stop an `oci://` download that has started.
 
-On each node, the agent removes the model's label and deletes the files of an `hf://` or `oci://` model from `path`. It keeps the files when another model, in any namespace, uses the same `path`, or when the model has the label `models.ome/reserve-model-artifact: "true"`. It leaves `local://` and `vendor://` files in place. Files shared through `ReuseIfExists` follow the rules in [Share Hugging Face artifacts](../../guides/operate-ome/shared-hf-artifacts.md). For `pvc://` models, see [Clean up](../../guides/deploy-models/serve-models-from-pvc.md#clean-up) in the PVC guide.
+On each node, the agent removes the model's label and deletes the files of an `hf://`, `oci://` or `modelpack://` model from `path`. It keeps the files when another model, in any namespace, uses the same `path`, or when the model has the label `models.ome/reserve-model-artifact: "true"`. It leaves `local://` and `vendor://` files in place. Files shared through `ReuseIfExists` follow the rules in [Share Hugging Face artifacts](../../guides/operate-ome/shared-hf-artifacts.md). For `pvc://` models, see [Clean up](../../guides/deploy-models/serve-models-from-pvc.md#clean-up) in the PVC guide.
 
 Set the reserve label when you create the model: adding a label later makes all matching nodes process the model again. See [Keep downloaded model files](../../guides/operate-ome/configure-model-artifact-retention.md).
 

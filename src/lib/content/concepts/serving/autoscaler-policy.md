@@ -120,11 +120,12 @@ A value holds literal text and these variables only: no template functions, pipe
 | --- | --- |
 | `class` | `KEDA`, which needs `keda.triggers`, or `HPA`. |
 | `providerRef` | The [metric provider](#metric-providers) of a `prometheus` trigger. Required, as is an explicit `ignoreNullValues`. OME sets the trigger's `serverAddress` and `authModes` from the provider, so a trigger can't set them. |
+| `queryReturnsDesiredReplicas` | Declares that a trigger's query computes the replica count itself, which needs `metricType: AverageValue`: see [Queries that compute the replica count](#queries-that-compute-the-replica-count). |
 | `keda.fallback.replicas` | A fixed `value`, or `fromComponent: MaxReplicas` or `MinReplicas`. |
 | `keda.pollingInterval`, `cooldownPeriod`, `idleReplicaCount`, `advanced` | Copied to the ScaledObject as they are. |
 | `hpa` | The HorizontalPodAutoscaler's `metrics` and `behavior`, copied as they are. Without it, the HorizontalPodAutoscaler keeps CPU use at 80%. |
 
-OME rejects a policy that breaks these rules when you create or update it, including an invalid PromQL query. [AutoscalerPolicySpec](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AutoscalerPolicySpec) in the API reference lists every field.
+OME rejects a policy that breaks these rules when you create or update it, including an invalid PromQL query and the one valid query shape that [Queries that compute the replica count](#queries-that-compute-the-replica-count) describes. [AutoscalerPolicySpec](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AutoscalerPolicySpec) in the API reference lists every field.
 
 This `HPA` policy keeps CPU use at 60%, and when it scales down, it keeps the highest replica count recommended in the last 5 minutes:
 
@@ -156,6 +157,52 @@ kubectl apply -f cpu-60.yaml
 ```output
 autoscalerpolicy.ome.io/cpu-60 created
 ```
+
+## Queries that compute the replica count
+
+In the `queue-depth` policy, the query measures load, and KEDA works out the replica count from the measurement. A query can instead compute the count itself. This policy scales a component to its `maxReplicas` while it has requests running, and back to its `minReplicas` when it has none:
+
+```yaml title="scale-to-max.yaml"
+apiVersion: ome.io/v1beta1
+kind: AutoscalerPolicy
+metadata:
+  name: scale-to-max
+  namespace: llama-demo
+spec:
+  class: KEDA
+  keda:
+    triggers:
+      - type: prometheus
+        providerRef:
+          name: cluster-prometheus
+        metricType: AverageValue
+        queryReturnsDesiredReplicas: true
+        metadata:
+          query: '((sum(vllm:num_requests_running{namespace="{{ .Namespace }}",inferenceservice="{{ .ISVCName }}",component="{{ .Component }}"}) > bool 0) * {{ .MaxReplicas }})'
+          threshold: "1"
+          ignoreNullValues: "false"
+    fallback:
+      failureThreshold: 3
+      replicas:
+        fromComponent: MaxReplicas
+```
+
+Apply the file:
+
+```bash
+kubectl apply -f scale-to-max.yaml
+```
+
+```output
+autoscalerpolicy.ome.io/scale-to-max created
+```
+
+`sum(...) > bool 0` is 1 while any request is running, otherwise 0, and `* {{ .MaxReplicas }}` turns that into the component's `maxReplicas` or 0. With `metricType: AverageValue` and `threshold: "1"`, the HorizontalPodAutoscaler that KEDA creates divides the query's result by the threshold, rounds up, and clamps the count to the component's replica bounds. The query's result becomes the replica count, except that an idle component falls to its `minReplicas`, not to zero. As in the `queue-depth` policy, the fallback scales the component to its `maxReplicas` when the query keeps failing.
+
+A query that computes the count needs `queryReturnsDesiredReplicas: true` and the parentheses around the comparison. The webhook rejects:
+
+- `queryReturnsDesiredReplicas: true` on a trigger whose `metricType` isn't `AverageValue`, with the reason `DesiredCountRequiresAverageValue`. The field declares what the query returns, and changes nothing in the rendered trigger; the declaration matters because the other metric type breaks the count. With `Value`, the HorizontalPodAutoscaler also multiplies by the number of ready pods, which is right for a load metric, but turns a count of N into N times the pod count.
+- The query without the parentheses around the comparison, with the reason `PromQLInvalid`. `sum(...) > bool 0 * {{ .MaxReplicas }}` is valid PromQL, but `*` binds tighter than `>`, so it means `sum(...) > bool (0 * {{ .MaxReplicas }})` and returns 0 or 1 instead of 0 or the count. OME checks every `prometheus` trigger's query for this shape, a `bool` comparison with arithmetic on plain numbers on its right side, with or without `queryReturnsDesiredReplicas`. The rejection message quotes the comparison, rendered with sample values in place of the variables, and shows the shape of the fix: `(sum(...) > bool N) * M`.
 
 ## Attach a policy to an InferenceService
 
