@@ -45,7 +45,7 @@ An InferenceService can use the BaseModels and ServingRuntimes in its own namesp
 
 On each node that a [BaseModel or ClusterBaseModel](../models/base-models.md) selects, the model agent:
 
-1. Downloads an `hf://` or `oci://` model from `spec.storage.storageUri` into the directory that `spec.storage.path` names, or finds a `local://` model already there.
+1. Downloads an `hf://` or `oci://` model from `spec.storage.storageUri` into the directory that `spec.storage.path` names, pulls a `modelpack://` model into it through an [`llmman serve` daemon](../../guides/operate-ome/model-agent.md#modelpack-models), or finds a `local://` model already there.
 2. Reads the model's config files. From them, OME fills in the model's architecture, size and other fields that runtime selection uses.
 3. Labels its node with the model's state there: `Updating`, then `Ready` or `Failed`. The label key names the model, such as `models.ome.io/clusterbasemodel.qwen2-5-7b-instruct`.
 
