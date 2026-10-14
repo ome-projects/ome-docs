@@ -143,7 +143,7 @@ When the scheduler places a pod, the pod gets a `Scheduled` event from `ome-sche
 | `pinned domain {domain} has no node feasible for gang member {namespace}/{name}` | No node in the gang's domain can run this member and leave room for the rest. |
 | `gang {namespace}/{name} already has members in multiple topology domains` | The gang's placed members span domains or unlabeled nodes, for example after node labels changed. Its other pods wait until the split ends. |
 | `node is reserved for a forming gang` | The node is in the domain of a forming gang. Standalone pods can use it once that gang's last member has a node, or the gang is released. |
-| `gang reservation released after all candidate nodes were filtered` | Another filter rejected all the nodes the gang could use in its domain. The scheduler tries its other domains first. |
+| `gang reservation released after all candidate nodes were filtered` | Another filter rejected all the nodes the gang could use in its domain. The scheduler tries its other domains first: the gang's first veto in a domain, while another untried one has room, wakes the vetoed pod to retry, as the `domain_failed` trigger in [Metrics](#metrics) counts. Once every domain with room has failed, the gang's next attempt tries them all afresh. |
 | `gang {namespace}/{name} unwound after a member failed to schedule` | Another member of the pod's gang failed, so the scheduler tries the gang again. |
 | `PodGroup {namespace}/{name} must declare a positive minMember` | Set a positive `minMember` on the PodGroup. |
 | `partner placement groups are not supported` | Remove the `ome.io/placement-group` label from the pod and its PodGroup. |
@@ -181,6 +181,7 @@ The `trigger` values of `ome_scheduler_gang_activation_total`:
 | `templates_complete` | A waiting gang reached `minMember` pods, and the members that parked while it was short retry. |
 | `reservation_released` | A forming gang's domain reservation drained, when its last member got a node, or was released. The plugin wakes every pod that a reservation parked: standalone pods that hit `node is reserved for a forming gang`, and gangs whose fitting domains were all reserved. |
 | `podgroup_change` | The plugin's PodGroup informer stored a new or edited PodGroup, and the gang's members retry against it. This wakes a member that retried before the plugin saw the change, which would otherwise stay parked. |
+| `domain_failed` | Another filter rejected a pinned gang member on every node of its gang's domain, the gang's first veto in that domain, while another untried domain had room when the gang was pinned. The member retries after its backoff, and the retry plans around the domains that failed; without the wake-up, it would wait for the scheduler's periodic retry of unschedulable pods, since the rejecting filters raise no event for it. This wake-up moves only the vetoed member. A veto in the only domain that fit the gang, or in the domain its bound members keep it in, wakes nothing. |
 
 ## Scheduler profile
 
