@@ -131,7 +131,7 @@ To serve the files without downloading anything, create a `local://` model with 
 
 ## When the agent deletes files
 
-The agent deletes a node's copy of an `hf://` or `oci://` model when you delete the model. It also deletes it when you change the model's `storage.nodeSelector` or `storage.nodeAffinity` and the node stops matching. It deletes the whole `storage.path` directory, including files that OME didn't put there and the directories of other models inside it. The source on Hugging Face or in object storage stays. You manage the files of `local://` and `pvc://` models yourself: for a PVC, see [Clean up](../deploy-models/serve-models-from-pvc.md#clean-up) in the PVC guide.
+The agent deletes a node's copy of an `hf://`, `oci://` or `modelpack://` model when you delete the model. It also deletes it when you change the model's `storage.nodeSelector` or `storage.nodeAffinity` and the node stops matching. It deletes the whole `storage.path` directory, including files that OME didn't put there and the directories of other models inside it. The source on Hugging Face or in object storage stays. You manage the files of `local://` and `pvc://` models yourself: for a PVC, see [Clean up](../deploy-models/serve-models-from-pvc.md#clean-up) in the PVC guide.
 
 The agent keeps the files in these cases:
 

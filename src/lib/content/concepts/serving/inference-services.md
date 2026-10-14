@@ -252,6 +252,31 @@ Rollout groups and canaries need OMENative set in the InferenceService itself: `
 
 `spec.placement` and `spec.routing` serve one InferenceService from several clusters. They're alpha, still in development and off by default. OME reads them only on a multi-cluster control plane, with `ome.multicluster.enabled: true` set in the `ome-resources` chart. See [Traffic map](../rollouts-and-traffic/traffic-map.md).
 
+## Bounded lifetime {since=v1.3}
+
+Give an InferenceService a bounded lifetime with `spec.ttlSecondsAfterCreation`: once that many seconds have passed since its `creationTimestamp`, OME deletes it, and garbage collection removes everything it owns. Unset, the default, means it lives until you delete it. The smallest TTL is one second.
+
+This InferenceService serves the same model for a day, then goes away:
+
+```yaml title="isvc-ttl.yaml"
+apiVersion: ome.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama-experiment
+  namespace: llama-demo
+spec:
+  model:
+    name: llama-3-2-1b-instruct
+  engine: {}
+  ttlSecondsAfterCreation: 86400
+```
+
+OME computes the deadline from `creationTimestamp` on every reconcile, so you can change the field on a live InferenceService: raising or lowering the value moves the deadline, and removing the field cancels it. The clock always counts from creation, never from the edit, so a TTL shorter than the InferenceService's age deletes it on the next reconcile.
+
+When the deadline passes, OME deletes the InferenceService and records a Normal `TTLExpired` event: `Deleted because ttlSecondsAfterCreation=86400 has passed`. The delete names the expired object's UID as a precondition, so a recreated InferenceService with the same name is never deleted in its place: its own TTL, when it sets one, counts from its own creation.
+
+OME checks the TTL before anything else in the reconcile, so a spec problem that stops reconciliation can't keep an expired InferenceService alive. While the deadline is ahead, each reconcile schedules the next no later than the deadline, so the delete needs no outside trigger. A copy that [placement](#rollouts-and-traffic) puts on a workload cluster ignores its own TTL: the source InferenceService's TTL governs it.
+
 ## Status
 
 The `Ready` condition is `True` when both `EngineReady` and `IngressReady` are. With ingress creation off, the default, `IngressReady` is `True` with reason `IngressDisabled`, so `Ready` follows the engine alone: check `DecoderReady` and `RouterReady` too. [When IngressReady is True](../rollouts-and-traffic/ingress.md#when-ingressready-is-true) covers an Ingress and the Gateway API.
