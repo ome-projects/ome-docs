@@ -119,6 +119,7 @@ A value holds literal text and these variables only: no template functions, pipe
 | Field | What it sets |
 | --- | --- |
 | `class` | `KEDA`, which needs `keda.triggers`, or `HPA`. |
+| `enforcement` | `Default`, which the API sets on every policy: components opt in with a reference, and an inline `autoscaler` outranks the policy, as [Inline settings win](#inline-settings-win) describes. `Required`, the schema's other value, is reserved: see the note below. |
 | `providerRef` | The [metric provider](#metric-providers) of a `prometheus` trigger. Required, as is an explicit `ignoreNullValues`. OME sets the trigger's `serverAddress` and `authModes` from the provider, so a trigger can't set them. |
 | `queryReturnsDesiredReplicas` | Declares that a trigger's query computes the replica count itself, which needs `metricType: AverageValue`: see [Queries that compute the replica count](#queries-that-compute-the-replica-count). |
 | `keda.fallback.replicas` | A fixed `value`, or `fromComponent: MaxReplicas` or `MinReplicas`. |
@@ -126,6 +127,9 @@ A value holds literal text and these variables only: no template functions, pipe
 | `hpa` | The HorizontalPodAutoscaler's `metrics` and `behavior`, copied as they are. Without it, the HorizontalPodAutoscaler keeps CPU use at 80%. |
 
 OME rejects a policy that breaks these rules when you create or update it, including an invalid PromQL query and the one valid query shape that [Queries that compute the replica count](#queries-that-compute-the-replica-count) describes. [AutoscalerPolicySpec](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AutoscalerPolicySpec) in the API reference lists every field.
+
+!!! note "Why the schema lists values OME rejects"
+    OME rejects `enforcement: Required` with `EnforcementRequiredReserved: enforcement Required is a reserved shape and not implemented; use Default`. The value is reserved for a future enforcement tier, as the `ClusterAutoscalerPolicy` kind in [a component's reference](#attach-a-policy-to-an-inferenceservice) is for a future cluster-scoped policy. Rejecting a reserved value keeps it out of every stored object, so a controller too old to know the feature can never read a `Required` policy as `Default`, or a cluster-scoped reference as a namespaced policy. The `Proportional` and `Pinned` modes of an InferenceService's [`scalingPolicy`](inference-services.md#scaling) are in the schema but rejected the same way.
 
 This `HPA` policy keeps CPU use at 60%, and when it scales down, it keeps the highest replica count recommended in the last 5 minutes:
 
@@ -273,6 +277,7 @@ policy   queue-depth   RenderedFromPolicy
 The `engine`, `decoder` and `router` can each name a policy, the same one or different ones. The webhooks reject:
 
 - any reference until the controller has found the CRD at startup, with a message that starts with `AutoscalerPolicyFeatureDisabled`;
+- `kind: ClusterAutoscalerPolicy` in a reference, with `AutoscalerPolicyRefKindReserved: spec.engine.autoscalerPolicyRef.kind "ClusterAutoscalerPolicy" is not supported (ClusterAutoscalerPolicy is a reserved shape); use AutoscalerPolicy`. The schema lists the kind, but it's reserved until a cluster-scoped policy exists, so a reference needs only `name`: `kind: AutoscalerPolicy` is the default and the only kind there is;
 - `autoscalerPolicyRef` in a runtime, because references go only in an InferenceService;
 - `minReplicas: 0` with only a reference: [scale to zero](../../guides/scale-and-migrate/scale-to-zero-with-keda.md) needs the component's own `autoscaler` with `class: KEDA`.
 
@@ -320,7 +325,7 @@ When OME can't use a component's policy, the component holds: it keeps its last 
 | Reason | When |
 | --- | --- |
 | `PolicyNotFound` | The policy is missing from the InferenceService's namespace, or the controller started before the AutoscalerPolicy CRD was installed. |
-| `PolicyInvalid` | The policy fails to render for the component, for example because it names an unbound provider. |
+| `PolicyInvalid` | The policy fails to render for the component, for example because it names an unbound provider, or the reference carries the reserved `kind: ClusterAutoscalerPolicy`, which admission normally rejects. |
 | `ClassUnavailable` | The policy's class is `KEDA`, and KEDA's CRDs were missing when the controller started. |
 
 While a component holds, OME keeps creating and updating its workload, and only the autoscaler is frozen. The component keeps the autoscaler that its policy last rendered; on a RawDeployment component, changes to `minReplicas` and `maxReplicas` still reach it. If the policy never rendered for the component, OME leaves its current autoscaler, if any, as it is.
