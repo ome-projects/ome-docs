@@ -144,7 +144,7 @@ The agent keeps files in these cases:
 
 When another model's `path` is `/mnt/data/models/qwen/qwen2-5-7b-instruct/releases/rev-002`, for example, deleting a model without the reserve label whose `path` is `/mnt/data/models/qwen/qwen2-5-7b-instruct` keeps `releases/rev-002` and the directories that lead to it, and removes `config.json`, the weights and every other unreferenced file and directory. Deleting the last model that uses a directory deletes the files, unless it has the reserve label.
 
-When the agent can't list the BaseModels and ClusterBaseModels to find these references, it keeps all the files, and the deletion fails, as in [The model stays after you delete it](#the-model-stays-after-you-delete-it). It leaves every [`.hf-artifact-locks` directory](model-agent.md#hf-artifact-locks) and [`_artifacts` directory](shared-hf-artifacts.md) in place.
+When the agent can't list the BaseModels and ClusterBaseModels to find these references, it keeps all the files. The deletion then completes without removing them, or fails, as in [The model stays after you delete it](#the-model-stays-after-you-delete-it). The agent also leaves every [`.hf-artifact-locks` directory](model-agent.md#hf-artifact-locks) and [`_artifacts` directory](shared-hf-artifacts.md) in place.
 
 When it keeps files, the agent still removes the deleted model's label from the node, and OME stops tracking the files. They stay until you delete them, as in [Clean up](#clean-up).
 
