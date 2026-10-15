@@ -98,7 +98,12 @@ Install the chart:
       --namespace ome -f quota-values.yaml
     ```
 
-The release notes warn that the chart doesn't install the AcceleratorQuota CRD. That's expected: `ome-crd` installed it. Wait for both replicas:
+The release notes warn that the chart isn't installing the AcceleratorQuota CRD, and offer a value, `quotaManager.crd.install`, for a cluster where nothing else does. Leave it at its default, `false`: `ome-crd` installed the CRD here, as on any cluster that runs OME, and the CRD is one cluster-scoped object, so whichever release claims it second — this chart with `crd.install: true`, or an `ome-crd` installed later — fails Helm's ownership check.
+
+!!! note "Run the quota manager without OME"
+    On a cluster without `ome-crd` — one that runs only the quota manager, to turn a quota tree into Kueue queues — set `quotaManager.crd.install: true` in `quota-values.yaml`, and the chart installs its own copy of the CRD. Don't skip it: the install succeeds without the CRD, but the quota manager can't sync its cache, so the only symptom is crash-looping pods. The copy carries `helm.sh/resource-policy: keep`, so `helm uninstall` leaves the CRD, and your AcceleratorQuotas with it.
+
+Wait for both replicas:
 
 ```bash
 kubectl -n ome rollout status deployment/ome-quota-manager
