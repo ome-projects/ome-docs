@@ -256,7 +256,7 @@ ome:
 | `minPeriod` | The shortest `period` a poll or a probe can set. |
 | `maxSamples` | The most readings a poll's `samples` can keep. |
 
-With `routing.enabled: true`, all five limits are required, even when the chart sets no poll or probe. A limit that's missing or 0 in your values file stops the controller from starting, like a bad poll: see [The controller rollout doesn't finish](#the-controller-rollout-doesnt-finish). OME checks the chart's poll and probe against `minPeriod` and `maxSamples` when the controller starts, and a `spec.routing` block when it picks the block up, where a broken bound [freezes the TrafficMap](#the-trafficmap-doesnt-pick-up-the-poll) like any other mistake in the block.
+With `routing.enabled: true`, all five limits are required, even when the chart sets no poll or probe. A limit that you leave out of your values file keeps its default, but one set to 0, or removed with `null`, stops the controller from starting, like a bad poll: see [The controller rollout doesn't finish](#the-controller-rollout-doesnt-finish). OME checks the chart's poll and probe against `minPeriod` and `maxSamples` when the controller starts, and a `spec.routing` block when it picks the block up, where a broken bound [freezes the TrafficMap](#the-trafficmap-doesnt-pick-up-the-poll) like any other mistake in the block.
 
 A poll or probe waits for one of the `maxConcurrentRequests` slots before it's sent. The wait can't fail it, since its `timeout` starts with the request. But when many homes share the budget, the time between a home's attempts grows past `period`, which shows as a probe's [`lastProbeTime`](routing-health-probes.md#step-3-check-the-probe-state) falling behind. Raise `maxConcurrentRequests` in your values file when that happens.
 
@@ -275,7 +275,7 @@ The error names the setting. For example:
 - A period without a unit gives `routing.capacity.period: "10" is not a duration (use forms like "30s", "5m")`.
 - A timeout as long as the period gives `routing.capacity.timeout (10s) must be shorter than routing.capacity.period (10s)`.
 - A period under [the observer's floor](#the-observer-limits) gives `routing.capacity.period (500ms) must be at least routing.observer.minPeriod (1s)`.
-- An observer limit that's missing or 0 gives `routing.observer.maxSamples must be positive when routing is enabled`.
+- An observer limit set to 0 or `null` gives `routing.observer.maxSamples must be positive when routing is enabled`.
 
 Fix the value in your values file, and run `helm upgrade` again.
 
