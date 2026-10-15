@@ -316,7 +316,21 @@ SOURCE   SHADOWED      RESOLVED
 isvc     queue-depth   InlinePrecedence
 ```
 
-To go back to the policy, remove the `autoscaler` block, then delete OME's HorizontalPodAutoscaler again, as in [Attach a policy to an InferenceService](#attach-a-policy-to-an-inferenceservice).
+OME still renders the shadowed policy on every reconcile, and reports the render in `shadowedPolicyRef`, so you can preview what the policy would dispatch while the inline settings keep running:
+
+```bash
+kubectl get inferenceservice llama-3-2-1b-instruct -n llama-demo \
+  -o custom-columns='SHADOWED:.status.components.engine.autoscaler.shadowedPolicyRef.name,PORTABLE:.status.components.engine.autoscaler.shadowedPolicyRef.portableDigest,WOULD-RENDER:.status.components.engine.autoscaler.shadowedPolicyRef.wouldRenderDigest'
+```
+
+```output
+SHADOWED      PORTABLE           WOULD-RENDER
+queue-depth   pv1:9f2c41d07a8e   rv1:5b82d4c91f0a
+```
+
+`portableDigest` identifies the policy's spec, and `wouldRenderDigest` identifies the render the policy would produce for this component if you removed the inline block: [Conditions and status](#conditions-and-status) describes both. Edit the shadowed policy, and the digests follow it. When the shadowed policy fails to render — it's missing, invalid or names an unbound provider — `shadowedPolicyRef` carries only the name, with no digests, and the component keeps running on the inline settings: an inline `autoscaler` wins even over a broken policy.
+
+To go back to the policy, remove the `autoscaler` block, then delete OME's HorizontalPodAutoscaler again, as in [Attach a policy to an InferenceService](#attach-a-policy-to-an-inferenceservice). The policy renders from the same inputs, so the component's `policy.resolvedDigest` equals the `wouldRenderDigest` you previewed, unless the policy, the component's replica bounds or the provider binding changed in between. [Confirm that a policy edit landed](#confirm-that-a-policy-edit-landed) shows how to read it.
 
 ## Fail-closed behavior
 
@@ -374,13 +388,15 @@ Autoscaling triggers don't send the binding's `headers`. OME picks up a change t
 
 ## Conditions and status
 
-A policy's status says whether it's valid and how many components use it:
+A policy's status says whether it's valid, how many components use it, and the digest that identifies its spec:
 
 | Field | Description |
 | --- | --- |
 | `conditions`, type `Ready` | `True` with the reason `TemplatesValid` when the policy is valid and its providers are bound. Otherwise `False`, with the reason `ProviderUnknown` or that of the first validation problem. |
 | `conditions`, type `InUse` | `True` with the reason `Attached` when a component references the policy, otherwise `False` with the reason `NoConsumers`. |
 | `attachedComponents` | How many components reference the policy. An engine and a decoder count as two. |
+| `observedGeneration` | The `metadata.generation` the status reflects. |
+| `portableDigest` | A digest of the spec with the API's defaults applied: `pv1:` and 12 hex digits. Two policies with the same settings get the same digest, in this cluster or another one, whether or not their files spell out the defaulted fields. |
 
 List the policies with their `Ready` reason:
 
@@ -395,9 +411,20 @@ cpu-60        HPA     True    TemplatesValid   <none>
 queue-depth   KEDA    True    TemplatesValid   1
 ```
 
-ATTACHED is `<none>` while the policy is unused. [`kubectl ome get autoscalerpolicies`](../../reference/kubectl-ome/get.md#autoscalerpolicies-columns) shows the same status.
+ATTACHED is `<none>` while the policy is unused. [`kubectl ome get autoscalerpolicies`](../../reference/kubectl-ome/get.md#autoscalerpolicies-columns) shows the same status, with the digest in its wide output.
 
-On the InferenceService, `status.components.<component>.autoscaler.policy` names the policy that rendered the component's autoscaler, and `shadowedPolicyRef` names a reference that an inline `autoscaler` outranks. [Read the result in status](component-autoscaling.md#read-the-result-in-status) describes the other fields.
+On the InferenceService, `status.components.<component>.autoscaler.policy` records the render that the component's live autoscaler came from, and `shadowedPolicyRef` describes a reference that an inline `autoscaler` outranks:
+
+| Field | Description |
+| --- | --- |
+| `policy.name` | The policy that rendered the component's autoscaler. |
+| `policy.observedGeneration` | The policy's `metadata.generation` at the render. |
+| `policy.portableDigest` | The policy's `portableDigest` at the render. |
+| `policy.resolvedDigest` | A digest of the render itself — the rendered autoscaler, the component's effective replica bounds and the provider's server address: `rv1:` and 12 hex digits. Unlike `portableDigest`, it isn't portable: the same policy can digest differently per component and per cluster. |
+| `shadowedPolicyRef.name` | The policy that an inline `autoscaler` outranks. |
+| `shadowedPolicyRef.portableDigest`, `.wouldRenderDigest` | The shadowed policy's spec digest, and the `resolvedDigest` its render would get if you removed the inline block. Both are empty when the shadowed policy fails to render. See [Inline settings win](#inline-settings-win). |
+
+While a component [holds](#fail-closed-behavior), `policy` keeps the generation and digests of the last render that succeeded — the render the frozen autoscaler came from — so you can see which settings are standing. [Read the result in status](component-autoscaling.md#read-the-result-in-status) describes the `autoscaler` block's other fields.
 
 OME sets `AutoscalerResolved` only on components with a reference:
 
@@ -407,6 +434,38 @@ OME sets `AutoscalerResolved` only on components with a reference:
 | `True` | `InlinePrecedence` | An inline `autoscaler` outranks the reference. |
 | `False` | `PolicyNotFound`, `PolicyInvalid` or `ClassUnavailable` | The component holds; see [Fail-closed behavior](#fail-closed-behavior). |
 | `False` | `UnsupportedDeploymentMode` | The component is [`MultiNode`](../architecture/deployment-modes.md) (deprecated), which gets no autoscaler. |
+
+### Confirm that a policy edit landed
+
+A policy edit reaches a component's autoscaler through a render, and the digests prove the render happened. Edit `queue-depth` — raise the trigger's `threshold` from `"5"` to `"8"`, say — and apply it. The policy's status picks up the new spec:
+
+```bash
+kubectl get autoscalerpolicy queue-depth -n llama-demo \
+  -o custom-columns='GENERATION:.metadata.generation,OBSERVED:.status.observedGeneration,DIGEST:.status.portableDigest'
+```
+
+```output
+GENERATION   OBSERVED   DIGEST
+2            2          pv1:7d41c0b3a95e
+```
+
+OME re-renders every component that references the policy. Compare the engine's provenance with the policy:
+
+```bash
+kubectl get inferenceservice llama-3-2-1b-instruct -n llama-demo \
+  -o custom-columns='POLICY:.status.components.engine.autoscaler.policy.name,GENERATION:.status.components.engine.autoscaler.policy.observedGeneration,PORTABLE:.status.components.engine.autoscaler.policy.portableDigest,RESOLVED:.status.components.engine.autoscaler.policy.resolvedDigest'
+```
+
+```output
+POLICY        GENERATION   PORTABLE           RESOLVED
+queue-depth   2            pv1:7d41c0b3a95e   rv1:3e95b1c84d06
+```
+
+The engine's `observedGeneration` and `portableDigest` match the policy's generation and digest: its live ScaledObject was rendered from the spec you just applied. The same check works across clusters: two clusters running the same policy spec report the same `portableDigest`, so you can compare a component's provenance in one cluster against the policy in another without reading the rendered objects.
+
+When the digests don't match and the component's `AutoscalerResolved` condition is `False`, the component is [holding](#fail-closed-behavior): the provenance shows the render that's still standing, not the spec you applied. Fix what the condition's message names, and the digests catch up on the next render.
+
+`resolvedDigest` tells renders apart rather than specs: it also changes when you change the component's `minReplicas` or `maxReplicas`, or the cluster's [provider binding](#metric-providers), with no policy edit at all. Use `portableDigest` to see that an edit landed, and `resolvedDigest` to see that a component's render changed — or, after you remove an inline block, that it matches the `wouldRenderDigest` previewed in [Inline settings win](#inline-settings-win).
 
 ## Delete a policy
 
