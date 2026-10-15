@@ -57,7 +57,7 @@ Changing the strategy doesn't start a rollout. Instance updates that start after
 
 ### SurgeThenDrain
 
-For a single-pod Instance, the new pod takes the Instance's other ordinal: `llama-3-2-3b-instruct-engine-0-default-1` replaces `llama-3-2-3b-instruct-engine-0-default-0`. If the new pod fails, the old one keeps serving while OME tries the update again. For a leader and its workers, OME starts a whole replacement Instance at a new [index](../omenative/instances.md#index), so the indices can have gaps. If the replacement fails, OME deletes it, records a `GangSurgeAbandoned` warning event, and the old Instance keeps serving.
+For a single-pod Instance, the new pod takes the Instance's other ordinal: `llama-3-2-3b-instruct-engine-0-default-1` replaces `llama-3-2-3b-instruct-engine-0-default-0`. If the new pod fails, the old one keeps serving while OME tries the update again. For a leader and its workers, OME starts a whole replacement Instance at a new [index](../omenative/instances.md#index), so the indices can have gaps. If the replacement fails, OME deletes it, records a `GangSurgeAbandoned` warning event, and the old Instance keeps serving. For what a further change does to a surge that's still in flight, see [Changing the pod template mid-surge](#changing-the-pod-template-mid-surge).
 
 When OME drains the old pods, their `preStop` hook and `terminationGracePeriodSeconds` cover the requests they're still serving. The update isn't finished, and the Instance's surge slot isn't free, until the drained pods are gone, so a long grace period can make the next Instance wait. Pods that no update owns hold slots of their own: see [Extra pods hold surge slots](#extra-pods-hold-surge-slots).
 
@@ -211,6 +211,37 @@ kubectl get inferenceservice llama-3-2-3b-instruct -n llama-demo \
 - A live extra pod, which the reason reports as `extra pod llama-3-2-3b-instruct-engine-1-default-1 holds a surge slot until a start on its Instance replaces it`, is a replacement that a failed update attempt left running. Its slot frees when OME next starts an update on its Instance: that start evicts the pod before it creates anything, so it takes the slot the pod held and isn't charged twice. Until then, updates on the component's other Instances can't use the slot.
 
 A pod that an in-flight update still owns isn't named: a drained old pod holds its Instance's surge slot through the update itself, which doesn't finish until the pod is gone. For a leader and its workers, extra pods count in whole Instances: their number is divided by the Instance's pod count and rounded up, so the eight draining pods of a scaled-away eight-pod Instance hold one slot.
+
+## Changing the pod template mid-surge
+
+Changing the pod template again while a [SurgeThenDrain](#surgethendrain) update is in flight records a newer revision and withdraws the one the update is moving to. OME doesn't keep driving a surge toward a withdrawn revision: a new pod built for it has nothing to promote to. Each single-pod surge OME ends this way records a Normal `SurgeAbandoned` event on the InferenceService, not a warning: the withdrawn revision never got the chance to fail.
+
+While a single-pod Instance's old pod still serves, OME abandons the surge at once, whether or not the new pod is ready:
+
+1. OME takes the new pod out of rotation if it's serving, then deletes it. A pod that never served is deleted with the chart's `ome.controller.lifecycle.abandonedReplacementGracePeriod`, 30 seconds, instead of its own `terminationGracePeriodSeconds`.
+2. Once the pod is gone, the Instance returns to `Ready` on the revision it runs. The old pod has kept serving throughout, so capacity never drops.
+3. The Instance then moves toward the newest revision as a new update, through the same budgets and gates as any other, under the strategy the component has now.
+
+```bash
+kubectl get events -n llama-demo --field-selector reason=SurgeAbandoned \
+  -o custom-columns=TYPE:.type,MESSAGE:.message
+```
+
+```output
+TYPE     MESSAGE
+Normal   OMENative component=engine instance=0 abandoned superseded surge to llama-3-2-3b-instruct-engine-7b4c2e19; re-surging toward llama-3-2-3b-instruct-engine-9d1f4a02
+```
+
+When your change takes the Instance back to the revision it already runs, there's nothing left to move to: the message reads `abandoned surge to withdrawn revision …; the Instance stays on revision …` instead, and no new update starts. And when the new pod is ready but the old pod is already gone, OME finishes the surge instead: deleting the only pod the Instance has left would leave it nothing to serve with, so that pod promotes on the revision it was built for, and the newest revision rolls from there.
+
+Once the Instance hands over — the new pod has taken over serving, and OME has taken the old pod out of rotation to drain it — the surge is past the point of no return. It finishes on the revision it started toward, and the Instance then starts a second update toward the newest one.
+
+If the new pod is lost after that hand-over, OME doesn't rebuild it for the withdrawn revision. The update ends where the Instance stands, with a `SurgeAbandoned` event:
+
+- An old pod that isn't already terminating returns to rotation: OME lifts the hold that was draining it, and the Instance is `Ready` on the revision that pod runs. The message ends with `the replacement was lost after it took over serving and nothing is rebuilt at it; the source returns to rotation on revision …`.
+- With the old pod gone too, nothing is left to serve. The Instance re-enters `Failed` with no operation, and OME rebuilds it at the newest revision from scratch — a fresh start, not a repair. The message ends with `no source pod stands, so the Instance re-enters as a fresh start at revision …`.
+
+An update that already [failed](../omenative/instances.md#when-an-instance-fails) needs no abandoning: its next attempt commits to the newest revision. A multi-pod Instance follows the same rules with its whole replacement Instance, and its events use the reason `GangSurgeAbandoned` — a Normal event here, unlike the warning after a failed update. A strategy change withdraws nothing: see [Changing the strategy mid-rollout](#changing-the-strategy-mid-rollout).
 
 ## Changing the strategy mid-rollout
 
