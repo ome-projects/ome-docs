@@ -3190,6 +3190,18 @@ Weight is the effective static allocation weight, when applicable.
 Minimum: `0`.
 
 </td></tr>
+<tr><td><code>componentMatches</code></td>
+<td><a href="#ome-io-v1beta1-ComponentAffinityMatch"><code>[]ComponentAffinityMatch</code></a></td>
+<td>
+
+ComponentMatches records, under the ComponentAffinity policy, how each
+component other than the primary one matched this cluster. MatchingTerms
+and Weight hold the primary component&#39;s match. The accepted plan keeps
+them so that member floors never follow unaccepted label changes.
+
+Maximum items: `2`.
+
+</td></tr>
 <tr><td><code>capacity</code></td>
 <td><a href="#ome-io-v1beta1-PlacementCapacitySample"><code>PlacementCapacitySample</code></a></td>
 <td>
@@ -3545,7 +3557,7 @@ Allowed values: `ControlPlane`, `Endpoint`.
 
 ### `ClusterAffinityTerm` {#ome-io-v1beta1-ClusterAffinityTerm}
 
-Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
+Used by [`ComponentClusterAffinity`](#ome-io-v1beta1-ComponentClusterAffinity), [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
 
 ClusterAffinityTerm selects WorkloadClusters by ANDing its requirements.
 Multiple terms form a union; a weight assigns replica shares to each match.
@@ -3684,6 +3696,43 @@ ComparisonOperator is how an AnalysisMetric result is compared to its
 Threshold. &#34;result &lt;op&gt; threshold&#34; being true means the metric is healthy.
 
 Underlying type: `string`.
+
+### `ComponentAffinityMatch` {#ome-io-v1beta1-ComponentAffinityMatch}
+
+Used by [`CandidateAllocationStatus`](#ome-io-v1beta1-CandidateAllocationStatus).
+
+ComponentAffinityMatch records how one component&#39;s own affinity terms
+matched a cluster.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>component</code></td>
+<td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
+<td>
+
+
+Allowed values: `engine`, `decoder`, `router`.
+
+</td></tr>
+<tr><td><code>matchingTerms</code></td>
+<td><code>[]int32</code></td>
+<td>
+
+MatchingTerms contains zero-based indexes into the component&#39;s terms.
+
+</td></tr>
+<tr><td><code>weight</code></td>
+<td><code>int64</code></td>
+<td>
+
+Weight is the component&#39;s effective static weight, when applicable.
+
+Minimum: `0`.
+
+</td></tr>
+</tbody>
+</table>
 
 ### `ComponentAutoscaler` {#ome-io-v1beta1-ComponentAutoscaler}
 
@@ -3856,6 +3905,52 @@ ComponentExtensionSpec that a ReplicaValueSource resolves against.
 Underlying type: `string`.
 
 Allowed values: `MaxReplicas`, `MinReplicas`.
+
+### `ComponentClusterAffinity` {#ome-io-v1beta1-ComponentClusterAffinity}
+
+Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
+
+ComponentClusterAffinity holds one affinity term list per component. Every
+listed component must match the same clusters. In Split, each list&#39;s weights
+set that component&#39;s shares; in Single and All the lists only select.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>engine</code></td>
+<td><a href="#ome-io-v1beta1-ClusterAffinityTerm"><code>[]ClusterAffinityTerm</code></a></td>
+<td>
+
+Engine selects clusters for the engine and, in Split, weights its shares.
+It is required when the service declares an engine.
+
+Minimum items: `1`. Maximum items: `64`.
+
+</td></tr>
+<tr><td><code>decoder</code></td>
+<td><a href="#ome-io-v1beta1-ClusterAffinityTerm"><code>[]ClusterAffinityTerm</code></a></td>
+<td>
+
+Decoder selects clusters for the decoder and, in Split, weights its shares
+over the clusters that hold engine replicas. It is required when the
+service declares a decoder.
+
+Minimum items: `1`. Maximum items: `64`.
+
+</td></tr>
+<tr><td><code>router</code></td>
+<td><a href="#ome-io-v1beta1-ClusterAffinityTerm"><code>[]ClusterAffinityTerm</code></a></td>
+<td>
+
+Router selects clusters for the router. In Split, it divides
+router.minReplicas across the clusters that hold engine replicas; without
+it, each such cluster runs the full router policy.
+
+Minimum items: `1`. Maximum items: `64`.
+
+</td></tr>
+</tbody>
+</table>
 
 ### `ComponentExtensionSpec` {#ome-io-v1beta1-ComponentExtensionSpec}
 
@@ -4202,7 +4297,7 @@ PairingProtocol values are equal; an empty value pairs with anything.
 
 ### `ComponentType` {#ome-io-v1beta1-ComponentType}
 
-Used by [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`MigrationHistoryEntry`](#ome-io-v1beta1-MigrationHistoryEntry), [`PlacementComponentDemand`](#ome-io-v1beta1-PlacementComponentDemand), [`PlacementComponentFloor`](#ome-io-v1beta1-PlacementComponentFloor), [`ProportionalPolicy`](#ome-io-v1beta1-ProportionalPolicy), [`RolloutCoordinationGroupStatus`](#ome-io-v1beta1-RolloutCoordinationGroupStatus), [`RolloutGroup`](#ome-io-v1beta1-RolloutGroup), [`RolloutRunTarget`](#ome-io-v1beta1-RolloutRunTarget).
+Used by [`ComponentAffinityMatch`](#ome-io-v1beta1-ComponentAffinityMatch), [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`MigrationHistoryEntry`](#ome-io-v1beta1-MigrationHistoryEntry), [`PlacementComponentDemand`](#ome-io-v1beta1-PlacementComponentDemand), [`PlacementComponentFloor`](#ome-io-v1beta1-PlacementComponentFloor), [`ProportionalPolicy`](#ome-io-v1beta1-ProportionalPolicy), [`RolloutCoordinationGroupStatus`](#ome-io-v1beta1-RolloutCoordinationGroupStatus), [`RolloutGroup`](#ome-io-v1beta1-RolloutGroup), [`RolloutRunTarget`](#ome-io-v1beta1-RolloutRunTarget).
 
 ComponentType contains the different types of components of the service
 
@@ -5737,7 +5832,11 @@ Used by [`InferenceService`](#ome-io-v1beta1-InferenceService).
 
 InferenceServiceSpec is the desired state of an InferenceService.
 
-Validation: ClusterAffinity placement policy cannot be removed; drain and recreate the service to change placement ownership.
+Validation: the placement policy cannot be removed; drain and recreate the service to change placement ownership.
+
+Validation: componentAffinity needs an entry for each declared engine and decoder, and none for undeclared ones.
+
+Validation: componentAffinity.router requires a declared router.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -8819,7 +8918,7 @@ PlacementPolicy selects the matching and allocation contract.
 
 Underlying type: `string`.
 
-Allowed values: `ClusterAffinity`.
+Allowed values: `ClusterAffinity`, `ComponentAffinity`.
 
 ### `PlacementSingleMoveStatus` {#ome-io-v1beta1-PlacementSingleMoveStatus}
 
@@ -8853,7 +8952,11 @@ Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec).
 
 PlacementSpec declares explicit multi-cluster matching and allocation intent.
 
-Validation: replacementTimeout requires ClusterAffinity Single placement.
+Validation: replacementTimeout requires Single placement.
+
+Validation: componentAffinity is required by, and only valid with, the ComponentAffinity policy.
+
+Validation: the ComponentAffinity policy reads componentAffinity, not clusterAffinity.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -8862,7 +8965,8 @@ Validation: replacementTimeout requires ClusterAffinity Single placement.
 <td><a href="#ome-io-v1beta1-PlacementPolicy"><code>PlacementPolicy</code></a></td>
 <td>
 
-Policy selects ClusterAffinity matching and persisted allocation plans.
+Policy selects affinity matching and persisted allocation plans.
+ComponentAffinity reads per-component terms from componentAffinity.
 
 </td></tr>
 <tr><td><code>mode</code> <span class="doc-api-required">Required</span></td>
@@ -8876,11 +8980,22 @@ Mode selects the placement cardinality and replica allocation strategy.
 <td><a href="#ome-io-v1beta1-ClusterAffinityTerm"><code>[]ClusterAffinityTerm</code></a></td>
 <td>
 
-ClusterAffinity ORs terms whose requirements are ANDed. Requires the
-ClusterAffinity policy; omission then matches every registration.
+ClusterAffinity ORs terms whose requirements are ANDed, for every
+component. Requires the ClusterAffinity policy; omission then matches
+every registration.
 An explicit empty or null list is invalid.
 
 Minimum items: `1`. Maximum items: `64`.
+
+</td></tr>
+<tr><td><code>componentAffinity</code></td>
+<td><a href="#ome-io-v1beta1-ComponentClusterAffinity"><code>ComponentClusterAffinity</code></a></td>
+<td>
+
+ComponentAffinity holds one affinity term list per component and requires
+the ComponentAffinity policy. Every component must match the same
+clusters; in Split, each component&#39;s weights set its own shares. An
+explicit null is invalid.
 
 </td></tr>
 <tr><td><code>maxSurge</code></td>
