@@ -17,6 +17,7 @@ Default is what the manager uses without the flag. The Helm value column names t
 | `--enable-http2` | `false` | None | Serves HTTP/2 on the metrics and webhook servers. |
 | `--metrics-bind-address` | `:8080` | None. The chart always passes `:8080`. | The address of the metrics endpoint. `0` turns the endpoint off. The chart's metrics Service expects port 8080. |
 | `--metrics-secure` | `false` | None | Serves the metrics endpoint over HTTPS. |
+| `--pprof-bind-address` | Empty | `ome.controller.pprofBindAddress` (`""`) | The address of the `net/http/pprof` endpoint, which serves CPU and heap profiles of the live manager. Empty or `0` turns the endpoint off, and the chart passes the flag only when the value is set. Bind it to loopback, such as `127.0.0.1:6060`, so the profiles are reachable only through `kubectl port-forward`, never through a Service. |
 
 ## Leader election
 
