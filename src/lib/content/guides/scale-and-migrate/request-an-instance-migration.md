@@ -267,7 +267,25 @@ ome:
 
 All three fields are required and must be greater than zero. Without the chart, add the same `audit` block to the JSON under the `lifecycle` key of the `inferenceservice-config` ConfigMap in the OME namespace, beside `instanceReadyTimeout`. Add the chart's `requeue` block there too, `"requeue": {"operation": "5s", "gate": "3s"}`. Without it, OME can take many minutes to retry a held request. OME picks up the change without a restart, and a request still held at its deadline fails with `deadline exceeded in phase Accepted: surge never allocated`.
 
-Without that message, the request is waiting its turn, for one of the causes in [When a request waits or fails](../../concepts/omenative/migration-and-transient-scale.md#what-refuses-a-migration-request). Pausing the service holds its migrations, but their deadlines keep running, so one whose deadline passes fails when you resume.
+A message that starts with `waiting for source` instead means the source Instance is `Failed` on the revision it runs, and the move waits for it to be `Ready` again. Nothing in flight on the Instance ends that wait by itself, so OME names it on the record, and in a Warning `MigrationDeferred` event, once per cause:
+
+```output
+waiting for source component=engine instance=3, Failed on its running revision chat-engine-5d8f7c9b (pod chat-engine-3-default-0 container ome-container stuck (CrashLoopBackOff)), to be Ready again: its repair is parked until the retry ladder re-arms it
+```
+
+The parenthesis is the failure that parked the Instance, and the end of the message is what holds its repair:
+
+| The message ends with | What to do |
+| --- | --- |
+| `its rebuild waits on the revision's retry block Backoff after 1 failed attempt(s): CrashLoopBackOff` | Nothing: OME rebuilds the Instance when the revision's retry block allows. `kubectl ome instance retry-blocks chat -n prod --component engine` shows it. |
+| `its repair is parked, waiting for the configuration or image the pod needs; the kubelet retries in place` | Fix the configuration or image the pods name, such as the missing tag behind an `ImagePullBackOff`. The pods start on their own once it's there. |
+| `its repair is parked until the retry ladder re-arms it` | Nothing: OME rebuilds the pods when the ladder's next attempt comes. |
+| `its repair is parked and no retry ladder is configured to re-arm it; reset the Instance or publish a corrected revision`, or `its repair is parked after 3 re-arm(s) with every retry spent; reset the Instance or publish a corrected revision` | Nothing automatic releases this hold. Fix the cause, then [reset the Instance](../omenative/reset-failed-instances.md), or roll out a corrected revision. |
+| `no repair is open on it` | OME retries the Instance when its backoff allows. [`kubectl ome instance list`](../../reference/kubectl-ome/instance.md) shows what holds it, and a [reset](../omenative/reset-failed-instances.md) starts it over. |
+
+The same request proceeds once the Instance is `Ready` again, but its deadline keeps running while it waits, so a repair that outlasts it still fails the request.
+
+Without one of those messages, the request is waiting its turn, for one of the causes in [When a request waits or fails](../../concepts/omenative/migration-and-transient-scale.md#what-refuses-a-migration-request). Pausing the service holds its migrations, but their deadlines keep running, so one whose deadline passes fails when you resume.
 
 ### The migration fails
 
@@ -279,8 +297,12 @@ When `status` shows `Failed`, run it with `-o yaml` to read the full message. OM
 | `deadline exceeded in phase SurgePending: surge pods never became ready` | `MigrationExpired` | The migration missed its deadline while waiting for what the message names, here the replacement's pods. Check them with `kubectl describe pod`. |
 | `deadline exceeded in phase Accepted: surge never allocated`, right after the request | `MigrationExpired` | No Instance readiness timeout is set, or the controller's `lifecycle` settings are invalid. Set a timeout, as [Set Instance readiness deadlines](../omenative/set-instance-readiness-deadlines.md) shows. This is a known bug. |
 | `surge pod <pod> wedged in <reason> past the stuck-pod grace` | `MigrationSurgeWedged` | A replacement pod is stuck in `ImagePullBackOff`, `CrashLoopBackOff` or a similar state. |
-| `request.FromNode=node-a does not match observed source node=<node>` | `MigrationFromNodeMismatch` | The source Instance moved to another node before the migration started. |
+| `source instance has no live pods`, or `source pods span multiple nodes (node-a, node-b)` | `MigrationFromNodeMismatch` | The source names no single node to leave: its pods are gone, or leftover pods of a single-pod Instance sit on two nodes. Wait for the Instance to settle on one node, then send a new request. |
+| `source component=engine instance=3 is Failed on revision chat-engine-6c4f8b1d, which has not started (retry block Backoff after 1 failed attempt(s): CrashLoopBackOff); correct or release the revision, then request the move again` | `MigrationRequestRejected` | The source failed moving to a revision it never ran, so only a corrected or released revision gets it going again; a wait would just park the request until its deadline. The parenthesis says where the revision's retries stand. Fix the revision or [release it](../roll-out-changes/release-a-held-revision.md), then send a new request. |
+| `source component=engine instance=3 runs revision chat-engine-7f9c4d2b, which is held after its attempts (retry block Held after 3 failed attempt(s): ImagePullBackOff); the move would rebuild that revision elsewhere; correct or release the revision, then request the move again` | `MigrationRequestRejected` | The source's running revision is [held](../roll-out-changes/release-a-held-revision.md#how-holds-and-releases-work), so the replacement would rebuild a revision OME has given up on. The request fails even when the Instance reads `Ready` between crashes. Release the revision, or roll out a corrected one, then send a new request. |
 | `migrations disabled by MigrationPolicy Mode=Never` | `MigrationRequestRejected` | The component's migration mode is `Never`. |
+
+A `MigrationFromNodeMismatch` event isn't a failure when its type is Normal. The message `request.FromNode=node-a does not match observed source node=node-b; component=engine instance=3 leaves node-b` means the source Instance moved to another node after you sent the request: OME migrates it anyway, off the node it occupies, and the record's `from_node` follows.
 
 When a migration fails after its replacement started, OME removes the replacement and keeps the source Instance. [Watch migrations](../../concepts/omenative/migration-and-transient-scale.md#watch-migrations) lists every migration event.
 

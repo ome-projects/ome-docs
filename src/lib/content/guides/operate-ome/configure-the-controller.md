@@ -143,7 +143,7 @@ ome:
     kubeAPIBurst: 400
 ```
 
-Set `kubeAPIQPS` and `kubeAPIBurst` together: with a QPS but no burst, the manager exits when it starts.
+You don't have to set `kubeAPIQPS` and `kubeAPIBurst` together: with one value alone, the other keeps the chart's default, and the manager starts either way. But a `0` doesn't remove a limit: the chart then leaves the flag out, and the manager falls back to 20 requests a second, or a burst of 30 — far below the chart's values.
 
 ### Tell whether the manager is throttled
 
@@ -173,7 +173,7 @@ deployment.apps/ome-controller-manager restarted
 
 The manager reads these settings only when it starts, so a `kubectl` edit to one of them needs a restart:
 
-- the `omeAgent`, `multicluster`, `omenativeStatus` and `eventRecorder` entries;
+- the `omeAgent`, `multicluster`, `omenativeStatus`, `eventRecorder` and `tpuSliceProvisioning` entries;
 - `enableGatewayAPI` in the `ingress` entry;
 - `scaleUpPodBatchSize`, `scaleDownPodBatchSize`, `scaleDownRequeueInterval` and `repairBatchSize` in the `lifecycle` entry;
 - `maxConcurrency` and `cacheTTL` in the `canaryAnalysis` entry;
@@ -309,7 +309,7 @@ Both features are off by default. To turn one on, set `ome.rolloutPolicy.enabled
 
 ```bash
 kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E \
-  -e 'Invalid leader election timing|Failed to create Kubernetes client set|invalid --multicluster-role' \
+  -e 'Invalid leader election timing|invalid --multicluster-role' \
   -e 'flag provided but not defined|invalid (boolean )?value ".*" for (flag )?-' \
   -e 'Failed to initialize [a-zA-Z -]+ configuration'
 ```
@@ -317,7 +317,6 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E 
 | Message | Cause and fix |
 | --- | --- |
 | `Invalid leader election timing` | The lease values break a rule in [Lease timing](#lease-timing). The error gives the values and the rule. |
-| `Failed to create Kubernetes client set`, with `burst is required to be greater than 0` | `kubeAPIQPS` is set without `kubeAPIBurst`. Set `kubeAPIBurst` above 0. |
 | `invalid --multicluster-role` | Set `ome.multicluster.role` to `control-plane`, or leave it empty. |
 | `flag provided but not defined`, `invalid value` or `invalid boolean value` | A patched argument is misspelled, isn't in your OME version, or has a bad value, such as `3d` for a duration. |
 | `Failed to initialize deployment configuration`, or the same for another entry | That entry of the `inferenceservice-config` ConfigMap is invalid, and the rest of the line says why. For `replicas` in the `deploy` entry, see [Set replica defaults](set-replica-defaults.md). For `Failed to initialize event recorder configuration`, the `eventRecorder` entry breaks a rule in [Tune the per-object event budget](#tune-the-per-object-event-budget). |

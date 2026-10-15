@@ -17,7 +17,7 @@ Every request needs `--component`, `--replicas`, `--override-autoscaler` and `--
 
 ## What the request changes
 
-The command sets `spec.replicas` through the `/scale` subresource of the component's InferenceReplica, which is named `<service>-<component>`, such as `chat-engine`. It leaves the InferenceService, its runtime, its autoscaler and the other components as they are. The component's autoscaler class decides who sets the count next, as [Component autoscaling](../../concepts/serving/component-autoscaling.md) describes:
+The command sets `spec.replicas` through the `/scale` subresource of the component's InferenceReplica, which is named `<service>-<component>`, such as `chat-engine`. It operates only a replica the service projects and owns: [Standalone and fronted replicas](#standalone-and-fronted-replicas) covers the ones it refuses. It leaves the InferenceService, its runtime, its autoscaler and the other components as they are. The component's autoscaler class decides who sets the count next, as [Component autoscaling](../../concepts/serving/component-autoscaling.md) describes:
 
 | Class | What happens to the request |
 | --- | --- |
@@ -36,6 +36,32 @@ A result with `applied` as `Yes` means the API server stored the count, not that
 `--replicas` counts Instances: one pod each, or a leader and its workers on a multi-node component. It must be within the component's bounds, `minReplicas` to `maxReplicas`, as the InferenceService or its runtime sets them. When neither sets `maxReplicas`, `scale` accepts only `minReplicas`, or 1 when that's unset or 0. This holds even when OME's [replica defaults](../../guides/operate-ome/set-replica-defaults.md) give the autoscaler a wider range, so set `maxReplicas` first if you need more room.
 
 `--replicas` must be at least 1. To scale an idle component to zero, run it as a RawDeployment with a KEDA autoscaler: see [Scale to zero with KEDA](../../guides/scale-and-migrate/scale-to-zero-with-keda.md).
+
+### Standalone and fronted replicas {#standalone-and-fronted-replicas}
+
+The command changes only a replica that the InferenceService projects and owns. It verifies the ownership on the InferenceReplica — `spec.parentRef`, the controller owner reference and the `ome.io/parent-generation` stamp, which the [preview](#preview) shows — and it takes the verified autoscaler class and [bounds](#bounds) from the service and its runtime, as [Guarded actions](guarded-actions.md#owned-replicas) describes.
+
+A standalone InferenceReplica — one you [create directly](../../concepts/serving/inference-services.md#referenced-replicas), with no parent InferenceService — is out of its reach, even when an InferenceService fronts the replica through `spec.replicaRefs`. Such a service may not set `spec.model` or `spec.runtime`, so the command resolves no runtime and [refuses](#refusals), in every dry-run mode. With `llama-fronted` fronting the standalone engine replica `llama-pool`:
+
+```bash
+kubectl ome scale llama-fronted -n llama-demo --component engine --replicas 4 --override-autoscaler --yes --dry-run client
+```
+
+```output
+error: action refused: active runtime is unavailable, inconsistent or unbound
+```
+
+Set a standalone replica's count directly instead. Its `spec.replicas` stays with you — a fronting service writes nothing on the replica — and its `/scale` subresource takes the change:
+
+```bash
+kubectl scale inferencereplica llama-pool -n llama-demo --replicas 4
+```
+
+```output
+inferencereplica.ome.io/llama-pool scaled
+```
+
+Unlike a request through this command, the count isn't transient: OME doesn't write a standalone replica's `spec.replicas`, so it holds until you change it again, or until an `External` autoscaler you point at the subresource does. OME creates no scaler for a standalone replica, and the webhook rejects the `HPA` and `KEDA` autoscaler classes on one.
 
 ## Flags
 
@@ -79,7 +105,7 @@ A refusal changes nothing and exits `1`. [Troubleshooting](../../guides/scale-an
 | `action refused: target is being deleted` | The InferenceService is being deleted. |
 | `action refused: safety inputs exceed inspection bounds` | The InferenceService or its InferenceReplica is too large for the command to check safely. |
 | `action refused: placement sources and derived services cannot be mutated` | The InferenceService takes part in alpha multi-cluster placement, as a source or as a service that placement created. |
-| `action refused: active runtime is unavailable, inconsistent or unbound` | The command can't resolve the service's runtime or match it to the one OME reports, or no component runs on OMENative. |
+| `action refused: active runtime is unavailable, inconsistent or unbound` | The command can't resolve the service's runtime or match it to the one OME reports, or no component runs on OMENative. A service that [fronts standalone replicas](#standalone-and-fronted-replicas) through `spec.replicaRefs` always refuses with this message: it has no runtime of its own. |
 | `manual scale source evidence is unavailable or inconsistent` | The command couldn't verify where the component's count and bounds come from. The usual causes: a runtime sync is pending, the live runtime drifted, the alpha `spec.scalingPolicy.mode` isn't `Independent`, or the component doesn't exist or doesn't run on OMENative. |
 | `manual scale requires locally verifiable autoscaling; winning policy resolution is unavailable` | The component gets its autoscaling from an alpha AutoscalerPolicy, through `autoscalerPolicyRef`, with no inline `autoscaler`. |
 | `manual scale requires complete current selected replica and Scale evidence` | The InferenceReplica's count is unset or 0, it doesn't match the component, or it changed between the command's reads. |

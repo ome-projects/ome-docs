@@ -4,7 +4,7 @@ description: Advance a gated canary step with kubectl ome rollout promote, or ab
 since: v1.3
 ---
 
-`kubectl ome rollout promote` moves a canary past a step that waits for you, and `kubectl ome rollout rollback` returns the canary to its stable revision at any step. You'll also recover a step that never becomes ready. Both commands are alpha, so their flags and behavior can change between releases. They work on components that use the OMENative deployment mode, and [Deployment modes](../../concepts/architecture/deployment-modes.md) shows how to opt in.
+`kubectl ome rollout promote` moves a canary past a step that waits for you, and `kubectl ome rollout rollback` returns the canary to its stable revision at any step. You'll also recover a canary that parks `Failed`, when a step never becomes ready or a canary pod keeps crashing. Both commands are alpha, so their flags and behavior can change between releases. They work on components that use the OMENative deployment mode, and [Deployment modes](../../concepts/architecture/deployment-modes.md) shows how to opt in.
 
 <div class="prerequisites" markdown>
 
@@ -228,6 +228,27 @@ Step 1's new Instance never becomes ready, so `status` shows PHASE `Pending`. Af
 1. [Roll back the canary](#roll-back-the-canary), and wait until PHASE shows `RolledBack`.
 2. Fix the image in `chat.yaml`, and apply it again. The new revision starts a fresh canary at step 1, and OME removes the `ome.io/rollout-rollback` annotation.
 
+## When a canary pod keeps crashing
+
+A canary can park `Failed` long before its ready timeout, with a Warning event `CanaryPodCrashed` that names a pod. That pod served, then its runner container, `ome-container`, kept dying. A single death doesn't fail the canary: it's a dip in capacity that the step waits out, while the kubelet restarts the container in place or the [Instance restart policy](../../concepts/omenative/instance-restart-policy.md) rebuilds the Instance. When the runner dies again after that, at any step since the canary began, OME parks the canary where it stands, without waiting for a gate or the ready timeout — even when no timeout is set. A sidecar or an init container that restarts doesn't park the canary, and neither does a pod that crashes before it first serves: that waits in `Pending` for the ready timeout, as [When a step never becomes ready](#when-a-step-never-becomes-ready) shows.
+
+Unlike a ready-timeout park, the crash park returns the step's recorded traffic to the stable revision: status records 0% for the new revision. The stable Instances keep serving, and the canary keeps its Instances, the crashing pod among them.
+
+Read the event for the pod and what killed it:
+
+```bash
+kubectl get events -n prod --field-selector reason=CanaryPodCrashed -o custom-columns=TYPE:.type,OBJECT:.involvedObject.name,MESSAGE:.message
+```
+
+```output
+TYPE      OBJECT   MESSAGE
+Warning   chat     engine canary pod chat-engine-3-default-0 keeps dying after it was serving (container ome-container CrashLoopBackOff (exit 1)); the ladder is parked at step 0 and the step's traffic is back on the stable revision
+```
+
+The message names the component, the pod, the termination the kubelet recorded and the step. It counts steps from 0, like the `promote` preview, so `step 0` is the first step, the one STEP shows as `1/2`. Read the crashed run's logs with `kubectl logs chat-engine-3-default-0 -n prod -c ome-container --previous`.
+
+`promote` refuses on the parked canary. Recover as after a ready timeout: [roll back the canary](#roll-back-the-canary), then fix what crashes the server and apply the fix, whose new revision starts a fresh canary at step 1. [Crash-looping canary pods](../../reference/rollouts/canary-progression.md#crash-looping-canary-pods) has the exact reading.
+
 ## Troubleshooting
 
 When `promote` or `rollback` refuses, it prints `error:` and the reason, changes nothing, and exits `1`. [Refusals](../../reference/kubectl-ome/rollout.md#promote-and-rollback-refusals) lists the messages and their causes.
@@ -237,7 +258,7 @@ When `promote` or `rollback` refuses, it prints `error:` and the reason, changes
 `error: action refused: promote requires an active indefinite manual gate; analysis requires explicit override` means the canary isn't waiting at a gate that this `promote` can pass. Run `status` and check:
 
 - GATE: plain `promote` needs `Manual`, and `--override-analysis --yes` needs `Analysis`.
-- PHASE: the canary must be `Paused`, or `Promoting` at the last step. `Pending` means the step's new Instances are still starting. `Failed` means the ready timeout passed before they were ready, or while the step's analysis got only inconclusive results: see [When a step never becomes ready](#when-a-step-never-becomes-ready).
+- PHASE: the canary must be `Paused`, or `Promoting` at the last step. `Pending` means the step's new Instances are still starting. `Failed` means the ready timeout passed before they were ready, or while the step's analysis got only inconclusive results, or a canary pod kept dying after it served: see [When a step never becomes ready](#when-a-step-never-becomes-ready) and [When a canary pod keeps crashing](#when-a-canary-pod-keeps-crashing).
 - An earlier `promote` that OME is still finishing: wait, and run `status` again.
 - HOLD `CanaryPreStep` in `explain`, after a repin: `promote` can't release this hold. Set the promote annotation by hand, as [Repin a drifted rollout plan](repin-a-drifted-rollout-plan.md#what-the-controller-does-next) shows.
 

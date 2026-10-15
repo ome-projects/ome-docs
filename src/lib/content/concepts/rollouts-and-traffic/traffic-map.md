@@ -25,7 +25,7 @@ ome:
 
 Routing then writes the maps. To publish them to your gateway, set the `endpoint` values in [Publish a global endpoint](../../guides/multi-cluster/publish-a-global-endpoint.md#step-1-configure-publishing). Until you do, `Published` is `False` with reason `Withdrawn`.
 
-OME writes a map, with the same name and namespace, for each InferenceService that sets `spec.placement.requirements` or `spec.placement.clusterSelector`. Without `spec.placement`, the annotation `ome.io/accelerator-requirements` or `ome.io/cluster-selector` counts too. To opt an InferenceService out, set `spec.routing.enabled: false`. Setting it to `true` doesn't turn routing on when the installation has it off.
+OME writes a map, with the same name and namespace, for each InferenceService that sets `spec.placement`. The obsolete annotations `ome.io/accelerator-requirements` and `ome.io/cluster-selector` don't opt a service in: OME rejects them on write, and a stored InferenceService that still carries one gets no map, only a `validate placement intent:` error in the manager's log. See [When the map stops updating](#where-it-comes-from). To opt an InferenceService out, set `spec.routing.enabled: false`. Setting it to `true` doesn't turn routing on when the installation has it off.
 
 OME deletes the map when the InferenceService stops being routed, for example because you turn routing off. When you delete the InferenceService, the finalizer `ome.io/trafficmap-publisher` holds the map until the publisher has removed the route. Placement keeps the InferenceService's copies on the workload clusters until the map is gone.
 
@@ -241,6 +241,7 @@ Some errors stop OME from updating a map. The map keeps its last table and condi
 
 | Log error | Cause |
 | --- | --- |
+| `validate placement intent:` | The InferenceService carries the obsolete `ome.io/accelerator-requirements` or `ome.io/cluster-selector` annotation. Remove the annotation, and put the restriction in `spec.placement.clusterAffinity`. |
 | `validate routing policy:` | A factor in `spec.routing.capacityFactors` is 0 or negative. See [The weights don't change](../../guides/multi-cluster/weight-traffic-for-heterogeneous-clusters.md#the-weights-dont-change). |
 | `parse ome.io/traffic-drain:` | The drain annotation is malformed. See [The TrafficMap stops changing after a hand edit](../../guides/multi-cluster/drain-a-workload-cluster.md#the-trafficmap-stops-changing-after-a-hand-edit). |
 | `TrafficMap llama-demo/llama-chat exists but is not controlled by InferenceService UID` | A TrafficMap with that name belongs to something else, for example an earlier InferenceService with the same name. |

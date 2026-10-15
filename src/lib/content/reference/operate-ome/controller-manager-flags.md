@@ -17,6 +17,7 @@ Default is what the manager uses without the flag. The Helm value column names t
 | `--enable-http2` | `false` | None | Serves HTTP/2 on the metrics and webhook servers. |
 | `--metrics-bind-address` | `:8080` | None. The chart always passes `:8080`. | The address of the metrics endpoint. `0` turns the endpoint off. The chart's metrics Service expects port 8080. |
 | `--metrics-secure` | `false` | None | Serves the metrics endpoint over HTTPS. |
+| `--pprof-bind-address` | Empty | `ome.controller.pprofBindAddress` (`""`) | The address of the `net/http/pprof` endpoint, which serves CPU and heap profiles of the live manager. Empty or `0` turns the endpoint off, and the chart passes the flag only when the value is set. Bind it to loopback, such as `127.0.0.1:6060`, so the profiles are reachable only through `kubectl port-forward`, never through a Service. |
 
 ## Leader election
 
@@ -34,8 +35,8 @@ Default is what the manager uses without the flag. The Helm value column names t
 | --- | --- | --- | --- |
 | `--inferenceservice-max-concurrent-reconciles` | `1` | `ome.controller.inferenceServiceMaxConcurrentReconciles` (`4`) | How many InferenceServices the manager reconciles in parallel. See [Tune reconcile throughput](../../guides/operate-ome/configure-the-controller.md#tune-reconcile-throughput). |
 | `--inferencereplica-max-concurrent-reconciles` | `1` | `ome.controller.inferenceReplicaMaxConcurrentReconciles` (`4`) | How many InferenceReplicas the manager reconciles in parallel. |
-| `--kube-api-qps` | No limit | `ome.controller.kubeAPIQPS` (`100`) | The most requests per second that each API client of the manager sends. The manager has a client per resource type. |
-| `--kube-api-burst` | `0` | `ome.controller.kubeAPIBurst` (`200`) | How many requests each API client can send at once before the `--kube-api-qps` rate applies. Required with `--kube-api-qps`, and has no effect without it. |
+| `--kube-api-qps` | `20` | `ome.controller.kubeAPIQPS` (`100`) | The most requests per second that each API client of the manager sends. The manager has a client per resource type. The default of 20 comes from controller-runtime, and `0` keeps it: you can't turn the limit off. |
+| `--kube-api-burst` | `30` | `ome.controller.kubeAPIBurst` (`200`) | How many requests each API client can send at once before the `--kube-api-qps` rate applies. The default of 30 comes from controller-runtime, and `0` keeps it. The two flags are independent: set one, and the other keeps its default. |
 
 ## Controllers
 

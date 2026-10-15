@@ -119,12 +119,17 @@ A value holds literal text and these variables only: no template functions, pipe
 | Field | What it sets |
 | --- | --- |
 | `class` | `KEDA`, which needs `keda.triggers`, or `HPA`. |
+| `enforcement` | `Default`, which the API sets on every policy: components opt in with a reference, and an inline `autoscaler` outranks the policy, as [Inline settings win](#inline-settings-win) describes. `Required`, the schema's other value, is reserved: see the note below. |
 | `providerRef` | The [metric provider](#metric-providers) of a `prometheus` trigger. Required, as is an explicit `ignoreNullValues`. OME sets the trigger's `serverAddress` and `authModes` from the provider, so a trigger can't set them. |
+| `queryReturnsDesiredReplicas` | Declares that a trigger's query computes the replica count itself, which needs `metricType: AverageValue`: see [Queries that compute the replica count](#queries-that-compute-the-replica-count). |
 | `keda.fallback.replicas` | A fixed `value`, or `fromComponent: MaxReplicas` or `MinReplicas`. |
 | `keda.pollingInterval`, `cooldownPeriod`, `idleReplicaCount`, `advanced` | Copied to the ScaledObject as they are. |
 | `hpa` | The HorizontalPodAutoscaler's `metrics` and `behavior`, copied as they are. Without it, the HorizontalPodAutoscaler keeps CPU use at 80%. |
 
-OME rejects a policy that breaks these rules when you create or update it, including an invalid PromQL query. [AutoscalerPolicySpec](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AutoscalerPolicySpec) in the API reference lists every field.
+OME rejects a policy that breaks these rules when you create or update it, including an invalid PromQL query and the one valid query shape that [Queries that compute the replica count](#queries-that-compute-the-replica-count) describes. [AutoscalerPolicySpec](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AutoscalerPolicySpec) in the API reference lists every field.
+
+!!! note "Why the schema lists values OME rejects"
+    OME rejects `enforcement: Required` with `EnforcementRequiredReserved: enforcement Required is a reserved shape and not implemented; use Default`. The value is reserved for a future enforcement tier, as the `ClusterAutoscalerPolicy` kind in [a component's reference](#attach-a-policy-to-an-inferenceservice) is for a future cluster-scoped policy. Rejecting a reserved value keeps it out of every stored object, so a controller too old to know the feature can never read a `Required` policy as `Default`, or a cluster-scoped reference as a namespaced policy. The `Proportional` and `Pinned` modes of an InferenceService's [`scalingPolicy`](inference-services.md#scaling) are in the schema but rejected the same way.
 
 This `HPA` policy keeps CPU use at 60%, and when it scales down, it keeps the highest replica count recommended in the last 5 minutes:
 
@@ -156,6 +161,52 @@ kubectl apply -f cpu-60.yaml
 ```output
 autoscalerpolicy.ome.io/cpu-60 created
 ```
+
+## Queries that compute the replica count
+
+In the `queue-depth` policy, the query measures load, and KEDA works out the replica count from the measurement. A query can instead compute the count itself. This policy scales a component to its `maxReplicas` while it has requests running, and back to its `minReplicas` when it has none:
+
+```yaml title="scale-to-max.yaml"
+apiVersion: ome.io/v1beta1
+kind: AutoscalerPolicy
+metadata:
+  name: scale-to-max
+  namespace: llama-demo
+spec:
+  class: KEDA
+  keda:
+    triggers:
+      - type: prometheus
+        providerRef:
+          name: cluster-prometheus
+        metricType: AverageValue
+        queryReturnsDesiredReplicas: true
+        metadata:
+          query: '((sum(vllm:num_requests_running{namespace="{{ .Namespace }}",inferenceservice="{{ .ISVCName }}",component="{{ .Component }}"}) > bool 0) * {{ .MaxReplicas }})'
+          threshold: "1"
+          ignoreNullValues: "false"
+    fallback:
+      failureThreshold: 3
+      replicas:
+        fromComponent: MaxReplicas
+```
+
+Apply the file:
+
+```bash
+kubectl apply -f scale-to-max.yaml
+```
+
+```output
+autoscalerpolicy.ome.io/scale-to-max created
+```
+
+`sum(...) > bool 0` is 1 while any request is running, otherwise 0, and `* {{ .MaxReplicas }}` turns that into the component's `maxReplicas` or 0. With `metricType: AverageValue` and `threshold: "1"`, the HorizontalPodAutoscaler that KEDA creates divides the query's result by the threshold, rounds up, and clamps the count to the component's replica bounds. The query's result becomes the replica count, except that an idle component falls to its `minReplicas`, not to zero. As in the `queue-depth` policy, the fallback scales the component to its `maxReplicas` when the query keeps failing.
+
+A query that computes the count needs `queryReturnsDesiredReplicas: true` and the parentheses around the comparison. The webhook rejects:
+
+- `queryReturnsDesiredReplicas: true` on a trigger whose `metricType` isn't `AverageValue`, with the reason `DesiredCountRequiresAverageValue`. The field declares what the query returns, and changes nothing in the rendered trigger; the declaration matters because the other metric type breaks the count. With `Value`, the HorizontalPodAutoscaler also multiplies by the number of ready pods, which is right for a load metric, but turns a count of N into N times the pod count.
+- The query without the parentheses around the comparison, with the reason `PromQLInvalid`. `sum(...) > bool 0 * {{ .MaxReplicas }}` is valid PromQL, but `*` binds tighter than `>`, so it means `sum(...) > bool (0 * {{ .MaxReplicas }})` and returns 0 or 1 instead of 0 or the count. OME checks every `prometheus` trigger's query for this shape, a `bool` comparison with arithmetic on plain numbers on its right side, with or without `queryReturnsDesiredReplicas`. The rejection message quotes the comparison, rendered with sample values in place of the variables, and shows the shape of the fix: `(sum(...) > bool N) * M`.
 
 ## Attach a policy to an InferenceService
 
@@ -226,6 +277,7 @@ policy   queue-depth   RenderedFromPolicy
 The `engine`, `decoder` and `router` can each name a policy, the same one or different ones. The webhooks reject:
 
 - any reference until the controller has found the CRD at startup, with a message that starts with `AutoscalerPolicyFeatureDisabled`;
+- `kind: ClusterAutoscalerPolicy` in a reference, with `AutoscalerPolicyRefKindReserved: spec.engine.autoscalerPolicyRef.kind "ClusterAutoscalerPolicy" is not supported (ClusterAutoscalerPolicy is a reserved shape); use AutoscalerPolicy`. The schema lists the kind, but it's reserved until a cluster-scoped policy exists, so a reference needs only `name`: `kind: AutoscalerPolicy` is the default and the only kind there is;
 - `autoscalerPolicyRef` in a runtime, because references go only in an InferenceService;
 - `minReplicas: 0` with only a reference: [scale to zero](../../guides/scale-and-migrate/scale-to-zero-with-keda.md) needs the component's own `autoscaler` with `class: KEDA`.
 
@@ -273,7 +325,7 @@ When OME can't use a component's policy, the component holds: it keeps its last 
 | Reason | When |
 | --- | --- |
 | `PolicyNotFound` | The policy is missing from the InferenceService's namespace, or the controller started before the AutoscalerPolicy CRD was installed. |
-| `PolicyInvalid` | The policy fails to render for the component, for example because it names an unbound provider. |
+| `PolicyInvalid` | The policy fails to render for the component, for example because it names an unbound provider, or the reference carries the reserved `kind: ClusterAutoscalerPolicy`, which admission normally rejects. |
 | `ClassUnavailable` | The policy's class is `KEDA`, and KEDA's CRDs were missing when the controller started. |
 
 While a component holds, OME keeps creating and updating its workload, and only the autoscaler is frozen. The component keeps the autoscaler that its policy last rendered; on a RawDeployment component, changes to `minReplicas` and `maxReplicas` still reach it. If the policy never rendered for the component, OME leaves its current autoscaler, if any, as it is.
@@ -286,7 +338,36 @@ A held component recovers once you create or fix the policy, or bind its provide
 
 A `prometheus` trigger names a metric provider in `providerRef` instead of a Prometheus address, so the same policy works in any cluster that binds the name. The cluster administrator binds provider names in the `ome-resources` value `ome.metricProviders`, as [Turn on the feature](#turn-on-the-feature) does, and canary analysis uses the same [bindings](../../reference/rollouts/canary-analysis.md#metric-provider-bindings).
 
-If a binding has an `authSecretRef`, create its Secret in each namespace that uses the provider. Autoscaling triggers don't send the binding's `headers`. OME picks up a change to the bindings on its own.
+A binding's optional `authSecretRef` names the Secret `name` and `key` that hold a bearer token for the provider. This version of `values.yaml` adds one to `cluster-prometheus`:
+
+```yaml title="values.yaml"
+ome:
+  autoscalerPolicy:
+    enabled: true
+  metricProviders:
+    cluster-prometheus:
+      serverAddress: "http://ome-prometheus.ome.svc:9090"
+      authSecretRef:
+        name: prometheus-bearer
+        key: token
+```
+
+Create the Secret in each namespace that uses the provider. OME renders the provider's triggers with `authModes: bearer` in their metadata and an `authenticationRef` named `ome-metric-provider-<provider>`, so the triggers for `cluster-prometheus` point at `ome-metric-provider-cluster-prometheus`. Before it creates or updates a component's ScaledObject, OME creates a KEDA [TriggerAuthentication](https://keda.sh/docs/latest/concepts/authentication/) with that name in the InferenceService's namespace. The object points KEDA at the binding's Secret:
+
+```bash
+kubectl get triggerauthentication ome-metric-provider-cluster-prometheus -n llama-demo \
+  -o jsonpath='{.spec.secretTargetRef[0].parameter}{"\n"}{.spec.secretTargetRef[0].name}{"\n"}{.spec.secretTargetRef[0].key}{"\n"}'
+```
+
+```output
+bearerToken
+prometheus-bearer
+token
+```
+
+OME never reads the Secret: KEDA resolves it through the TriggerAuthentication when it queries the provider, so the token never passes through OME, and never appears in the policy, the rendered trigger or the InferenceService's status. Don't edit or delete the object: OME restores it the next time it reconciles a component whose policy uses the provider. OME never deletes one, so the object stays in the namespace after the components that used the provider are gone.
+
+Autoscaling triggers don't send the binding's `headers`. OME picks up a change to the bindings on its own.
 
 !!! warning "Every binding needs a serverAddress"
     While the feature is on, one binding without `serverAddress` stops OME from creating or updating the workload of any InferenceService, including the ones that don't use the provider. [InferenceServices stop updating](../../guides/operate-ome/metrics.md#inferenceservices-stop-updating) shows how to find the binding.

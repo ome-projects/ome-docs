@@ -40,6 +40,8 @@ The quota manager writes a Cohort node to Kueue as a Cohort, and a team as a Clu
 
 The webhook denies a change that breaks the tree's rules. A node can also break one later, when a budget is more than the peak capacity that the quota manager measures. The quota manager then freezes the node and its descendants: their Kueue objects stay as they were, so admitted workloads keep running. Each budget is checked against capacity on its own, so to cap the total, give `root` a budget.
 
+The tree's depth is bounded: a node can be at most `quotaManager.maxTreeDepth` edges below `root`, 5 by default, counting `root` as 0, so `ml-research` sits at 1 and the teams at 2. The bound is a guardrail against accidental sprawl, not a Kueue limit. The webhook denies a node past it, naming both numbers: `node is 6 levels below the root, exceeding the configured maximum of 5`. To nest deeper, raise `quotaManager.maxTreeDepth` in `quota-values.yaml` and upgrade the release, as in [Lower the high-water mark](#lower-the-high-water-mark): the chart passes the value to the quota manager as its `--max-tree-depth` flag, and 0 turns the check off. Lowering the bound under a stored node's depth doesn't remove the node: it reports `DepthExceeded` and is frozen, like any node that breaks a rule.
+
 The quota manager itself runs in one of two modes, and an install runs exactly one: the two write different halves of `root`'s status. This page covers `workload`, which turns this cluster's tree into the Kueue objects above. The other mode, `management`, holds a fleet-wide tree and projects each cluster's share onto workload clusters. Its reconciliation is still in development, so don't build on it, or on the fields that exist for it: [`spec.distribution`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorQuotaSpec) and [`budgets[].perCluster`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorBudget) in the API, and the `projection` and `remoteAccess` values in the chart.
 
 ## Step 1: Install the quota manager
@@ -476,6 +478,56 @@ clusterrolebinding.rbac.authorization.k8s.io/accelerator-quota-admin created
 
 A denial names the node and the rule that the change breaks. A failure to call the webhook means that no quota manager pod is ready. The webhook fails closed, so every create, update and delete of an AcceleratorQuota fails until one is.
 
+`kubectl -n ome get pods` shows why the pods aren't ready. A cause outside the webhook, such as an image the nodes can't pull, you fix as usual, and admission returns with the first ready pod. But the webhook itself can be the cause: a pod reports ready only once its webhook serves, so when the webhook's certs are broken — the Secret `ome-quota-manager-webhook-cert` deleted, for example, which the quota manager updates but never creates — no pod can become ready, and the wedge doesn't clear on its own.
+
+To recover, disable the webhook: set `quotaManager.webhook.enabled` to `false`, keeping the other values in the file, and upgrade the release. The webhook gates only AcceleratorQuotas, so the wedge doesn't block the upgrade itself:
+
+```yaml title="quota-values.yaml"
+global:
+  hub: registry.example.com/ome
+quotaManager:
+  mode: workload
+  image:
+    tag: dev
+  materialize:
+    enrolledNamespaces:
+      - ml-serving
+  webhook:
+    enabled: false
+```
+
+```bash
+helm upgrade ome-quota-manager ./charts/ome-quota-manager \
+  --namespace ome -f quota-values.yaml
+```
+
+Helm reports the upgrade. It removes the ValidatingWebhookConfiguration `ome-quota-manager.ome.io`, so quota writes go through at once, and the pods restart without the webhook or its certs, so they become ready and the quota manager reconciles again.
+
+!!! warning "The tree is unguarded while the webhook is off"
+    Nothing denies a write that breaks the tree's rules, and a server dry run no longer catches it either: the rules live in the webhook. A bad write is accepted, and the quota manager freezes the node and its descendants instead, as in [A node isn't Ready or Materialized](#conditions). Deleting a node that still has children orphans them, and each child reports `ParentMissing`. After every change, run [`kubectl ome quota validate`](../../reference/kubectl-ome/quota.md#validate), which prints the problems it finds, and re-enable the webhook as soon as the cause is fixed.
+
+Fix the cause, then set `enabled` back to `true`, or remove `webhook` from the file, and upgrade again. The upgrade restores the webhook's objects, and for broken certs it is the fix: the chart recreates the Secret empty when it's gone, and on startup the quota manager generates the serving certificate, injects the CA bundle into the new ValidatingWebhookConfiguration, and reports ready once the webhook serves. The restored webhook fails closed from the moment the upgrade creates it, so quota writes fail again until a pod is ready. Wait for the rollout:
+
+```bash
+kubectl -n ome rollout status deployment/ome-quota-manager
+```
+
+```output
+deployment "ome-quota-manager" successfully rolled out
+```
+
+Then confirm that admission answers:
+
+```bash
+kubectl apply -f quota-tree.yaml --dry-run=server
+```
+
+```output
+acceleratorquota.ome.io/ml-research unchanged (server dry run)
+acceleratorquota.ome.io/team-alpha unchanged (server dry run)
+acceleratorquota.ome.io/team-beta unchanged (server dry run)
+```
+
 ### Pods stay `SchedulingGated`
 
 `kubectl describe workloads -n ml-serving` shows why Kueue holds a pod. The usual causes:
@@ -516,7 +568,8 @@ Materialized=True Admitted: enforcement objects match this node's budget
 | Condition | Reason | Meaning |
 | --- | --- | --- |
 | `Ready` | `CapacityExceeded` | A budget on the node or an ancestor is over the [high-water mark](#lower-the-high-water-mark) on `root`, or `root` measures nothing for its resource and flavor. |
-| `Ready` | `ContainmentViolated`, `ParentMissing`, `ParentCycle`, `Unreachable`, `DepthExceeded` or `NodeKindInvalid` | The node or an ancestor breaks a rule of the tree. The message says which. |
+| `Ready` | `DepthExceeded` | The node is more than `quotaManager.maxTreeDepth` edges below `root`, 5 by default: see [How quotas work](#how-quotas-work). The message gives its depth and the bound. Flatten the tree, or raise the bound. |
+| `Ready` | `ContainmentViolated`, `ParentMissing`, `ParentCycle`, `Unreachable` or `NodeKindInvalid` | The node or an ancestor breaks a rule of the tree. The message says which. |
 | `Materialized` | `Frozen` | `Ready` is `False`, and the node's Kueue objects keep their last good state. |
 | `Materialized` | `FlavorMissing` | A budget names a missing ResourceFlavor. Create it. The node's other budgets are written. |
 | `Materialized` | `ObjectConflict` | Another owner's Kueue object has the node's name. Delete that object, or recreate the node under another name. |

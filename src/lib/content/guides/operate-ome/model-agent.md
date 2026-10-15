@@ -5,7 +5,7 @@ description: Turn on the optional model agent for models stored on the nodes, an
 
 The model agent puts the weights of BaseModels and ClusterBaseModels on your nodes. It runs as the DaemonSet `ome-model-agent-daemonset`. On each node, it gets the files of the models that select the node, reads what each model is, and labels the node when the model is `Ready` there. OME runs a model's serving pods only on nodes with that label.
 
-Since v1.3, the agent is optional and off by default. Turn it on to serve [base models](../../concepts/models/base-models.md) stored on the nodes: `hf://`, `oci://`, `local://` and `vendor://` models. Until you turn it on, those models stay `In_Transit`, and OME can't serve them. You don't need it for `pvc://` models, or for InferenceServices that name only a [runtime that loads its own weights](../../concepts/serving/inference-services.md#the-runtime).
+Since v1.3, the agent is optional and off by default. Turn it on to serve [base models](../../concepts/models/base-models.md) stored on the nodes: `hf://`, `oci://`, `modelpack://`, `local://` and `vendor://` models. Until you turn it on, those models stay `In_Transit`, and OME can't serve them. You don't need it for `pvc://` models, or for InferenceServices that name only a [runtime that loads its own weights](../../concepts/serving/inference-services.md#the-runtime).
 
 <div class="prerequisites" markdown>
 
@@ -141,6 +141,8 @@ modelAgent:
 | `HF_TOKEN` | The Hugging Face token for models without one of their own. |
 | `ENDPOINT` | The Hugging Face endpoint, `https://huggingface.co` by default. |
 | `MAX_CONCURRENT_DOWNLOADS` | How many files of a Hugging Face model download at once, 4 by default. |
+| `LLMMAN_HOST` | Where the `llmman serve` daemon for [`modelpack://` models](#modelpack-models) listens, as `[scheme://]host[:port]`. `http://127.0.0.1:17434` by default. A wildcard host, such as `0.0.0.0`, is read as loopback. |
+| `OME_LLMMAN_BIN` | The `llmman` binary for [`modelpack://` models](#modelpack-models), when it isn't `llmman` on the agent's `PATH`. |
 
 The chart writes these values into the DaemonSet in plain text, so give each model its token through its Secret instead: see [Credentials](../../concepts/models/base-models.md#credentials). Other variables named after the agent's command-line flags have no effect, such as `DOWNLOAD_RETRY`, which the chart's values.yaml suggests.
 
@@ -163,11 +165,45 @@ When you delete a model, the agent stops the model's work on each node, so a nod
 
 A canceled download doesn't mark the model `Failed` on the node. The agent then deletes the files that reached the node and removes the model's label, following the rules in [Delete a model](../../concepts/models/base-models.md#deleting-a-model), and the model's deletion finishes once every node reports its copy deleted.
 
+### The `.hf-artifact-locks` directories {#hf-artifact-locks}
+
+The agent keeps lock files in directories named `.hf-artifact-locks`: one appears next to the `path` of each `hf://`, `oci://` and `modelpack://` model on the node, whatever the model's `downloadPolicy`. With the paths directly under `modelAgent.hostPath`, that's one directory for all models, `/mnt/data/models/.hf-artifact-locks`. [Sharing](shared-hf-artifacts.md) keeps one next to `_artifacts` too.
+
+A download or deletion holds the model's lock file while it works on the files, and a task that finds the lock held waits and tries again. The locks are file locks on the node's disk, so they hold across agent pods: while [a replaced agent pod](#step-2-change-a-setting) is still finishing a download, the new pod waits instead of writing to the same `path`.
+
+The lock files are empty, and hold no lock once their operation ends. Deleting a model leaves them and their directory in place. Don't create, change or delete anything in these directories: removing a lock file in use can let two operations write to or delete the same model's files at once.
+
 ### TensorRT-LLM models
 
 For an `oci://` model with `modelFormat.name: tensorrtllm`, the agent downloads only the objects built for its node's GPU, whose names contain `/{gpu}/`, such as `/H100/`. It finds the GPU name by looking up the node's `node.kubernetes.io/instance-type` label in the ConfigMap `model-agent-config-map`, and uses an unlisted instance type as it is. When no object matches, the model fails on the node.
 
 Since v1.3, `modelAgent.instanceTypeMap` doesn't change the ConfigMap, and the map lacks `BM.GPU.B300.8`, so a model with objects under `/B300/` fails on B300 nodes. This is a known bug. Edit the ConfigMap's `instance-type-map` key instead, and run `kubectl rollout restart daemonset/ome-model-agent-daemonset -n ome`. After each `helm upgrade`, check the key, and do both again if your entry is gone. On v1.2.2, add the instance type to `modelAgent.instanceTypeMap`.
+
+### ModelPack models
+
+A `modelpack://` model is a [CNCF ModelPack](https://github.com/modelpack/model-spec) artifact in a container registry. The agent doesn't talk to the registry itself. It asks a running [`llmman serve`](https://github.com/llmmanorg/llmman) daemon to pull the artifact, runs `llmman resolve --no-pull` to find where the daemon put the files, and copies them to the model's `path`, with hard links when the daemon's store is on the same filesystem, so the files cost their bytes once. From there, the model behaves like an `hf://` or `oci://` model: the agent reads its files, as [What OME learns from the model](../../concepts/models/base-models.md#what-ome-learns-from-the-model) describes, labels the node, and [deletes the files](../../concepts/models/base-models.md#deleting-a-model) when you delete the model.
+
+This ClusterBaseModel pulls the artifact `ghcr.io/myorg/llama-3-70b:v1`:
+
+```yaml title="model.yaml"
+apiVersion: ome.io/v1beta1
+kind: ClusterBaseModel
+metadata:
+  name: llama-3-70b
+spec:
+  storage:
+    storageUri: modelpack://ghcr.io/myorg/llama-3-70b:v1
+    path: /mnt/data/models/myorg/llama-3-70b
+```
+
+OME ships neither the daemon nor the binary, so provide both to the agent on every node that the model selects:
+
+- A running `llmman serve` daemon. The agent finds it through `LLMMAN_HOST`, `http://127.0.0.1:17434` by default.
+- The `llmman` binary, on the agent's `PATH` or at the path in `OME_LLMMAN_BIN`.
+
+Set both variables in `modelAgent.env`: see [Environment variables](#environment-variables). The agent copies the files from the path that `llmman resolve` reports, and fails when that path doesn't exist in its pod, so mount the binary and the daemon's store into the agent pod with `extraVolumes` and `extraVolumeMounts`.
+
+The daemon does the registry work, authentication included, so the model's `storage.key` and `storage.parameters` play no role: give the daemon the registry's credentials in its own configuration. When the daemon isn't reachable, the binary is missing, or the pull fails, the model fails on the node: see [Troubleshooting](#troubleshooting).
 
 ## Metrics {#health-checks-and-metrics}
 
@@ -222,6 +258,7 @@ When the model is `Failed`, read the log of the agent on a node where its label 
 | An `oci://` file differs from its size or MD5 in object storage, or changed during the download. | `MD5 or size mismatch for`, then `All download attempts failed for model` |
 | The agent can't read the model's [Secret](../../concepts/models/base-models.md#credentials), which a ClusterBaseModel keeps in `ome`, so a gated model fails. | `Failed to retrieve secret` |
 | A TensorRT-LLM model has no objects for the node's GPU: see [TensorRT-LLM models](#tensorrt-llm-models). | `no suitable objects found for shape` |
+| A `modelpack://` model can't be pulled: no `llmman serve` daemon answers at `LLMMAN_HOST`, or the `llmman` binary is missing. See [ModelPack models](#modelpack-models). | `Failed to pull ModelPack artifact for model` |
 | Hugging Face answered with an error or a rate limit. | The error |
 
 After you fix the cause, restart the agent pod on the node, as in [A model stays `Updating`](#a-model-stays-updating). For an `oci://` model, the new agent downloads only the mismatched files.
