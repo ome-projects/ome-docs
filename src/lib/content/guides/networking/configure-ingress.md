@@ -196,7 +196,7 @@ List the routes that OME created:
 
     The route named after the InferenceService leads to the router, or to the engine when there's no router, and each component gets a route of its own. The routes strip their path prefix, so `/llama-demo/llama-3-2-1b-instruct/v1/chat/completions` reaches the engine as `/v1/chat/completions`.
 
-    For an InferenceService without a [traffic policy](../../concepts/rollouts-and-traffic/traffic-policy.md#defaults-when-you-declare-nothing) of its own, OME also creates a BackendTrafficPolicy named after it. The policy makes Envoy Gateway hash the `x-routing-key` and `X-SMG-Routing-Key` headers, so that requests with the same values reach the same pod.
+    For an InferenceService without a [traffic policy](../../concepts/rollouts-and-traffic/traffic-policy.md#defaults-when-you-declare-nothing) of its own, OME also creates a BackendTrafficPolicy named after it. The policy makes Envoy Gateway hash the `x-routing-key` and `X-SMG-Routing-Key` headers, so that requests with the same values reach the same pod. It covers only the route named after the InferenceService: a request through the engine's route, under `/llama-demo/llama-3-2-1b-instruct-engine/`, isn't hashed. The policy also sets `mergeType: StrategicMerge`, so a BackendTrafficPolicy of your own that targets the Gateway keeps applying: the route inherits its settings, such as circuit breakers and timeouts, and the default policy adds the hashing.
 
 ## Step 3: Send a request
 
@@ -403,7 +403,9 @@ If the controller's pods restart over and over, and their logs show `Failed to i
 
 ### Requests with the same header reach different pods
 
-With Gateway API, `IngressReady` can be `True` while Envoy Gateway hasn't accepted the BackendTrafficPolicy. Read the policy's status:
+With Gateway API, first check the path. The default BackendTrafficPolicy covers only the route named after the InferenceService, so a request through a component's route, such as `/llama-demo/llama-3-2-1b-instruct-engine/`, isn't hashed. Send it through `/llama-demo/llama-3-2-1b-instruct/`, or declare the headers in [`spec.traffic`](../../concepts/rollouts-and-traffic/traffic-policy.md#session-affinity-with-consistenthash), whose policy covers every route.
+
+`IngressReady` can also be `True` while Envoy Gateway hasn't accepted the BackendTrafficPolicy. Read the policy's status:
 
 ```bash
 kubectl describe backendtrafficpolicy llama-3-2-1b-instruct -n llama-demo
