@@ -17,12 +17,12 @@ Pages live in `src/lib/content/` of the docs repository, one directory per secti
 | `reference/` | Exact details: the API, `kubectl ome` commands, matching rules and formats |
 | `contributing/` | Working on OME and its docs |
 
-Each section's `index.md` is its landing page. The pages in a nav group live in a directory named after the group, such as `guides/deploy-models/` for Deploy models. A page's URL is its path under `/ome/`, without `.md`:
+Each section's `index.md` is its landing page. The pages in a nav group live in a directory named after the group, such as `guides/deploy-models/` for Deploy models. A page's URL is its path under `/docs/`, without `.md`:
 
 | File | URL |
 |---|---|
-| `guides/index.md` | `/ome/guides` |
-| `guides/deploy-models/serve-models-from-pvc.md` | `/ome/guides/deploy-models/serve-models-from-pvc` |
+| `guides/index.md` | `/docs/guides` |
+| `guides/deploy-models/serve-models-from-pvc.md` | `/docs/guides/deploy-models/serve-models-from-pvc` |
 
 To preview the site, install Node 22 or newer and pnpm 10.26 or newer. Then clone the docs repository, and start the dev server from its root:
 
