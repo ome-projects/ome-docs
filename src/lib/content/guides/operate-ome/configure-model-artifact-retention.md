@@ -131,17 +131,22 @@ To serve the files without downloading anything, create a `local://` model with 
 
 ## When the agent deletes files
 
-The agent deletes a node's copy of an `hf://`, `oci://` or `modelpack://` model when you delete the model. It also deletes it when you change the model's `storage.nodeSelector` or `storage.nodeAffinity` and the node stops matching. It deletes the whole `storage.path` directory, including files that OME didn't put there and the directories of other models inside it. The source on Hugging Face or in object storage stays. You manage the files of `local://` and `pvc://` models yourself: for a PVC, see [Clean up](../deploy-models/serve-models-from-pvc.md#clean-up) in the PVC guide.
+The agent deletes a node's copy of an `hf://`, `oci://` or `modelpack://` model when you delete the model. It also deletes it when you change the model's `storage.nodeSelector` or `storage.nodeAffinity` and the node stops matching. It deletes the `storage.path` directory, including files that OME didn't put there, but keeps every file that another model's `path` still reaches. The source on Hugging Face or in object storage stays. You manage the files of `local://` and `pvc://` models yourself: for a PVC, see [Clean up](../deploy-models/serve-models-from-pvc.md#clean-up) in the PVC guide.
 
-The agent keeps the files in these cases:
+The agent keeps files in these cases:
 
 | Case | What to know |
 | --- | --- |
-| The model has the reserve label. | See [Step 1](#step-1-keep-a-models-files-with-modelsomereserve-model-artifact). |
-| Another model, in any namespace, has the same `path`. | The paths must match exactly: `/mnt/data/models/qwen` and `/mnt/data/models/qwen/` differ. Deleting the last of these models deletes the files, unless it has the reserve label. |
+| The model has the reserve label. | The whole directory stays. See [Step 1](#step-1-keep-a-models-files-with-modelsomereserve-model-artifact). |
+| Another model, in any namespace, has the same `path`. | The whole directory stays. The paths don't have to match exactly: `/mnt/data/models/qwen` and `/mnt/data/models/qwen/` keep the same directory, and so does a `path` that reaches it through a symlink. |
+| Another model's `path` leads inside the directory. | The files that the `path` reaches stay, with the directories that contain them, and the rest of the directory goes. A `path` that leads there through a symlink counts, and a download that the other model is still running there keeps running. |
 | Other models share the files through `downloadPolicy: ReuseIfExists`. | See [Share Hugging Face artifacts](shared-hf-artifacts.md). |
 
-When it keeps the files, the agent still removes the model's label from the node, and OME stops tracking the files. They stay until you delete them, as in [Clean up](#clean-up).
+When another model's `path` is `/mnt/data/models/qwen/qwen2-5-7b-instruct/releases/rev-002`, for example, deleting a model without the reserve label whose `path` is `/mnt/data/models/qwen/qwen2-5-7b-instruct` keeps `releases/rev-002` and the directories that lead to it, and removes `config.json`, the weights and every other unreferenced file and directory. Deleting the last model that uses a directory deletes the files, unless it has the reserve label.
+
+When the agent can't list the BaseModels and ClusterBaseModels to find these references, it keeps all the files. The deletion then completes without removing them, or fails, as in [The model stays after you delete it](#the-model-stays-after-you-delete-it). The agent also leaves every [`.hf-artifact-locks` directory](model-agent.md#hf-artifact-locks) and [`_artifacts` directory](shared-hf-artifacts.md) in place.
+
+When it keeps files, the agent still removes the deleted model's label from the node, and OME stops tracking the files. They stay until you delete them, as in [Clean up](#clean-up).
 
 ## Troubleshooting
 
