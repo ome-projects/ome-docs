@@ -6,6 +6,13 @@ updates:
     schedule:
       interval: 'weekly'
       day: 'saturday'
+    groups:
+      # One pull request for every minor and patch update, so that separate
+      # pull requests do not race each other over pnpm-lock.yaml. Major
+      # updates keep their own pull request.
+      npm-minor-and-patch:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
     ignore:
       # The site runs on Node 22, and @types/node follows the runtime's
       # major version.
