@@ -2,6 +2,8 @@
 
 Documentation site for [OME — Open Model Engine](https://github.com/ome-projects/ome). (Open Model Engine) is a Kubernetes operator for enterprise-grade management and serving of Large Language Models (LLMs)
 
+**Live at [ome-project.org/docs](https://ome-project.org/docs)**
+
 ## Develop
 
 You need Node 22 or newer and pnpm 10.26 or newer.
@@ -76,6 +78,3 @@ the `ome-project.org` zone, then:
 6. In ome-projects/ome, replace the Hugo build in `.github/workflows/pages.yml`
    with a run of `scripts/legacy-site.ts` (see The old address), so the old
    address forwards here from its next deployment.
-
-The layout and styles come from
-[smg-docs](https://github.com/smg-project/smg-docs).
