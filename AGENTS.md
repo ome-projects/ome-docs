@@ -4,15 +4,15 @@ Guidance for coding agents (Claude Code, Codex, and others) working in this repo
 
 ## What this is
 
-The OME documentation site: a SvelteKit app on Cloudflare Pages, served at `lightseek.org/ome` from launch. OME (Open Model Engine) is a Kubernetes operator for serving large language models, and it lives in [ome-projects/ome](https://github.com/ome-projects/ome).
+The OME documentation site: a SvelteKit app on Cloudflare Pages, served at `ome-project.org/docs`. OME (Open Model Engine) is a Kubernetes operator for serving large language models, and it lives in [ome-projects/ome](https://github.com/ome-projects/ome).
 
-Until launch, the live documentation is the Hugo site in `site/` of ome-projects/ome. A fix to a live page goes there, not here.
+It replaced the Hugo site in `site/` of ome-projects/ome, whose old address now forwards here. Those pages stay there only for the drift report until they are removed; a fix goes here.
 
 ## Common commands
 
 Use Node 22 or newer and pnpm 10.26 or newer.
 
-- `pnpm install`, then `pnpm dev` — the site at http://localhost:5173/ome.
+- `pnpm install`, then `pnpm dev` — the site at http://localhost:5173/docs.
 - `pnpm lint` — prettier and eslint. `pnpm format` fixes formatting.
 - `pnpm test` — vitest. It also renders every page and checks links, the navigation, `redirects.json` and the search index.
 - `pnpm check` — `wrangler types` and svelte-check.
@@ -29,9 +29,10 @@ Run `pnpm lint && pnpm check && pnpm test && pnpm build` before submitting.
 - `src/lib/markdown/` — the build-time Markdown renderer, a Vite plugin.
 - `src/lib/docs/` — the page registry, the content checks and the search index.
 - `src/lib/server/` — worker code: GitHub repository stats and the D1 `content_blocks` table.
-- `redirects.json` — maps each Hugo page in ome-projects/ome to the page that replaces it.
+- `redirects.json` — maps each Hugo page in ome-projects/ome to the page that replaces it. `scripts/legacy-site.ts` turns it into the forwarding pages served at the old address.
 - `src/lib/components/HomeWhy.svelte` — includes the home page's adopters list. It mirrors `ADOPTERS.md` in ome-projects/ome, which is the list of record.
 - `hack/nightly-docs/` — the nightly documentation automation, run by `.github/workflows/nightly-docs.yml`, `docs-pr-maintenance.yml` and `docs-pr-worker.yml`. It reads OME's code history from a checkout at `ome.ref` and opens one-concern documentation PRs here. `move-ome-pin.yml` opens the pull request that moves `ome.ref` to OME's newest commit. Its `README.md` covers the design. After changing it, run `python3 -m unittest discover -s hack/nightly-docs -p '*_test.py'` (needs `hack/nightly-docs/maintenance-requirements.txt`).
+- `.github/workflows/deploy.yml` — deploys every push to `main` to the `ome` Cloudflare Pages project. The README's Deploy section covers the setup.
 - `hack/genref/` — the API reference generator: `generate.sh`, the genref version it installs, `config.yaml` and the page templates. It needs a checkout of ome-projects/ome only for the Go types.
 
 ## Checks that use OME's code

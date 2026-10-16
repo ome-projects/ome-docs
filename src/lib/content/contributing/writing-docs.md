@@ -33,7 +33,7 @@ pnpm install
 pnpm dev
 ```
 
-Git clones the repository into the directory `ome-docs`. Then open `http://localhost:5173/ome`. The browser reloads when you save a page.
+Git clones the repository into the directory `ome-docs`. Then open `http://localhost:5173/docs`. The browser reloads when you save a page.
 
 ## Add or move a page
 
@@ -56,8 +56,8 @@ To move a page, change its path in `nav.ts`, its card, the `new` path in its `re
 }
 ```
 
-- `old` is the Hugo page's path under `site/content/en/docs/` in ome-projects/ome, where the Hugo site lives.
-- `new` is the new page's path under `src/lib/content/`. When a Hugo page is split across several pages, `new` names the main one. At launch, each entry becomes a redirect.
+- `old` is the Hugo page's path under `site/content/en/docs/` in ome-projects/ome, where the Hugo site lived.
+- `new` is the new page's path under `src/lib/content/`. When a Hugo page is split across several pages, `new` names the main one. Each entry becomes a page at the old address that forwards to the new page, so links to the old site keep working; `scripts/legacy-site.ts` in the docs repository writes those pages.
 - `rewrittenFrom` is the 8-character hash of the last commit that changed the Hugo page when you checked the new page against it. It's `null` while the new page is a draft. `pnpm test` fails when a written page's entry has `null` or a draft's entry has a commit.
 
 Indent the file with tabs: `pnpm lint` fails on spaces, and `pnpm format` fixes them.
@@ -74,7 +74,7 @@ It prints the commit's 8-character hash:
 b3f561eb
 ```
 
-The Hugo site stays live until launch, and pull requests in ome-projects/ome keep changing it. The drift report lists each Hugo page that changed after its `rewrittenFrom` commit, with the commits that changed it. It skips pages that set `generated: true`, such as [the API reference](#the-api-reference), because the tool that writes them keeps them current. It also reports Hugo pages with no entry, and entries whose pages don't exist. Fold the changes into the new page, then move `rewrittenFrom` forward. See [Checks](#checks).
+The Hugo pages stay in ome-projects/ome until they are removed, and pull requests there can still change them. The drift report lists each Hugo page that changed after its `rewrittenFrom` commit, with the commits that changed it. It skips pages that set `generated: true`, such as [the API reference](#the-api-reference), because the tool that writes them keeps them current. It also reports Hugo pages with no entry, and entries whose pages don't exist. Fold the changes into the new page, then move `rewrittenFrom` forward. See [Checks](#checks).
 
 ## Front matter
 
@@ -94,7 +94,7 @@ since: v1.3
 | `title` | Yes | The page's heading and browser title. The sidebar and the previous and next links use it too, unless `navLabel` is set. |
 | `description` | Yes | One sentence that says what the reader does or learns. It's the lead under the title, the page's meta description and its text in search results, and the page's card on the landing page repeats it. |
 | `navLabel` | No | A shorter label for the sidebar and the previous and next links, such as "Serve from a PVC". |
-| `status` | No | `draft` or `preview`. A draft is front matter only, and the page shows a banner that links to the Hugo pages it replaces. Remove `status: draft` when you write the page. For `preview`, see [Preview pages](#preview-pages). |
+| `status` | No | `draft` or `preview`. A draft is front matter only, and the page shows a banner that links to the source of the Hugo pages it replaces in ome-projects/ome. Remove `status: draft` when you write the page. For `preview`, see [Preview pages](#preview-pages). |
 | `since` | No | The release that adds what the whole page covers, such as `v1.3`. It puts a since badge next to the title. |
 | `generated` | No | `true` on pages a tool writes. They show View source and no Edit button. See [The API reference](#the-api-reference). |
 
@@ -451,8 +451,8 @@ Link to a file in OME's repository with a full GitHub URL: `https://github.com/o
 
 The build fails on:
 
-- an absolute path, such as `/ome/guides`;
-- a link to the old site at `ome-projects.github.io`;
+- an absolute path, such as `/docs/guides`;
+- a link to the old Hugo site under `ome-projects.github.io/ome/docs/`;
 - a full URL of a page on this site;
 - a relative link to anything but a `.md` page;
 - a path that leaves `src/lib/content`;

@@ -8,7 +8,7 @@
 		{
 			"binding": "DB",
 			"database_name": "ome-db",
-			// Placeholder until the Launch spec creates the database.
+			// Placeholder until the database exists. The README's Deploy section creates it.
 			"database_id": "00000000-0000-0000-0000-000000000000",
 			"migrations_dir": "drizzle"
 		}

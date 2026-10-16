@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { legacyUrl, parseRedirects, replacedPages } from './redirects';
+import { legacyPath, legacyUrl, parseRedirects, replacedPages } from './redirects';
 
 describe('parseRedirects', () => {
 	it('accepts well-formed entries', () => {
@@ -38,16 +38,20 @@ describe('parseRedirects', () => {
 	});
 });
 
-describe('legacyUrl', () => {
+describe('legacyPath', () => {
 	it.each([
-		['_index.md', 'https://ome-projects.github.io/ome/docs/'],
-		['concepts/_index.md', 'https://ome-projects.github.io/ome/docs/concepts/'],
-		['concepts/base_model.md', 'https://ome-projects.github.io/ome/docs/concepts/base_model/'],
-		[
-			'tasks/run-workloads/select-accelerators.md',
-			'https://ome-projects.github.io/ome/docs/tasks/run-workloads/select-accelerators/'
-		]
-	])('%s -> %s', (old, url) => {
-		expect(legacyUrl(old)).toBe(url);
+		['_index.md', ''],
+		['concepts/_index.md', 'concepts'],
+		['concepts/base_model.md', 'concepts/base_model']
+	])('%s -> %s', (old, path) => {
+		expect(legacyPath(old)).toBe(path);
+	});
+});
+
+describe('legacyUrl', () => {
+	it('links the source of the Hugo page in ome-projects/ome', () => {
+		expect(legacyUrl('concepts/base_model.md')).toBe(
+			'https://github.com/ome-projects/ome/blob/main/site/content/en/docs/concepts/base_model.md'
+		);
 	});
 });

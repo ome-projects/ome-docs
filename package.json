@@ -8,6 +8,7 @@
 		"dev": "vite dev",
 		"build": "node scripts/ensure-node22.mjs build",
 		"preview": "node scripts/ensure-node22.mjs preview",
+		"deploy": "node scripts/ensure-node22.mjs deploy",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "node scripts/ensure-node22.mjs check",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
@@ -16,7 +17,9 @@
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
 		"db:generate": "drizzle-kit generate",
-		"db:migrate:local": "node scripts/ensure-node22.mjs db:migrate:local"
+		"db:migrate:local": "node scripts/ensure-node22.mjs db:migrate:local",
+		"db:migrate:remote": "node scripts/ensure-node22.mjs db:migrate:remote",
+		"legacy-site": "node --experimental-strip-types scripts/legacy-site.ts"
 	},
 	"dependencies": {
 		"gsap": "^3.15.0",

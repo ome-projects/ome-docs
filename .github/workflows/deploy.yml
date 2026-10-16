@@ -1,0 +1,48 @@
+name: Deploy
+
+# Every push to main deploys the site to the `ome` Cloudflare Pages project,
+# which serves ome-project.org/docs. README.md covers the one-time setup.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  # Deployments run in order. A queued one waits for the running one.
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # pnpm v6 needs Node >=22.13 before bootstrap on minimal runners.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          check-latest: true
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Apply D1 migrations
+        run: pnpm exec wrangler d1 migrations apply ome-db --remote
+      - name: Deploy
+        run: pnpm exec wrangler pages deploy .svelte-kit/cloudflare --project-name ome
