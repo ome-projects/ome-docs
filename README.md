@@ -35,8 +35,10 @@ The header badge reads stars, forks and the latest release from the GitHub API
 at request time. The `GITHUB_TOKEN` secret of the Pages project authenticates
 those calls; without it they share GitHub's 60-requests-per-hour limit per
 egress IP with every other Worker on Cloudflare, and the badge hides its counts
-whenever GitHub can't be reached. Locally, `pnpm preview` reads the token from
-`.dev.vars`.
+whenever GitHub can't be reached. A changed secret reaches the site with the
+next deployment, not the running one: after `wrangler pages secret put`, run
+the Deploy workflow from the Actions tab. Locally, `pnpm preview` reads the
+token from `.dev.vars`.
 
 ### The old address
 
@@ -60,7 +62,8 @@ the `ome-project.org` zone, then:
    `pnpm run deploy`. The site is now at the project's `pages.dev` address.
 3. Set the token the header badge uses:
    `pnpm exec wrangler pages secret put GITHUB_TOKEN --project-name ome`. Any
-   token that can read public repositories works.
+   token that can read public repositories works. To change it later, see
+   Deploy above: the new value needs a deployment.
 4. In this GitHub repository, create the `production` environment with the
    secrets `CLOUDFLARE_API_TOKEN` (Pages and D1 edit permissions on the
    account) and `CLOUDFLARE_ACCOUNT_ID`. From then on every push to `main`
