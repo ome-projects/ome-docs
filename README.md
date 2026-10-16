@@ -1,6 +1,8 @@
 # OME website
 
-Documentation site for [OME — Open Model Engine](https://github.com/ome-projects/ome). (Open Model Engine) is a Kubernetes operator for enterprise-grade management and serving of Large Language Models (LLMs)
+The documentation site for [OME (Open Model Engine)](https://github.com/ome-projects/ome), a Kubernetes operator for serving large language models.
+
+**Live at [ome-project.org/docs](https://ome-project.org/docs)**
 
 ## Develop
 
@@ -26,19 +28,43 @@ covers the syntax and style.
 ## Deploy
 
 Every push to `main` runs `.github/workflows/deploy.yml`: build, apply the D1
-migrations to `ome-db`, and deploy to the `ome` Cloudflare Pages project. The
-production URL is https://ome-project.org/docs; the project's `pages.dev`
-address is the underlying origin. The root of either redirects into `/docs`
+migrations to `ome-db`, and deploy to the `ome` Cloudflare Pages project. A
+merged pull request is live a few minutes later. To deploy without a change,
+run the Deploy workflow from the Actions tab.
+
+https://ome-3qq.pages.dev, the project's `pages.dev` address, is the origin
+behind https://ome-project.org. The root of either redirects into `/docs`
 (`_redirects`).
 
+### Where things are
+
+The Cloudflare account that holds the `ome-project.org` zone also holds:
+
+- the Pages project `ome`, under Workers & Pages, with `ome-project.org` as
+  its custom domain;
+- the D1 database `ome-db`, whose id is in `wrangler.jsonc`. Its
+  `content_blocks` table holds the home page's hero copy, with fallbacks in
+  `src/lib/config/home.ts`. A new migration goes in `drizzle/`
+  (`pnpm db:generate`), and the next deployment applies it;
+- `GITHUB_TOKEN`, a secret of the project's production environment.
+
+The Deploy workflow signs in with `CLOUDFLARE_API_TOKEN`, which needs Pages and
+D1 edit permissions on the account, and `CLOUDFLARE_ACCOUNT_ID`. Both are
+secrets of this repository's `production` environment.
+
+### The header badge
+
 The header badge reads stars, forks and the latest release from the GitHub API
-at request time. The `GITHUB_TOKEN` secret of the Pages project authenticates
-those calls; without it they share GitHub's 60-requests-per-hour limit per
-egress IP with every other Worker on Cloudflare, and the badge hides its counts
-whenever GitHub can't be reached. A changed secret reaches the site with the
-next deployment, not the running one: after `wrangler pages secret put`, run
-the Deploy workflow from the Actions tab. Locally, `pnpm preview` reads the
-token from `.dev.vars`.
+at request time, with `GITHUB_TOKEN`. Without it the calls share GitHub's
+60-requests-per-hour limit per egress IP with every other Worker on
+Cloudflare, and the badge hides its counts whenever GitHub can't be reached.
+Locally, `pnpm preview` reads the token from `.dev.vars`.
+
+To change the token, run
+`pnpm exec wrangler pages secret put GITHUB_TOKEN --project-name ome`, paste
+the new one, then run the Deploy workflow: a changed secret reaches the site
+with the next deployment, not the running one. A classic token with no scopes
+is enough.
 
 ### The old address
 
@@ -46,36 +72,8 @@ The Hugo site at https://ome-projects.github.io/ome is replaced by pages that
 forward to this site. `scripts/legacy-site.ts` writes them from
 `redirects.json`: one per Hugo page, plus the root, the search page and a
 `404.html`. The Pages workflow of ome-projects/ome runs it on a checkout of
-this repository and publishes the result, so a change to `redirects.json`
-reaches the old address with that workflow's next run.
-
-### Set up once
-
-Log in with `pnpm exec wrangler login` to the Cloudflare account that holds
-the `ome-project.org` zone, then:
-
-1. Create the database: `pnpm exec wrangler d1 create ome-db`. Put the
-   `database_id` it prints into `wrangler.jsonc` in place of the placeholder,
-   then run `pnpm db:migrate:remote`.
-2. Create the project and deploy once:
-   `pnpm exec wrangler pages project create ome --production-branch main`, then
-   `pnpm run deploy`. The site is now at the project's `pages.dev` address.
-3. Set the token the header badge uses:
-   `pnpm exec wrangler pages secret put GITHUB_TOKEN --project-name ome`. Any
-   token that can read public repositories works. To change it later, see
-   Deploy above: the new value needs a deployment.
-4. In this GitHub repository, create the `production` environment with the
-   secrets `CLOUDFLARE_API_TOKEN` (Pages and D1 edit permissions on the
-   account) and `CLOUDFLARE_ACCOUNT_ID`. From then on every push to `main`
-   deploys.
-5. Add `ome-project.org` as a custom domain of the Pages project, in the
-   Cloudflare dashboard under Workers & Pages → ome → Custom domains. The zone
-   is in the same account, so Cloudflare adds the DNS record and the
-   certificate itself. Add `www.ome-project.org` the same way if it should
-   work too.
-6. In ome-projects/ome, replace the Hugo build in `.github/workflows/pages.yml`
-   with a run of `scripts/legacy-site.ts` (see The old address), so the old
-   address forwards here from its next deployment.
+this repository once a day and publishes the result, so a change to
+`redirects.json` reaches the old address within a day.
 
 The layout and styles come from
 [smg-docs](https://github.com/smg-project/smg-docs).
