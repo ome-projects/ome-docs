@@ -67,10 +67,10 @@
 		<aside class="doc-draft">
 			<p class="doc-draft-title">This page is being rewritten</p>
 			{#if data.replaces.length > 0}
-				<p>Until it's done, the current docs cover this topic:</p>
+				<p>Until it's done, the pages it replaces cover this topic, as kept in ome-projects/ome:</p>
 				<ul>
 					{#each data.replaces as replaced (replaced.old)}
-						<li><a href={replaced.url}>{replaced.url.replace(/^https:\/\//, '')}</a></li>
+						<li><a href={replaced.url}>{replaced.old}</a></li>
 					{/each}
 				</ul>
 			{:else}

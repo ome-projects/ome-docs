@@ -39,8 +39,8 @@ export function routeHref(base: string, route: string, anchor: string | null = n
 
 /**
  * Reports whether a request path is the base path or inside it. SvelteKit
- * only checks that a path starts with the base, so it also serves `/ome.`
- * and `/omega`.
+ * only checks that a path starts with the base, so it also serves `/docs.`
+ * and `/docsy`.
  */
 export function isUnderBase(pathname: string, base: string): boolean {
 	return base === '' || pathname === base || pathname.startsWith(`${base}/`);

@@ -8,8 +8,7 @@
 		{
 			"binding": "DB",
 			"database_name": "ome-db",
-			// Placeholder until the Launch spec creates the database.
-			"database_id": "00000000-0000-0000-0000-000000000000",
+			"database_id": "69151060-52ca-40ba-a6c9-11bbfcd39f49",
 			"migrations_dir": "drizzle"
 		}
 	]

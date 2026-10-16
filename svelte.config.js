@@ -9,7 +9,7 @@ const config = {
 	kit: {
 		adapter: adapter(),
 		paths: {
-			base: '/ome'
+			base: '/docs'
 		},
 		typescript: {
 			config: (config) => ({

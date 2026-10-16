@@ -98,8 +98,14 @@ describe('docPageData', () => {
 		expect(data.html).toBe('');
 		expect(loaded).toEqual([]);
 		expect(data.replaces).toEqual([
-			{ old: 'tasks/b.md', url: 'https://ome-projects.github.io/ome/docs/tasks/b/' },
-			{ old: 'tasks/b-more.md', url: 'https://ome-projects.github.io/ome/docs/tasks/b-more/' }
+			{
+				old: 'tasks/b.md',
+				url: 'https://github.com/ome-projects/ome/blob/main/site/content/en/docs/tasks/b.md'
+			},
+			{
+				old: 'tasks/b-more.md',
+				url: 'https://github.com/ome-projects/ome/blob/main/site/content/en/docs/tasks/b-more.md'
+			}
 		]);
 	});
 

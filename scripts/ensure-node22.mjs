@@ -8,9 +8,11 @@ const major = Number.parseInt(nodeVersion.split('.')[0], 10);
 const commands = {
 	build: 'wrangler types && vite build',
 	preview: 'wrangler pages dev .svelte-kit/cloudflare --port 4173',
+	deploy: 'pnpm build && wrangler pages deploy .svelte-kit/cloudflare --project-name ome',
 	check: 'wrangler types && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json',
 	gen: 'wrangler types',
-	'db:migrate:local': 'wrangler d1 migrations apply ome-db --local'
+	'db:migrate:local': 'wrangler d1 migrations apply ome-db --local',
+	'db:migrate:remote': 'wrangler d1 migrations apply ome-db --remote'
 };
 
 const commandName = process.argv[2];

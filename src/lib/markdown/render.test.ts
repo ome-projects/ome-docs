@@ -403,7 +403,7 @@ describe('links', () => {
 		['a Hugo link', '[old](https://ome-projects.github.io/ome/docs/concepts/)', /old Hugo site/],
 		[
 			'an absolute self link',
-			'[x](https://lightseek.org/ome/guides)',
+			'[x](https://ome-project.org/docs/guides)',
 			/absolute link to this site/
 		],
 		['an absolute path', '[x](/ome/guides)', /absolute path/],

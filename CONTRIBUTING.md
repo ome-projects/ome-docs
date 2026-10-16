@@ -1,8 +1,8 @@
 # Contributing to the OME documentation site
 
-This repository holds the redesigned OME documentation site, which will be served at https://lightseek.org/ome. OME itself lives in [ome-projects/ome](https://github.com/ome-projects/ome).
+This repository holds the OME documentation site, served at https://ome-project.org/docs. OME itself lives in [ome-projects/ome](https://github.com/ome-projects/ome).
 
-Until the site launches, the live documentation is the Hugo site in `site/` of ome-projects/ome. A fix to a live page goes there. This repository holds the rewritten pages.
+The site replaced the Hugo site in `site/` of ome-projects/ome, whose old address now forwards here. Those pages stay there only for the drift report (see the Writing docs page) until they are removed; a fix goes here.
 
 ## Set up
 
@@ -13,7 +13,7 @@ pnpm install
 pnpm dev
 ```
 
-The site runs at http://localhost:5173/ome.
+The site runs at http://localhost:5173/docs.
 
 ## Write a page
 

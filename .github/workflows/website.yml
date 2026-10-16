@@ -142,7 +142,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The nightly docs bot changes site/ in ome-projects/ome every day, so
-    # drift is expected until launch. The report is information, not a gate.
+    # drift is expected while site/ exists there. The report is information,
+    # not a gate.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7

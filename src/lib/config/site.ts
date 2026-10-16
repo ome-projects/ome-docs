@@ -9,11 +9,13 @@ export const site = {
 	longName: 'Open Model Engine',
 	description:
 		'OME is a Kubernetes operator for serving large language models. Declare a model, and OME picks the runtime, places it on the right GPUs, and lets you roll out changes as canaries.',
-	url: 'https://lightseek.org/ome',
+	url: 'https://ome-project.org/docs',
 	repo: 'ome-projects/ome',
 	docsRepo: 'ome-projects/ome-docs',
 	branch: 'main',
 	contentDir: 'src/lib/content',
+	// Where the Hugo site served its pages. scripts/legacy-site.ts writes the
+	// pages that forward from there to this site.
 	legacyDocsUrl: 'https://ome-projects.github.io/ome/docs'
 } as const;
 
