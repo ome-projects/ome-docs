@@ -146,7 +146,7 @@ The canary's phase is in `status.components.<component>.rolloutPhase` of the gro
 | `Paused` | The canary waits at a gate before the last step, or holds after a [repin](../kubectl-ome/rollout.md#repin). |
 | `Promoting` | The last step's new Instances are ready, and the canary waits for its gate and for [`scaleDownDelaySeconds`](#fields). |
 | `Stable` | The canary completed. |
-| `Failed` | A step ran past its [ready timeout](#readytimeout), or a canary pod kept dying after it served: see [Crash-looping canary pods](#crash-looping-canary-pods). |
+| `Failed` | A step ran past its [ready timeout](#readytimeout), a canary pod kept dying after it served (see [Crash-looping canary pods](#crash-looping-canary-pods)), or an analysis rollback found a [stable revision with no live Instance](canary-analysis.md#when-the-stable-revision-runs-no-instance). |
 | `RollingBack` | A rollback is moving Instances back to the stable revision. |
 | `RolledBack` | Every Instance is back on the stable revision. |
 
@@ -157,6 +157,7 @@ The canary's phase is in `status.components.<component>.rolloutPhase` of the gro
 | A change gives the group a newer revision | Starts again at step 1 with the newest revision, and keeps the same stable revision. A `Failed` canary starts again too, when the newest revision is neither its own nor the stable one: see [`readyTimeout`](#readytimeout). |
 | You pause the rollout | Holds its step, but its clocks keep running, so it can advance or fail as soon as you resume. See [Pause and resume a rollout](../../guides/roll-out-changes/pause-and-resume-a-rollout.md). |
 | You run the alpha `kubectl ome rollout rollback`, or [its analysis](canary-analysis.md#how-a-sample-is-judged) rolls it back | Records 0% for the new revision at once, and moves every Instance back to the stable revision. The component stays on the stable revision until a change produces a revision other than those two. See [Roll back the canary](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary). |
+| A rollback finds a component's stable revision with no live Instance | From the analysis, the rollback doesn't start: the canary parks at `Failed` where it stands, records the reason `StableRevisionMissing`, and emits the Warning event `CanaryStableRevisionEmpty`. From you, it proceeds, with the same Warning event. See [When the stable revision runs no Instance](canary-analysis.md#when-the-stable-revision-runs-no-instance). |
 | A step runs past its [ready timeout](#readytimeout) | Goes to `Failed`. A stalled analysis with `onInconclusive: RollbackOnStall` rolls it back instead. |
 | A canary pod keeps dying after it served | Parks at `Failed` where it stands, returns the step's recorded traffic to the stable revision, and emits the Warning event `CanaryPodCrashed`. See [Crash-looping canary pods](#crash-looping-canary-pods). |
 
