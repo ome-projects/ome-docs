@@ -59,8 +59,10 @@ async function fetchJson<T>(url: string, token?: string): Promise<T | null> {
 		if (!response.ok) {
 			const remaining = response.headers.get('x-ratelimit-remaining');
 			const reset = response.headers.get('x-ratelimit-reset');
+			// GitHub explains a refusal in the body, such as a token policy or a secondary rate limit.
+			const reason = (await response.text()).replace(/\s+/g, ' ').slice(0, 200);
 			console.warn(
-				`[github] ${url} -> ${response.status} (rate limit remaining=${remaining}, reset=${reset})`
+				`[github] ${url} -> ${response.status} ${reason} (rate limit remaining=${remaining}, reset=${reset})`
 			);
 			return null;
 		}
