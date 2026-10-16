@@ -191,7 +191,7 @@ NAME                            TYPE    TOPOLOGY   STATE
 qwen3-tpu-engine-0-0-8f3a21c7   tpu7x   2x2x1      ACTIVE
 ```
 
-Your hash differs, and `STATE` is `<none>` until GKE reports one. While the state isn't one of the configured `readyStates`, OME withholds the pod: the Instance stays in `Creating` with the hold `CapacityProvisioning` in the `op hold` row of `kubectl ome instance status qwen3-tpu 0 --component engine -n qwen3-tpu`, and its last failure explains the wait, such as `slice qwen3-tpu-engine-0-0-8f3a21c7 is waiting for partition assignment`. The wait doesn't count against the Instance's [readiness deadline](set-instance-readiness-deadlines.md).
+Your hash differs, and `STATE` is `<none>` until GKE reports one. While the state isn't one of the configured `readyStates`, OME withholds the pod: the Instance stays in `Creating`, its operation holds on `CapacityProvisioning`, and its last failure records the hold, with a message that ends with what the Slice waits for, such as `slice qwen3-tpu-engine-0-0-8f3a21c7 is waiting for partition assignment`. In `kubectl ome instance status qwen3-tpu 0 --component engine -n qwen3-tpu`, the `failure` row names the hold, as `reason=CapacityProvisioning` — cut in the default table, so add `-o wide`. The `op hold` row doesn't: it reads `waiting=Unknown refused=-`, with an `issue` row `OperationWaitingUnknown`, because `CapacityProvisioning` isn't a token the CLI [recognizes](../../reference/kubectl-ome/instance.md#status-output-fields). The wait doesn't count against the Instance's [readiness deadline](set-instance-readiness-deadlines.md).
 
 Once the Slice is ready, OME creates the pod. Wait for the InferenceService:
 
@@ -269,7 +269,7 @@ The webhook rejects only a write that introduces the problem, and admits the Inf
 
 ### Pods wait for a slice
 
-The Instance stays in `Creating` with no pods, and its operation holds on `CapacityProvisioning`, as in [Step 3](#step-3-watch-the-slice-and-the-pod). The Instance's last failure says what the Slice is waiting for, and `kubectl describe slices.accelerator.gke.io qwen3-tpu-engine-0-0-8f3a21c7` shows GKE's `Ready` condition with its message. The deadline clock is stopped either way, and what ends the wait depends on what the Slice waits for:
+The Instance stays in `Creating` with no pods, and its operation holds on `CapacityProvisioning`: in `kubectl ome instance status`, the `failure` row reads `reason=CapacityProvisioning` and the `op hold` row `waiting=Unknown`, as in [Step 3](#step-3-watch-the-slice-and-the-pod). The Instance's last failure says what the Slice is waiting for, and `kubectl describe slices.accelerator.gke.io qwen3-tpu-engine-0-0-8f3a21c7` shows GKE's `Ready` condition with its message. The deadline clock is stopped either way, and what ends the wait depends on what the Slice waits for:
 
 - A Slice waiting for its partition waits for capacity, which a new Slice would wait for too, so OME waits as long as it takes, with or without `slice.readyTimeout`: free capacity in the pool.
 - A Slice that has its partition but doesn't reach a ready state is recycled after `slice.readyTimeout`, when you set it: see [A SliceReadyTimeout event appears](#a-slicereadytimeout-event-appears). Without it, OME waits as long as the Slice isn't ready: fix what GKE's `Ready` condition reports.
