@@ -102,7 +102,7 @@ Clients use the top-level route, `llama-chat`. The other routes each reach one c
 
 Each route rewrites its path prefix to `/`, so a request for `/llama-demo/llama-chat/v1/models` reaches the model server as `/v1/models`. It also sets the headers `OMe-Isvc-Name` and `OME-Isvc-Namespace` to the InferenceService's name and namespace.
 
-A route's request timeout is its component's `timeoutSeconds`, such as `spec.engine.timeoutSeconds`, or else `defaultRouteTimeoutSeconds`. The chart sets `defaultRouteTimeoutSeconds` to `0`, which turns the timeout off. With `null`, the Gateway's default applies, and Envoy's 15 seconds cuts long generations short. `timeoutSeconds` applies only to HTTPRoutes. [Configure route timeouts](../../guides/networking/configure-route-timeouts.md) has examples.
+A route's request timeout is its component's `timeoutSeconds`, such as `spec.engine.timeoutSeconds`, or else `defaultRouteTimeoutSeconds`. An InferenceService with `spec.replicaRefs` has no component blocks, so all of its routes take the default: see [Referenced replicas](#referenced-replicas). The chart sets `defaultRouteTimeoutSeconds` to `0`, which turns the timeout off. With `null`, the Gateway's default applies, and Envoy's 15 seconds cuts long generations short. `timeoutSeconds` applies only to HTTPRoutes. [Configure route timeouts](../../guides/networking/configure-route-timeouts.md) has examples.
 
 ### Hostnames
 
@@ -229,6 +229,8 @@ What changes is whose pods serve the requests. A standalone replica's pods are n
 A component Service takes its ports from the replica's runners — the leader's when it has one — or, when the replica carries no runners, from the replica's current revision. Until the replica reports a revision, the Service publishes the default port, 8080.
 
 A referenced role backs its route by the same rules as a declared component. The Ingress waits for the role it targets to be ready, and a referenced role's ready condition follows the replica's counts. For HTTPRoutes, the [Routes](#routes) relaxation applies as written: a role whose ready condition turns `False` gets and keeps its route while the replica reports `readyReplicas` and `servingReplicas` above `0`. When the named replica is missing or invalid, the role's condition turns `False` with the reason `ReplicaRefMissing` or `ReplicaRefInvalid`, and the role stops backing its route: OME stops creating and updating the role's routes, and `IngressReady` turns `False` with the reason `ComponentNotReady`.
+
+The routes' request timeout comes from `defaultRouteTimeoutSeconds` alone. The webhook rejects `spec.engine`, `spec.router` and `spec.decoder` next to `spec.replicaRefs`, and an InferenceReplica carries no `timeoutSeconds`, so no per-service setting exists: every route of a fronting service takes the default or, when it's unset, has no timeout of its own, and the gateway's default applies. [Referenced replicas](../../guides/networking/configure-route-timeouts.md#referenced-replicas) on Configure route timeouts shows how to set the default.
 
 ## Security
 

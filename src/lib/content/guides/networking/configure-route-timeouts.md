@@ -38,9 +38,15 @@ Turn the timeout off for long generations and streamed responses whose length yo
 
 The `ome.io/timeout-idle`, `ome.io/timeout-max-connection-duration` and `ome.io/timeout-tcp-connect` annotations set connection timeouts, not the request timeout. See [Timeout annotations](../../reference/api/traffic-annotations.md#timeout-annotations).
 
+### Referenced replicas
+
+An InferenceService that fronts standalone replicas with [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) has no per-service timeout. The webhook rejects `spec.engine`, `spec.router` and `spec.decoder` next to `spec.replicaRefs`, with `spec.engine and spec.replicaRefs cannot both be set; a service references all of its roles or none`, and the referenced [InferenceReplicas](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica) carry no `timeoutSeconds`. So every route of such a service takes `defaultRouteTimeoutSeconds`, or the gateway's default when that's unset.
+
+To allow longer requests, set the cluster-wide default, as in [Step 2](#step-2-set-a-cluster-wide-default). After a Helm install, there's often nothing to do: the chart's `0` already turns the timeout off. After a kustomize install, the setting is unset, so Envoy cuts requests at 15 seconds until you add it. The default applies to every InferenceService, so give a declared component that needs a different limit its own `timeoutSeconds`.
+
 ## Step 1: Set the timeout for one InferenceService
 
-Set `timeoutSeconds` on a component to give its routes their own timeout. This is the InferenceService `qwen3-0-6b` from [Before you begin](#before-you-begin), with a 30-minute timeout on the engine:
+Set `timeoutSeconds` on a component to give its routes their own timeout. A service with `spec.replicaRefs` has no components to set: see [Referenced replicas](#referenced-replicas). This is the InferenceService `qwen3-0-6b` from [Before you begin](#before-you-begin), with a 30-minute timeout on the engine:
 
 ```yaml title="isvc.yaml"
 apiVersion: ome.io/v1beta1
@@ -134,7 +140,7 @@ Check the routes with the command in [Step 1](#step-1-set-the-timeout-for-one-in
 | `TIMEOUT` | Cause | Fix |
 | --- | --- | --- |
 | `<none>` | The route has no timeout of its own, so the gateway's default applies: 15 seconds on Envoy Gateway. | Set a timeout, as in [Step 1](#step-1-set-the-timeout-for-one-inferenceservice) or [Step 2](#step-2-set-a-cluster-wide-default). |
-| Shorter than your longest request | The timeout is too short. | Raise the component's `timeoutSeconds`, or the default if the component doesn't set one. |
+| Shorter than your longest request | The timeout is too short. | Raise the component's `timeoutSeconds`, or the default if the component doesn't set one. With `spec.replicaRefs`, raise the default: there's no component to set. |
 | What you expect, or `0s` | Another limit on the request's path, such as a load balancer in front of the gateway, or the client's own timeout. | Raise that limit. |
 
 ### The route keeps its old timeout
