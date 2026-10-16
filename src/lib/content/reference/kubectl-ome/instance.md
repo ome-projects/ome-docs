@@ -182,7 +182,7 @@ The `deployment` and `encoding` rows always show. The others appear when they ha
 | `operation` | The operation under way: its type, ID, step and retry count. |
 | `op target` | The revision the operation moves to, and why. |
 | `op timing` | When the operation started, when it last made progress, and its deadline. |
-| `op hold` | What holds the operation back, such as `QuotaExceeded`, and when quota admission last refused one of its pods. |
+| `op hold` | What holds the operation back and when quota admission last refused one of its pods, as `waiting=<token> refused=<time>`. |
 | `op strategy` | The update strategy the operation runs under, such as `SurgeThenDrain`. |
 | `op nodes` | The node the operation moves the Instance from, the surge Instance's index, and the target node hints. |
 | `failure`, `fail time` | The last failure: the pod, the container, the reason and the exit code, then when OME recorded it. |
@@ -190,6 +190,8 @@ The `deployment` and `encoding` rows always show. The others appear when they ha
 | `pod` | One row for each pod: its name, its runner from the `ome.io/runner` label, its phase, whether it's Ready and serving, restarts, node, and whether it's being deleted. |
 | `event` | One row for each Warning event: the pod, the reason and the count. |
 | `issue` | One row for each issue code, with a reason when there is one. |
+
+The `op hold` row's `waiting=` shows only a token the CLI recognizes: `QuotaExceeded`, `NodeUnknown`, `SourceUnrouted`, `Unschedulable`, `PodGroupTerminating` or `Paused`. OME holds operations on tokens outside that list, such as `CapacityProvisioning`, while an Instance's pods [wait for their TPU slice](../../guides/omenative/provision-tpu-slices.md), and `AdmissionUnavailable`, while the API server can't reach an admission webhook for the operation's pod writes. The CLI shows those, like any token it doesn't know, as `waiting=Unknown`, and adds an `issue` row `OperationWaitingUnknown`. The report itself carries the normalized value, so `-o wide`, `-o json` and `-o yaml` show `Unknown` too. The real token isn't lost: both holds also record the Instance's last failure under it, so the `failure` row's `reason=` names the hold, and the InferenceReplica's own status keeps the raw `waiting`. The `op strategy` row works the same way: it shows `SurgeThenDrain`, `RecreatePod`, `InPlaceIfPossible` or `InPlaceOnly`, and any other value as `Unknown`, with an `issue` row `OperationStrategyUnknown`.
 
 The default table cuts long values, so the `op timing`, `failure`, `migration` and `pod` rows often lose their last fields. `-o wide` prints every field in full, one to a row. In a `pod` row, `ready` is the pod's Kubernetes Ready condition, and `serving` is the `ome.io/serving` readiness gate that OME sets. `deleting` is `true` when the pod has a deletion timestamp: [Recover stuck deletions](../../guides/omenative/recover-stuck-deletions.md) covers pods that stay that way. Text that looks like a credential shows as `[REDACTED]`.
 
