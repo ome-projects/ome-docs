@@ -10,6 +10,7 @@ Set the OME controller manager's command-line flags to speed up changes to your 
 - OME installed with the `ome-crd` and `ome-resources` charts, as the releases `ome-crd` and `ome` in the namespace `ome`. See [Install OME](../../getting-started/install.md).
 - Helm and `kubectl` access to the cluster.
 - The values file that you installed `ome-resources` with. If you don't have it, `helm get values ome -n ome` prints the values that you set.
+- `jq`, to read the JSON that OME keeps in ConfigMaps.
 
 </div>
 
@@ -214,6 +215,55 @@ kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.eventRe
 
 The manager reads the entry once, when it starts, and the upgrade's restart applies it; a `kubectl` edit to the ConfigMap needs a restart, as [Change ConfigMap settings](#tune-the-config-cache) describes. Both fields must be positive: with a zero or negative `burstSize`, or a `refillInterval` that isn't a positive duration such as `"2s"`, the manager exits at startup. To hand a field back to client-go's default, set it to `null`, and the chart leaves it out of the entry.
 
+## Pace OMENative scale-ups and scale-downs
+
+When an [OMENative](../../concepts/omenative/overview.md) component scales, the manager creates and deletes its pods in bounded batches, one batch per reconcile pass, so one large change doesn't flood the API server or tear through a component at once. Three settings under `ome.controller.lifecycle`, which the chart writes to the `lifecycle` entry of the `inferenceservice-config` ConfigMap, set the budgets:
+
+| Setting | Chart default | What it does |
+| --- | --- | --- |
+| `scaleUpPodBatchSize` | `100` | Caps the pods that one pass creates for a component. |
+| `scaleDownPodBatchSize` | `100` | Caps the delete work that one pass drives for a component: a pod count, or a percentage of the component's current pods, such as `"10%"`. |
+| `scaleDownRequeueInterval` | `"5s"` | How often the manager rechecks a component whose deletes are in flight. |
+
+A batch is made of whole [Instances](../../concepts/omenative/instances.md): a pass creates all of an Instance's missing pods together and deletes all of its pods together, and a leader and its workers count as one Instance. A budget can't wedge on an Instance larger than itself: the first Instance of a batch may exceed the budget, and then proceeds alone. Instances past the budget wait for the following passes. The entry's fourth batch setting, `repairBatchSize`, paces crash-loop repairs instead: see [The crash-loop repair](../../concepts/omenative/instance-restart-policy.md#the-crash-loop-repair).
+
+On a scale-down, an Instance costs its remaining pods, live and `Terminating` alike, and `1` when its pods are already gone but its cleanup still runs. A percentage is resolved against the component's footprint — the summed cost of its Instances — on every pass, rounded up and never below 1: `"10%"` bounds a pass to about a tenth of the component however large it grows, and a small component still makes progress. The batch's pods leave the component's Services first and are deleted once the Services stop routing to them, and the next batch starts when the current one is done, so a scale-down that you widen mid-flight finishes the deletes it already owns before it takes more Instances. The budget also caps the leftover [PodGroups](../../concepts/serving/gang-scheduling.md) that one pass deletes when a component is torn down. While deletes are in flight, the manager rechecks the component every `scaleDownRequeueInterval`; watch events on the pods and the other objects it waits on drive progress too, so the interval is a backstop, not a delay.
+
+Write a pod count as a number and a percentage as a quoted string:
+
+```yaml title="values.yaml"
+ome:
+  controller:
+    lifecycle:
+      scaleUpPodBatchSize: 50
+      scaleDownPodBatchSize: "10%"
+```
+
+The `lifecycle` values that you don't set keep the chart's defaults. Upgrade with your values file, as in [Step 1](#with-a-helm-value), and check the rendered entry — with `jq`, since the entry holds other settings too:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.lifecycle}' \
+  | jq '{scaleUpPodBatchSize, scaleDownPodBatchSize, scaleDownRequeueInterval}'
+```
+
+```output
+{
+  "scaleUpPodBatchSize": 50,
+  "scaleDownPodBatchSize": "10%",
+  "scaleDownRequeueInterval": "5s"
+}
+```
+
+The manager reads the entry once, when it starts, and the upgrade's restart applies it; a `kubectl` edit to the ConfigMap needs a restart, as [Change ConfigMap settings](#tune-the-config-cache) describes. While a scale-down runs, the leader logs one `OMENative scale-down wave` line per pass:
+
+```bash
+kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep 'OMENative scale-down wave'
+```
+
+The lines give the configured and the resolved budget (`configuredPodBudget` and `podBudget`), the component's footprint (`podFootprint`), and the Instances the wave drives (`activeInstances`) and holds back (`deferredInstances`).
+
+Both batch sizes must be at least 1. The percentage form is digits and a `%`, from `"1%"` to `"100%"`: no sign, no spaces, no decimals — and a quoted `"100"` fails where a plain `100` works, since the manager reads every string as a percentage. The interval must be a positive duration such as `"5s"`. On any other value, the manager exits at startup with `Failed to initialize lifecycle scale configuration`, whose error names the value and the rule, such as `validate lifecycle.scaleDownPodBatchSize: invalid lifecycle.scaleDownPodBatchSize "101%" must be between 1% and 100%`, and the rollout doesn't finish: see [Troubleshooting](#the-manager-rollout-doesnt-finish). To remove a bound instead, set its field to `null`, and the chart leaves it out of the entry: without a batch size, one pass creates or deletes everything at once, and without the interval, the manager doesn't poll deletes in flight — watch events, and the exact deadlines of the [force-delete escalation and the teardown deadline](../omenative/recover-stuck-deletions.md), still wake it.
+
 ## Add environment variables and files to the manager pod
 
 Three values under `ome.controller` add environment variables and files to the manager pod, such as proxy settings or a private CA bundle. All three default to empty lists, which leave the rendered Deployment unchanged:
@@ -319,7 +369,7 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E 
 | `Invalid leader election timing` | The lease values break a rule in [Lease timing](#lease-timing). The error gives the values and the rule. |
 | `invalid --multicluster-role` | Set `ome.multicluster.role` to `control-plane`, or leave it empty. |
 | `flag provided but not defined`, `invalid value` or `invalid boolean value` | A patched argument is misspelled, isn't in your OME version, or has a bad value, such as `3d` for a duration. |
-| `Failed to initialize deployment configuration`, or the same for another entry | That entry of the `inferenceservice-config` ConfigMap is invalid, and the rest of the line says why. For `replicas` in the `deploy` entry, see [Set replica defaults](set-replica-defaults.md). For `Failed to initialize event recorder configuration`, the `eventRecorder` entry breaks a rule in [Tune the per-object event budget](#tune-the-per-object-event-budget). |
+| `Failed to initialize deployment configuration`, or the same for another entry | That entry of the `inferenceservice-config` ConfigMap is invalid, and the rest of the line says why. For `replicas` in the `deploy` entry, see [Set replica defaults](set-replica-defaults.md). For `Failed to initialize event recorder configuration`, the `eventRecorder` entry breaks a rule in [Tune the per-object event budget](#tune-the-per-object-event-budget). For `Failed to initialize lifecycle scale configuration`, a scale setting in the `lifecycle` entry breaks a rule in [Pace OMENative scale-ups and scale-downs](#pace-omenative-scale-ups-and-scale-downs). |
 
 Fix the value and upgrade again, as in Step 1. Correct a patched argument with `kubectl edit deployment ome-controller-manager -n ome`, which prints `deployment.apps/ome-controller-manager edited` when you save a change.
 
