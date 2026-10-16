@@ -73,7 +73,7 @@ OME acts on traffic intent: any field in `spec.traffic`, or any circuit breaker,
 
 OME names the policy after the InferenceService, creates it in the same namespace, and owns it. It overwrites changes you make to the policy by hand, and deletes the policy when you remove all traffic intent. Kubernetes deletes the policy with the InferenceService. A change to `spec.traffic` during a rollout can wait until the rollout finishes.
 
-One policy covers the whole InferenceService, and `spec.traffic` has no per-component settings. To give one component other settings, write a policy of your own under another name. Under Istio, that's a DestinationRule for the component's Service, such as `llama-chat-engine`. Under Envoy Gateway, your BackendTrafficPolicy targets a route that OME's policy also targets, and Envoy Gateway's rules for overlapping policies decide which settings apply.
+One policy covers the whole InferenceService, and `spec.traffic` has no per-component settings. To give one component other settings, write a policy of your own under another name. Under Istio, that's a DestinationRule for the component's Service, such as `llama-chat-engine`. Under Envoy Gateway, your BackendTrafficPolicy targets a route that OME's policy also targets, and Envoy Gateway's rules for overlapping policies decide which settings apply. Unlike [the default policy](#defaults-when-you-declare-nothing), the policy that intent writes doesn't merge with a BackendTrafficPolicy that targets the Gateway.
 
 ## Read the traffic status
 
@@ -200,7 +200,11 @@ Without [traffic intent](#how-ome-applies-the-policy), the gateway uses its own 
 
 The exception is [ingress through the Gateway API](ingress.md#through-the-gateway-api). There, OME writes a default BackendTrafficPolicy, which needs Envoy Gateway v1.7 or later. It hashes on the `x-routing-key` and `X-SMG-Routing-Key` headers. To hash on others, set [`consistentHashHeaders`](../../guides/networking/configure-ingress.md#configuration-reference), or the `ome.io/ingress-consistent-hash-headers` annotation on one InferenceService. That annotation changes the default policy instead of replacing it.
 
-Traffic intent replaces the default policy entirely, and removing the intent brings it back. So a traffic annotation on its own, such as `ome.io/circuit-breaker-max-connections`, ends the header hashing. To keep it, also declare `algorithm: ConsistentHash` with those headers.
+The default policy covers only the [top-level route](ingress.md#routes), the HTTPRoute named after the InferenceService. A request through a component's own route, such as `/llama-demo/llama-chat-engine/`, isn't hashed, and the gateway balances it with its own default. To hash on a component's route too, declare the headers in `spec.traffic`, as in [Session affinity with ConsistentHash](#session-affinity-with-consistenthash): the policy that intent writes targets all of the InferenceService's routes.
+
+The default policy also merges. It sets `mergeType: StrategicMerge`, so when a BackendTrafficPolicy of your own targets the Gateway, the top-level route inherits your settings, such as circuit breakers and timeouts, and the default policy adds the hashing on top.
+
+Traffic intent replaces the default policy entirely, and removing the intent brings it back. So a traffic annotation on its own, such as `ome.io/circuit-breaker-max-connections`, ends the header hashing. To keep it, also declare `algorithm: ConsistentHash` with those headers. The policy that intent writes sets no merge type, so on the routes it targets, it overrides a Gateway-level policy instead of inheriting its settings. Declare the circuit breakers and timeouts you still need with [traffic annotations](../../reference/api/traffic-annotations.md).
 
 ## Troubleshooting
 

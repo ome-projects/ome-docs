@@ -86,9 +86,9 @@ Keep your other values, such as a [routing health probe](routing-health-probes.m
 | `method` | `GET` or `POST`. |
 | `format` | `Report`. |
 | `options` | Leave it out: `Report` takes none. |
-| `samples` | How many readings to keep for each home. At least 1. |
+| `samples` | How many readings to keep for each home. At least 1, and at most the chart's [`routing.observer.maxSamples`](#the-observer-limits), 100 by default. |
 | `quorum` | Which reading, from the lowest, sets the ceiling. At least 1, and at most `samples`. |
-| `period` | How often to poll, as a duration such as `10s`. |
+| `period` | How often to poll, as a duration such as `10s`. At least the chart's [`routing.observer.minPeriod`](#the-observer-limits), `1s` by default. |
 | `timeout` | How long a poll can take. Shorter than `period`. |
 | `maxAge` | How long a reading counts, from its `observedAt`. At least `quorum` times `period`. |
 
@@ -231,6 +231,35 @@ OME stops polling the service's homes, and `CapacityFallback` turns `False` with
 
 To stop the chart's poll, remove the `capacity` block from your values file, and run `helm upgrade` again. OME keeps polling for InferenceServices that set their own `spec.routing.capacity`.
 
+## The observer limits
+
+One chart block, `ome.multicluster.config.routing.observer`, bounds the work that the capacity polls and the [routing health probes](routing-health-probes.md) create, across all routed InferenceServices. These are the chart's defaults:
+
+```yaml
+ome:
+  multicluster:
+    config:
+      routing:
+        observer:
+          maxConcurrentReconciles: 8
+          maxConcurrentRequests: 16
+          maxResponseBytes: 65536
+          minPeriod: 1s
+          maxSamples: 100
+```
+
+| Field | What it bounds |
+| --- | --- |
+| `maxConcurrentReconciles` | How many TrafficMaps OME updates at once. |
+| `maxConcurrentRequests` | How many poll and probe requests OME has underway at once. The two kinds share the budget. |
+| `maxResponseBytes` | How many bytes OME reads from an answer. A longer report fails its poll with `reading capacity response: response exceeds configured limit of 65536 bytes`. A probe stops reading there, and passes or fails on the status alone. |
+| `minPeriod` | The shortest `period` a poll or a probe can set. |
+| `maxSamples` | The most readings a poll's `samples` can keep. |
+
+With `routing.enabled: true`, all five limits are required, even when the chart sets no poll or probe. A limit that you leave out of your values file keeps its default, but one set to 0, or removed with `null`, stops the controller from starting, like a bad poll: see [The controller rollout doesn't finish](#the-controller-rollout-doesnt-finish). OME checks the chart's poll and probe against `minPeriod` and `maxSamples` when the controller starts, and a `spec.routing` block when it picks the block up, where a broken bound [freezes the TrafficMap](#the-trafficmap-doesnt-pick-up-the-poll) like any other mistake in the block.
+
+A poll or probe waits for one of the `maxConcurrentRequests` slots before it's sent. The wait can't fail it, since its `timeout` starts with the request. But when many homes share the budget, the time between a home's attempts grows past `period`, which shows as a probe's [`lastProbeTime`](routing-health-probes.md#step-3-check-the-probe-state) falling behind. Raise `maxConcurrentRequests` in your values file when that happens.
+
 ## Troubleshooting
 
 ### The controller rollout doesn't finish
@@ -245,6 +274,8 @@ The error names the setting. For example:
 
 - A period without a unit gives `routing.capacity.period: "10" is not a duration (use forms like "30s", "5m")`.
 - A timeout as long as the period gives `routing.capacity.timeout (10s) must be shorter than routing.capacity.period (10s)`.
+- A period under [the observer's floor](#the-observer-limits) gives `routing.capacity.period (500ms) must be at least routing.observer.minPeriod (1s)`.
+- An observer limit set to 0 or `null` gives `routing.observer.maxSamples must be positive when routing is enabled`.
 
 Fix the value in your values file, and run `helm upgrade` again.
 
@@ -262,6 +293,8 @@ For example:
 | --- | --- |
 | `maxAge` is shorter than `quorum` times `period` | `validate routing policy: spec.routing.capacity.maxAge (20s) must span at least quorum (3) period intervals` |
 | A format other than `Report`, such as `report` | `resolve capacity policy: spec.routing.capacity.format "report" is not registered in this build (available: [Report])` |
+| `period` is under the chart's [`routing.observer.minPeriod`](#the-observer-limits) | `resolve capacity policy: spec.routing.capacity.period (500ms) must be at least routing.observer.minPeriod (1s)` |
+| `samples` is over the chart's [`routing.observer.maxSamples`](#the-observer-limits) | `resolve capacity policy: spec.routing.capacity.samples (200) must not exceed routing.observer.maxSamples (100)` |
 
 Fix the field, and apply `isvc.yaml` again.
 
@@ -291,7 +324,7 @@ The reason says what to fix:
 | `capacity endpoint unreachable:`, then the error | A DNS, connection or TLS error, or no answer within `timeout`. Check the network path from the controller's pods, or raise `timeout`. |
 | `capacity endpoint returned HTTP`, then the status | 404: the path doesn't reach your reporter, as [The report format](#the-report-format) explains. 3xx: OME doesn't follow redirects. 401 or 403: the poll sends no credentials. |
 | `capacity response is not a valid report:`, then the error, `capacity report has no servable count`, `capacity report has no observedAt stamp`, or `capacity report is negative (-1)` | The body isn't the report that [The report format](#the-report-format) describes, or is empty, as with `method: HEAD`. A negative count isn't read as 0. |
-| `reading capacity response:` or `capacity request did not complete:`, then the error | The body is too long, or the poll ran out of time. |
+| `reading capacity response:` or `capacity request did not complete:`, then the error | The body is longer than the chart's [`routing.observer.maxResponseBytes`](#the-observer-limits), or the poll ran out of time. |
 | `capacity target is invalid:`, `capacity request URL is invalid:` or `capacity request could not be built:`, then the error | OME can't build a request from the entry's `endpoint` and the `path`. |
 | `capacity observation could not be submitted:`, then the error | The controller was starting or stopping, as in a restart. It clears on its own. |
 

@@ -143,14 +143,14 @@ For each metric, OME compares the worst number in the query's result with `thres
 | Verdict | When | What happens |
 | --- | --- | --- |
 | Pass | Every metric passed. | The step advances, unless its `pause.duration` bake is still running. |
-| Fail | At least one metric breached its threshold. | `analysisFailedChecks` goes up by one, and the canary rolls back when it reaches `failureLimit`. A pass doesn't reset the count, and each step starts at 0. |
+| Fail | At least one metric breached its threshold. | `analysisFailedChecks` goes up by one, and the canary rolls back when it reaches `failureLimit`, unless the [stable revision runs no Instance](#when-the-stable-revision-runs-no-instance). A pass doesn't reset the count, and each step starts at 0. |
 | Inconclusive | No metric breached, and at least one was inconclusive. | Depends on [`onInconclusive`](#oninconclusive). It never counts toward `failureLimit`. |
 
 At the last step, the canary completes on the first passing sample after [`scaleDownDelaySeconds`](canary-progression.md#fields), when set.
 
 The alpha `kubectl ome rollout promote --override-analysis --yes` passes an analysis gate during its warm-up, sampling or bake: see [Promote or roll back a canary](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#step-3-override-an-analysis-gate).
 
-An analysis rollback works like a [manual rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary): every instance returns to the stable revision, and the component stays there until a different target revision appears. OME records the rejected revision in `rolledBackRevisionHash`, and `promote` and `rollback` then refuse with `action refused: no applicable active rollout or lifecycle work was observed`.
+An analysis rollback works like a [manual rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary): every instance returns to the stable revision, and the component stays there until a different target revision appears. OME records the rejected revision in `rolledBackRevisionHash`, and `promote` and `rollback` then refuse with `action refused: no applicable active rollout or lifecycle work was observed`. The analysis starts its rollback only when the stable revision still runs an Instance: when it doesn't, the canary parks `Failed` instead, as [When the stable revision runs no Instance](#when-the-stable-revision-runs-no-instance) describes.
 
 ## `onInconclusive`
 
@@ -160,11 +160,27 @@ An analysis rollback works like a [manual rollback](../../guides/roll-out-change
 | `Rollback` | Rolls the canary back. |
 | `RollbackOnStall` | Holds the step. When the analysis stalls, the canary rolls back. |
 
-With `Rollback`, a Prometheus outage, a missing token Secret or a `no data` result rolls the canary back.
+With `Rollback`, a Prometheus outage, a missing token Secret or a `no data` result rolls the canary back. A rollback from `Rollback` or `RollbackOnStall` is an analysis rollback, so it too needs a [stable revision that runs an Instance](#when-the-stable-revision-runs-no-instance).
 
 The analysis stalls when its samples stay inconclusive for longer than the canary's [ready timeout](canary-progression.md#readytimeout), 15 minutes with the chart's defaults.
 
 A `Failed` canary stays at its step, even after you fix the metrics source, and `promote --override-analysis` refuses there. A change that gives the component a revision other than the failed canary's and the stable one starts a fresh canary at step 1. You can also roll the canary back with the alpha `kubectl ome rollout rollback`, then apply your fix, as [When a step never becomes ready](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#when-a-step-never-becomes-ready) shows.
+
+## When the stable revision runs no Instance
+
+A rollback returns every Instance to the stable revision, so a rollback the analysis decides — at `failureLimit`, on an inconclusive sample with `Rollback`, or at a stall with `RollbackOnStall` — needs that revision to still run. While a canary runs, each component with more than one desired Instance keeps one Instance on its stable revision, so the revision normally serves until the canary completes. When any such component in the group runs no live Instance on its stable revision, the fleet has left that revision, and OME doesn't rebuild every Instance onto it on its own:
+
+- The canary parks at `Failed` at its current step, and `status.components.<component>.canary.failed.reason` records `StableRevisionMissing`.
+- No revert starts: `rolledBackRevisionHash` stays empty, and the analysis stops sampling while the canary is parked.
+- OME emits the Warning event `CanaryStableRevisionEmpty` on the InferenceService, once: `<primary> is not rolled back on its own: <component> (stable revision <hash>) runs no live Instance to return to; parked Failed at step <N> until a rollback is requested (ome.io/rollout-rollback) or a new target appears`. `<primary>` is the group's `router`, or else its `engine`, `<component>` the component whose stable revision is empty, and the step counts from 0.
+- Traffic in status follows the pods that serve: a component whose stable revision runs no pod shows 100% for the canary revision, and a component whose stable revision serves keeps the step's split.
+
+The canary keeps its Instances, and the park holds until you act:
+
+- A [rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) is your decision, so it proceeds from the park: the revert rebuilds every Instance of the component onto the stable revision, and the same `CanaryStableRevisionEmpty` event says so: `<primary> rolls back as requested although <component> (stable revision <hash>) runs no live Instance; the revert rebuilds every Instance onto it`. Traffic moves to the stable revision once it serves again.
+- A change that gives the group a revision other than the parked canary's and the stable one starts a fresh canary at step 1.
+
+A component with a single desired Instance stages in place and keeps no Instance on its stable revision, so an empty stable revision there never parks the canary: its rollback proceeds.
 
 ## Analysis in status
 

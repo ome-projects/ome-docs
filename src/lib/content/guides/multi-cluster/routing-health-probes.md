@@ -32,6 +32,8 @@ After `failureThreshold` `Failing` results in a row, OME gates the cluster: its 
 
 A gated cluster stays gated when the controller restarts. Changing any probe setting lifts the gates and starts the counts over. A failing cluster then gets traffic until it fails `failureThreshold` times in a row again.
 
+Probes share [the observer limits](tune-routing-capacity-polling.md#the-observer-limits) with the capacity polls: the chart's `routing.observer` block caps the requests underway at once, across all routed InferenceServices, and how much of an answer OME reads. An attempt that waits for a request slot can't time out, since `timeout` starts with the request, but on a large fleet the waits stretch the time between a cluster's attempts past `period`: its entry's `lastProbeTime` falls behind. Raise `routing.observer.maxConcurrentRequests` when it does.
+
 ## Step 1: Set a probe for every service
 
 Set a probe for all routed InferenceServices under `ome.multicluster.config.routing.probe` in your `ome-resources` values file. This example turns routing on and probes `/v1/models` every 10 seconds:
@@ -64,7 +66,7 @@ Keep your other values in the same file: `helm upgrade` resets the values that a
 | `method` | `GET`, `HEAD` or `POST`. |
 | `acceptStatuses` | The statuses that count as `Passing`. |
 | `gateStatuses` | The statuses that count as `Failing`. It can't hold a status from `acceptStatuses`, or 401, 403 or 429, which mean that the endpoint is up but busy or wants credentials. |
-| `period` | How often OME probes a cluster, such as `10s`. At least `1s`, the chart's `routing.observer.minPeriod`. |
+| `period` | How often OME probes a cluster, such as `10s`. At least the chart's [`routing.observer.minPeriod`](tune-routing-capacity-polling.md#the-observer-limits), `1s` by default. |
 | `timeout` | How long an attempt can take. Shorter than `period`. |
 | `failureThreshold` | How many `Failing` results in a row gate a cluster. |
 | `successThreshold` | How many `Passing` results in a row lift the gate. |
@@ -236,17 +238,17 @@ With an unusable multi-cluster setting, the new controller pods exit when they s
 kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep 'multi-cluster configuration'
 ```
 
-The error starts with `invalid multi-cluster configuration:` and names the setting, as in `routing.probe.timeout (10s) must be shorter than routing.probe.period (10s)`. For a probe block that leaves out a string field, it starts with `load multi-cluster configuration: unable to parse multicluster config json`. Fix the value in your values file, and run `helm upgrade` again.
+The error starts with `invalid multi-cluster configuration:` and names the setting, as in `routing.probe.timeout (10s) must be shorter than routing.probe.period (10s)`, or `routing.probe.period (500ms) must be at least routing.observer.minPeriod (1s)` for a period under [the observer's floor](tune-routing-capacity-polling.md#the-observer-limits). For a probe block that leaves out a string field, it starts with `load multi-cluster configuration: unable to parse multicluster config json`. Fix the value in your values file, and run `helm upgrade` again.
 
 ### The TrafficMap doesn't pick up the probe
 
-`kubectl apply` accepts a status that's in both `acceptStatuses` and `gateStatuses`, but OME refuses it afterwards. Until you fix it, OME stops probing the service's clusters, and [its TrafficMap stops updating](../../concepts/rollouts-and-traffic/traffic-map.md#where-it-comes-from): it keeps its last weights and probe results. A new InferenceService gets no TrafficMap. Find the error in the controller's logs:
+`kubectl apply` accepts some mistakes in `spec.routing.probe` that OME refuses later: a status that's in both `acceptStatuses` and `gateStatuses`, or a `period` under the chart's [`routing.observer.minPeriod`](tune-routing-capacity-polling.md#the-observer-limits). Until you fix them, OME stops probing the service's clusters, and [its TrafficMap stops updating](../../concepts/rollouts-and-traffic/traffic-map.md#where-it-comes-from): it keeps its last weights and probe results. A new InferenceService gets no TrafficMap. Find the error in the controller's logs:
 
 ```bash
-kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep 'validate routing policy'
+kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E 'validate routing policy|resolve probe policy'
 ```
 
-The error reads like `validate routing policy: spec.routing.probe status 503 is in both acceptStatuses and gateStatuses`. Take the status out of one list, and apply `isvc.yaml` again.
+The error reads like `validate routing policy: spec.routing.probe status 503 is in both acceptStatuses and gateStatuses`, or `resolve probe policy: spec.routing.probe.period (500ms) must be at least routing.observer.minPeriod (1s)`. Fix the field, and apply `isvc.yaml` again.
 
 ### A cluster is gated
 
