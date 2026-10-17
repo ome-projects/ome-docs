@@ -461,11 +461,91 @@ POLICY        GENERATION   PORTABLE           RESOLVED
 queue-depth   2            pv1:7d41c0b3a95e   rv1:3e95b1c84d06
 ```
 
-The engine's `observedGeneration` and `portableDigest` match the policy's generation and digest: its live ScaledObject was rendered from the spec you just applied. The same check works across clusters: two clusters running the same policy spec report the same `portableDigest`, so you can compare a component's provenance in one cluster against the policy in another without reading the rendered objects.
+The engine's `observedGeneration` and `portableDigest` match the policy's generation and digest: its live ScaledObject was rendered from the spec you just applied. The same check works across clusters: two clusters running the same policy spec report the same `portableDigest`, so you can compare a component's provenance in one cluster against the policy in another without reading the rendered objects. [Multi-cluster placement](#multi-cluster-placement) builds on that equality: before OME places a service on a cluster, the cluster's copy of the policy must digest the same as the control plane's.
 
 When the digests don't match and the component's `AutoscalerResolved` condition is `False`, the component is [holding](#fail-closed-behavior): the provenance shows the render that's still standing, not the spec you applied. Fix what the condition's message names, and the digests catch up on the next render.
 
 `resolvedDigest` tells renders apart rather than specs: it also changes when you change the component's `minReplicas` or `maxReplicas`, or the cluster's [provider binding](#metric-providers), with no policy edit at all. Use `portableDigest` to see that an edit landed, and `resolvedDigest` to see that a component's render changed — or, after you remove an inline block, that it matches the `wouldRenderDigest` previewed in [Inline settings win](#inline-settings-win).
+
+## Multi-cluster placement
+
+On a multi-cluster control plane, an InferenceService with a [`spec.placement`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-PlacementSpec) block is a source: OME places it by writing a derived InferenceService to each workload cluster it chooses, as [Rollouts and traffic](inference-services.md#rollouts-and-traffic) outlines. Multi-cluster placement is alpha and still in development. The examples here place `llama-3-2-1b-instruct` on two workload clusters, `worker-a` and `worker-b`, with `queue-depth` attached to its engine as in [Attach a policy to an InferenceService](#attach-a-policy-to-an-inferenceservice).
+
+The derived InferenceServices carry the components' `autoscalerPolicyRef`, but OME never copies the policy itself: each member cluster renders the autoscaler from its own copy, with its own [provider bindings](#metric-providers), exactly as this page describes for one cluster. A member cluster that placement may choose needs:
+
+- The feature [turned on](#turn-on-the-feature) there, declared by the label `ome.io/autoscaler-policy: v1beta1` on its [WorkloadCluster](../../reference/api/labels-and-annotations.md#workloadcluster-labels).
+- Its own copy of each policy the source references — the same name in the same namespace — whose `portableDigest` equals the control plane's, which it does exactly when the specs match, as [Confirm that a policy edit landed](#confirm-that-a-policy-edit-landed) describes.
+
+Distribute the policies to the members yourself, with GitOps for example: placement checks the copies, but nothing in OME creates them. The control plane cluster needs its own copy too, in the source's namespace. That copy is the anchor every member is compared against, and placement holds while it's missing or invalid.
+
+### The placement preflight
+
+Before OME writes the derived InferenceServices, the placement controller checks every candidate cluster, and records the verdict in the source's `PlacementPolicyPreflight` condition. A candidate whose WorkloadCluster lacks the capability label is skipped. On a labeled candidate, OME reads each referenced policy live from the member's API server — each read gets the [member-read deadline](#preflight-settings), 5 seconds by default — and skips the candidate when a policy is missing there, or digests differently from the anchor.
+
+| Status | Reason | When |
+| --- | --- | --- |
+| `True` | `Passed` | At least one candidate is eligible. The message counts them and names each skipped cluster with its reason, such as `1 of 2 candidates eligible; skipped: worker-b (CapabilityMissing: cluster does not carry ome.io/autoscaler-policy=v1beta1)`. |
+| `False` | `CapabilityMissing`, `PolicyMissingOnMember`, `DigestMismatch` or `MemberGetTimeout` | No eligible candidate remains, or the cluster serving a `Single`-mode source became ineligible, with the skip's reason. Across several skips, the most serious reason wins: `DigestMismatch`, then `PolicyMissingOnMember`, `MemberGetTimeout` and `CapabilityMissing`. A missing or unreadable anchor copy also reads `PolicyMissingOnMember`, with a message that names the control plane. |
+| `False` | `InvalidRef` | A reference on the source has a shape every member's webhook would deny, such as the reserved `kind: ClusterAutoscalerPolicy`. |
+| `False` | `InvalidPolicy` | The anchor copy is invalid, so every member would reject the autoscaler rendered from it. The message lists the problems. |
+
+`False` blocks placement: OME writes no new derived InferenceServices, and the clusters already serving the source keep serving — the source holds where it is rather than move onto an unverified cluster. Skipping alone doesn't block: while a candidate remains eligible, the condition stays `Passed`, and placement avoids the skipped clusters. A timed-out or failed read is transient — the reason `MemberGetTimeout` covers both — so a cluster that the last successful check verified stays eligible while OME retries. A missing policy or a digest mismatch is a verdict, and makes the cluster ineligible at once.
+
+!!! warning "Cap Split placements"
+    With a policy reference and `spec.placement.mode: Split` or `SplitByCapacity`, set `spec.placement.split.maxReplicasPerCluster`. The policy renders against each home's own derived replica bounds, and without the per-cluster cap that ceiling is unbounded, so a [fallback](#define-a-policy) of `fromComponent: MaxReplicas` on one home can scale it to the whole fleet's count. The webhook warns on apply — the warning ends with `(UnboundedSplitCeiling)` — but never rejects, and placement runs. The API lists `UnboundedSplitCeiling` among the preflight condition's reasons, but OME doesn't write it.
+
+### Track the homes after fan-out
+
+Once placed, each home — a cluster serving the source, as the condition messages put it — reports its render in the derived InferenceService's own status, with the provenance and conditions of [Conditions and status](#conditions-and-status), and a member whose copy breaks after placement [holds fail-closed](#fail-closed-behavior) on its own cluster. The control plane lifts that state onto the source, so you read the whole fleet from one object:
+
+- `status.placement.candidates[].autoscaling` mirrors each home: `policies` pairs each policy's name with the `portableDigest` the home observed, `components` maps each referencing component to its `resolvedDigest` and `ready`, and `ready` says whether every referencing component rendered from the policy.
+- The `AutoscalerPolicyReady` condition sums the homes up:
+
+| Status | Reason | When |
+| --- | --- | --- |
+| `True` | `AllHomesResolved` | Every home reports resolved digests, no home carries the service yet, or the rest are within the skew deadline. The message says which. |
+| `False` | `ResolveTimeout` | A home has carried the placed service longer than the [skew deadline](#preflight-settings), 15 minutes by default, without reporting a resolved digest. |
+| `False` | `FieldPruned` | Three re-applies in a row saw a member's API server drop the applied `autoscalerPolicyRef`: its InferenceService CRD is too old for the field, so the member would scale without the policy, silently. |
+| `False` | `MemberFailedClosed` | A home reports `AutoscalerResolved: False` for a referencing component: that member is [holding its last autoscaler](#fail-closed-behavior). |
+
+When more than one applies, `FieldPruned` outranks `MemberFailedClosed`, which outranks `ResolveTimeout`. A home where an inline `autoscaler` [outranks the reference](#inline-settings-win) doesn't count as resolved, but doesn't trip `ResolveTimeout` either: its `wouldRenderDigest` proves the member resolved the policy. The skew clock lives in the controller's memory, so a controller restart starts it over, and `ResolveTimeout` fires late rather than falsely. Removing the last reference from the source removes both conditions.
+
+Read the two conditions together:
+
+```bash
+kubectl get inferenceservice llama-3-2-1b-instruct -n llama-demo \
+  -o custom-columns='PREFLIGHT:.status.conditions[?(@.type=="PlacementPolicyPreflight")].reason,POLICIES:.status.conditions[?(@.type=="AutoscalerPolicyReady")].reason'
+```
+
+```output
+PREFLIGHT   POLICIES
+Passed      AllHomesResolved
+```
+
+And each home's observed digest, to find the cluster that holds a policy edit back:
+
+```bash
+kubectl get inferenceservice llama-3-2-1b-instruct -n llama-demo \
+  -o jsonpath='{range .status.placement.candidates[*]}{.cluster}{"\t"}{.autoscaling.ready}{"\t"}{.autoscaling.policies[0].portableDigest}{"\n"}{end}'
+```
+
+```output
+worker-a	true	pv1:7d41c0b3a95e
+worker-b	true	pv1:7d41c0b3a95e
+```
+
+A home that shows an older `portableDigest` than the policy's own status hasn't received the edited copy yet: update the policy there, and compare the digests again as in [Confirm that a policy edit landed](#confirm-that-a-policy-edit-landed).
+
+### Preflight settings
+
+The preflight's two settings are `ome-resources` chart values under `ome.autoscalerPolicy.preflight`. The chart ships both as `0`, which means the controller's built-in default:
+
+| Value | Default | What it sets |
+| --- | --- | --- |
+| `memberGetTimeoutSeconds` | 5 | The deadline for each live policy read on a member, so one hung member API server can't stall placement. A read past it skips the cluster with `MemberGetTimeout`. |
+| `skewDeadlineSeconds` | 900 | How long a home may carry the placed service without reporting a resolved digest before `AutoscalerPolicyReady` turns `False` with `ResolveTimeout`. |
+
+Change them with a chart upgrade, which restarts the controller. The controller reads them only when it starts, so an edit of [the ConfigMap](../../guides/operate-ome/configure-the-controller.md#tune-the-config-cache) itself needs a restart too.
 
 ## Delete a policy
 
