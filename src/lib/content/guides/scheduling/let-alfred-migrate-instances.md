@@ -8,7 +8,7 @@ In execute mode, [Alfred](../../concepts/scheduling/alfred.md) stops only recomm
 
 Alfred can then move any OMENative Instance, in any namespace, that its [defragmentation](../../concepts/scheduling/alfred-policies.md#defragmentation) or [node health](../../concepts/scheduling/alfred-policies.md#node-health) policy picks and its [arbiter](../../concepts/scheduling/alfred-policies.md#the-arbiter) admits, unless you [opt the workload out](../../concepts/scheduling/alfred-policies.md#per-workload-annotations). These guardrails stay in place:
 
-- Alfred's only change to a workload is one request annotation on its InferenceService, and a migration guard that the chart installs rejects any other. Alfred never cordons or drains a node, and never evicts or deletes a pod: see [What Alfred changes in your cluster](../../concepts/scheduling/alfred.md#what-alfred-changes-in-your-cluster).
+- Alfred's only change to a workload is one request annotation on its InferenceService, and a migration guard that the chart installs rejects any other. Alfred never drains a node, and never evicts or deletes a pod. It cordons a node only when you also opt in with the chart's `maintenanceCordon.enabled` and mark a maintenance rule `cordon: true`, and it never uncordons: see [What Alfred changes in your cluster](../../concepts/scheduling/alfred.md#what-alfred-changes-in-your-cluster).
 - Alfred sends one request at a time, and none while any migration request in the cluster is waiting or in progress, yours included.
 - Just before it sends a request, Alfred checks the move again, and sends it only when a simulation places every replacement pod on a ready node that the plan allowed.
 - Alfred follows its requests in a journal until OMENative reports their results, and never cancels or replaces one.
@@ -258,6 +258,7 @@ Check each withheld move's `dispatchReason` in the record:
 | `FailureBackoff` | One of Alfred's requests failed or stalled less than `migration.failureBackoff` ago. |
 | `InFlightCap` | A migration request is waiting or in progress somewhere in the cluster. List the waiting requests, as below. |
 | `InvalidCooldown` | An InferenceService has an invalid `alfred.ome.io/cooldown-minutes` annotation. Find it, as below. |
+| `MaintenanceCordonFailed` | Alfred couldn't cordon a node that a maintenance rule with `cordon: true` matches, for example because the ClusterRole `ome-alfred-maintenance-cordon` is missing. The leader's log names the node and the rule: see [The maintenance cordon](../../concepts/scheduling/alfred-policies.md#the-maintenance-cordon). |
 | `SerialDispatchLimit` | Alfred tried another move in this pass. When the tried move shows it too, its request didn't reach the InferenceService: see [A request is stalled](#a-request-is-stalled). |
 | Another reason | See [Dispatch reasons](../../reference/scheduling/alfred-metrics-and-events.md#dispatch-reasons). |
 
