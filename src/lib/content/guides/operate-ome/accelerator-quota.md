@@ -113,6 +113,8 @@ kubectl -n ome rollout status deployment/ome-quota-manager
 deployment "ome-quota-manager" successfully rolled out
 ```
 
+The two replicas elect a leader, and only the leader does the work that follows; the other is a warm standby that also serves the webhook. [Tune the leader election](#tune-the-leader-election) covers the takeover and its timing.
+
 The quota manager then creates `root`:
 
 ```bash
@@ -417,6 +419,51 @@ helm upgrade ome ./charts/ome-resources --namespace ome -f values.yaml
 ```
 
 Helm reports the upgrade, and the controller pods restart with the new list.
+
+## Tune the leader election
+
+The chart runs two replicas of the quota manager, set by `quotaManager.replicaCount`. They elect a leader through the Lease `ome-quota-manager-leader-lock`, and only the leader reconciles: it measures capacity, writes every node's status and writes the Kueue objects, so the [metrics](#metrics) move only on the leader. The other replica is a warm standby. Both replicas serve the webhook, the metrics endpoint and the probes, which is why admission returns with the first ready pod. Keep `quotaManager.leaderElect` at its default, `true`, whenever `replicaCount` is above 1: two active instances would race each other's status writes on every node. See which pod leads:
+
+```bash
+kubectl get lease ome-quota-manager-leader-lock -n ome -o jsonpath='{.spec.holderIdentity}{"\n"}'
+```
+
+```output
+ome-quota-manager-6f8b9c7d54-plwdr_8a1f2c3d-4e5b-6a7c-8d9e-0f1a2b3c4d5e
+```
+
+The part before the `_` is the leader's pod name.
+
+Three values in `quotaManager.leaderElection` time the election, and the chart passes them to the quota manager as its `--leader-elect-lease-duration`, `--leader-elect-renew-deadline` and `--leader-elect-retry-period` flags: a lease duration of 60 seconds, a renew deadline of 40 seconds and a retry period of 8 seconds by default.
+
+The leader renews the Lease every retry period. Each renewal request waits at most half the renew deadline, 20 seconds with the chart, so the deadline holds two attempts, and the leader survives one hung request: a routine API server stall costs the first attempt, and the second renews the Lease. A leader that can't renew within the deadline gives up, logs `problem running manager` with the error `leader election lost` and exits, and Kubernetes restarts the container. The standby takes over once the Lease has gone unrenewed for the lease duration, so after a leader dies, the work this page describes pauses for up to a minute. Admission doesn't pause with it: the webhook keeps serving from the standby.
+
+When the leader keeps restarting with `leader election lost` during API server slowdowns, raise the three values together, keeping the other values in the file:
+
+```yaml title="quota-values.yaml"
+global:
+  hub: registry.example.com/ome
+quotaManager:
+  mode: workload
+  image:
+    tag: dev
+  leaderElection:
+    leaseDuration: "90s"
+    renewDeadline: "60s"
+    retryPeriod: "12s"
+  materialize:
+    enrolledNamespaces:
+      - ml-serving
+```
+
+```bash
+helm upgrade ome-quota-manager ./charts/ome-quota-manager \
+  --namespace ome -f quota-values.yaml
+```
+
+Helm reports the upgrade, and the quota manager's pods restart with the new timing.
+
+Keep the lease duration longer than the renew deadline, and the renew deadline longer than 1.2 times the retry period. The quota manager checks the three values when it starts: when they break a rule, every new pod logs `bad flag`, with an error that gives the values and the rule, and exits, so the rollout doesn't finish and the old pods keep the old timing. Also set the three together: when any one is empty, the chart passes none of the flags, and the quota manager falls back to controller-runtime's own timing — a 15-second lease, a 10-second renew deadline and a 2-second retry period, whose 5-second renewal requests a routine stall outlasts. Longer values slow failover, since the standby waits out the lease duration, so raise them only as far as your API server needs. The OME controller manager times its leader election the same way: see [Lease timing](configure-the-controller.md#lease-timing).
 
 ## Metrics
 
