@@ -4,7 +4,7 @@ description: "Metric-gated canary steps sample Prometheus each interval, roll ba
 since: v1.3
 ---
 
-Add `analysis` to a canary step, and the step moves on when Prometheus says the new revision is healthy. Every `interval`, OME runs the step's PromQL queries and compares each result with a threshold. The step advances on a sample in which every metric passes, and the canary rolls back when `failureLimit` samples fail. A sample that can't be judged is inconclusive, and `onInconclusive` decides what it does. [Canary progression](canary-progression.md) covers the steps and their other gates.
+Add `analysis` to a canary step, and the step moves on when Prometheus says the new revision is healthy. Every `interval`, OME runs the step's PromQL queries once per [group member the change moved](#which-members-a-step-samples) and compares each result with a threshold. The step advances on a sample in which every metric of every sampled member passes, and the canary rolls back when `failureLimit` samples fail. A sample that can't be judged is inconclusive, and `onInconclusive` decides what it does. [Canary progression](canary-progression.md) covers the steps and their other gates.
 
 Canary works only on components that use the OMENative deployment mode: [Deployment modes and OMENative](../../concepts/architecture/deployment-modes.md) shows how to opt in. A [RolloutPolicy](../../concepts/rollouts-and-traffic/rollout-policy.md), which is alpha, carries the same fields at `spec.canary`.
 
@@ -114,21 +114,29 @@ A running canary keeps the `analysis` and `prometheus` blocks it started with, b
 
 ## Query template variables
 
-A `query` is a Go template with these variables:
+A `query` is a Go template. OME renders and runs it once per [sampled member](#which-members-a-step-samples), with that member's values:
 
 | Variable | Value | Bundled Prometheus label |
 | --- | --- | --- |
 | `{{.Namespace}}` | The InferenceService's namespace. | `namespace` |
 | `{{.ISVCName}}` | The InferenceService's name. | `inferenceservice` |
-| `{{.Component}}` | The canary's component: the group's `router`, or else its `engine`. | `component` |
-| `{{.CanaryRevision}}` | The new revision's hash. | `revision_hash` |
-| `{{.StableRevision}}` | The stable revision's hash. | `revision_hash` |
-| `{{.CanaryService}}` | The new revision's Service, `<isvc>-<component>-rev-<hash>`. | None |
-| `{{.StableService}}` | The stable revision's Service, named the same way. | None |
+| `{{.Component}}` | The sampled member's component, such as `engine` or `decoder`. | `component` |
+| `{{.CanaryRevision}}` | The member's new revision's hash. | `revision_hash` |
+| `{{.StableRevision}}` | The member's stable revision's hash. | `revision_hash` |
+| `{{.CanaryService}}` | The member's new revision's Service, `<isvc>-<component>-rev-<hash>`. | None |
+| `{{.StableService}}` | The member's stable revision's Service, named the same way. | None |
 
 The bundled Prometheus puts these labels, and `pod`, on the series of [InferenceService pods](../../guides/operate-ome/metrics.md#inferenceservice-pods). Another Prometheus needs a scrape configuration that adds them.
 
 Before you gate a step on a query, run it in Prometheus with real label values, and check that it returns a number. [Check the targets](../../guides/operate-ome/metrics.md#step-1-check-the-targets) shows how to reach the bundled Prometheus.
+
+## Which members a step samples
+
+A canary group can hold several components — its members, such as the engine and the decoder of a [rollout group](../../concepts/rollouts-and-traffic/rollout-groups.md) that rolls prefill and decode out together. An analysis step samples every member the change moved to a new revision. A member the change left alone keeps serving its stable revision, so it has no canary pods to read, and isn't sampled: when only the decoder's spec changed, the analysis queries the decoder alone, not the engine.
+
+The step's queries run once per sampled member, each run with that member's own [template values](#query-template-variables): its component, its revision hashes and its per-revision Services. Every run goes to the [same source](#where-the-metrics-come-from). Each member's run is its own sample: its queries run together in the background, within [`queryTimeout`](#controller-settings) and in one [`maxConcurrency`](#controller-settings) slot.
+
+The members' runs go side by side, and OME judges nothing until every sampled member has a fresh result: a member whose queries haven't answered holds the step. The results then fold into one verdict for the group, as [How a sample is judged](#how-a-sample-is-judged) describes, and every member's metrics land in [`metricResults`](#analysis-in-status). The primary member — the group's `router`, or else its `engine`, which carries the canary's status — keeps its metrics' names; another member's are named `<component>/<name>`, such as `decoder/error-rate`.
 
 ## When queries run
 
@@ -140,11 +148,13 @@ Each query is an instant query at the time of the sample, so `[5m]` covers the 5
 
 For each metric, OME compares the worst number in the query's result with `threshold`: the highest for `LT` and `LTE`, and the lowest for `GT` and `GTE`. So a query that returns one series per pod passes only when every pod passes. A query that returns an empty vector, or a ratio over zero requests, makes the metric inconclusive with the message `no data`. It's also inconclusive when its query fails or returns a range vector.
 
+A sample folds every [sampled member's](#which-members-a-step-samples) results into one verdict, worst first: a breach on any member fails the sample, even while every other member passes; otherwise a member's inconclusive metric makes the sample inconclusive; otherwise it passes.
+
 | Verdict | When | What happens |
 | --- | --- | --- |
-| Pass | Every metric passed. | The step advances, unless its `pause.duration` bake is still running. |
-| Fail | At least one metric breached its threshold. | `analysisFailedChecks` goes up by one, and the canary rolls back when it reaches `failureLimit`, unless the [stable revision runs no Instance](#when-the-stable-revision-runs-no-instance). A pass doesn't reset the count, and each step starts at 0. |
-| Inconclusive | No metric breached, and at least one was inconclusive. | Depends on [`onInconclusive`](#oninconclusive). It never counts toward `failureLimit`. |
+| Pass | Every metric of every sampled member passed. | The step advances, unless its `pause.duration` bake is still running. |
+| Fail | At least one metric breached its threshold, on any sampled member. | `analysisFailedChecks` goes up by one — once per sample, however many members breached — and the canary rolls back when it reaches `failureLimit`, unless the [stable revision runs no Instance](#when-the-stable-revision-runs-no-instance). A pass doesn't reset the count, and each step starts at 0. |
+| Inconclusive | No member's metric breached, and at least one was inconclusive. | Depends on [`onInconclusive`](#oninconclusive). It never counts toward `failureLimit`. |
 
 At the last step, the canary completes on the first passing sample after [`scaleDownDelaySeconds`](canary-progression.md#fields), when set.
 
@@ -184,7 +194,7 @@ A component with a single desired Instance stages in place and keeps no Instance
 
 ## Analysis in status
 
-OME records the analysis in `status.components.<component>.canary`, where `<component>` is the group's `router`, or else its `engine`. The phase is in `status.components.<component>.rolloutPhase`. While a step waits on its analysis, [`kubectl ome rollout status`](../kubectl-ome/rollout.md#status-output-fields) shows GATE `Analysis`, and the [`promote` preview](../kubectl-ome/rollout.md#promote-and-rollback) shows the analysis state.
+OME records the analysis in `status.components.<component>.canary`, where `<component>` is the group's [primary member](#which-members-a-step-samples): its `router`, or else its `engine`. The phase is in `status.components.<component>.rolloutPhase`. While a step waits on its analysis, [`kubectl ome rollout status`](../kubectl-ome/rollout.md#status-output-fields) shows GATE `Analysis`, and the [`promote` preview](../kubectl-ome/rollout.md#promote-and-rollback) shows the analysis state.
 
 | Field | What it holds |
 | --- | --- |
@@ -193,10 +203,10 @@ OME records the analysis in `status.components.<component>.canary`, where `<comp
 | `analysisFailedChecks` | The failing samples at this step. |
 | `lastEvaluationTime` | When the last judged sample finished. |
 | `lastConclusiveEvaluationTime` | When the last pass or fail at this step finished. |
-| `metricResults` | One entry per metric of the last judged sample. |
+| `metricResults` | The last judged sample: one entry per metric per [sampled member](#which-members-a-step-samples). |
 | `rolledBackRevisionHash` | The revision that a rollback rejected, by the analysis or by hand. |
 
-Each entry of `metricResults` holds the metric's `name`, `threshold` and `operator`, its worst `value`, whether it `passed`, and the `time` of the sample. An inconclusive metric has `passed: false`, no `value`, and a `message` with its cause:
+Each entry of `metricResults` holds the metric's `name`, `threshold` and `operator`, its worst `value`, whether it `passed`, and the `time` of the sample. The primary member's metrics keep their names; another sampled member's are named `<component>/<name>`, so `decoder/error-rate` is the decoder's `error-rate`. An inconclusive metric has `passed: false`, no `value`, and a `message` with its cause:
 
 | What `metricResults` shows | Cause |
 | --- | --- |
@@ -216,13 +226,15 @@ The controller exports these metrics on its metrics endpoint:
 | `ome_canary_traffic_weight` | `namespace`, `isvc`, `component` | The last `traffic` weight that OME recorded. It drops to 0 when the canary completes or rolls back. |
 | `ome_canary_step_total` | `namespace`, `isvc`, `component` | Step advances. |
 | `ome_canary_complete_total` | `namespace`, `isvc` | Canaries that completed on the new revision. |
-| `ome_canary_analysis_evaluations_total` | `namespace`, `isvc`, `component`, `result` | Judged samples, by `result`: `pass`, `fail` or `inconclusive`. |
-| `ome_canary_analysis_metric_value` | `namespace`, `isvc`, `component`, `metric` | The last value of each metric, kept when a sample has none. |
-| `ome_canary_analysis_failed_checks` | `namespace`, `isvc`, `component` | The failing samples at the step, as of the last sample. |
+| `ome_canary_analysis_evaluations_total` | `namespace`, `isvc`, `component`, `result` | Judged samples, one count per sampled member under its `component`, by the member's own `result`: `pass`, `fail` or `inconclusive`. |
+| `ome_canary_analysis_metric_value` | `namespace`, `isvc`, `component`, `metric` | The last value of each metric, under the sampled member's `component`; `metric` is the metric's own name, never `<component>/<name>`. Kept when a sample has none. |
+| `ome_canary_analysis_failed_checks` | `namespace`, `isvc`, `component` | The failing samples at the step, as of the last sample: one count for the group, on each sampled member's `component` series. |
 | `ome_canary_rollback_total` | `namespace`, `isvc`, `component`, `cause` | Rollbacks, by `cause`: `analysis` or `manual`. |
 | `ome_canary_sampler_inflight` | None | Samples running now. |
 | `ome_canary_sampler_queue_depth` | None | Samples waiting for a free [`maxConcurrency`](#controller-settings) slot. |
 | `ome_canary_sampler_starved_total` | None | Samples that had to wait for a slot. |
+
+A judged sample publishes each [sampled member's](#which-members-a-step-samples) own result: when the decoder breached and the engine passed, `ome_canary_analysis_evaluations_total` counts `fail` under `component="decoder"` and `pass` under `component="engine"`, while the sample itself fails.
 
 When a rollback finishes, OME records a Normal event with the reason `RolloutRunClosed` and the message `run <run ID> closed: RolledBack`. `ome_canary_rollback_total` tells analysis and manual rollbacks apart.
 
@@ -244,7 +256,7 @@ The `canaryAnalysis` key of the `inferenceservice-config` ConfigMap sets the def
 | --- | --- | --- | --- |
 | `bundledPrometheusAddress` | `http://ome-prometheus.<release namespace>.svc:9090` | The fallback source for canaries that name none. | Within 30 seconds |
 | `defaultProvider` | Empty | The `metricProviders` binding for canaries that name no source. An unbound name falls back to `bundledPrometheusAddress`. | Within 30 seconds |
-| `queryTimeout` | `5s` | How long all the queries of one sample may take together. | Within 30 seconds |
+| `queryTimeout` | `5s` | How long all the queries of one [member's sample](#which-members-a-step-samples) may take together. | Within 30 seconds |
 | `maxConcurrency` | `8` | How many samples run at once, across all InferenceServices. Raise it when `ome_canary_sampler_queue_depth` stays above 0. | After a controller restart |
 | `cacheTTL` | `2m` | How long a finished sample's result stays usable. | After a controller restart |
 
