@@ -51,7 +51,7 @@ Set `storage.storageUri`, and for `hf://`, `oci://`, `modelpack://` and `local:/
 
 | Scheme | URI form | What OME does |
 | --- | --- | --- |
-| `hf` | `hf://{model-id}[@{revision}]` | Downloads the model from Hugging Face to `path` on the selected nodes. The revision defaults to `main`. |
+| `hf` | `hf://{model-id}[@{revision}]` | Downloads the model from Hugging Face to `path` on the selected nodes. The revision defaults to `main`, and a node resolves it to a commit each time it processes the model. See [Pin the revision](#pin-the-hf-revision). |
 | `oci` | `oci://n/{namespace}/b/{bucket}/o/{object_path}` | Downloads the model from OCI Object Storage to `path` on the selected nodes. |
 | `modelpack` | `modelpack://{registry}/{repository}[:{tag}]`, or `@{digest}` in place of the tag | Pulls the model, a [CNCF ModelPack](https://github.com/modelpack/model-spec) artifact, from a container registry to `path` on the selected nodes, through an `llmman serve` daemon that you provide. The repository can contain slashes. See [ModelPack models](../../guides/operate-ome/model-agent.md#modelpack-models). |
 | `pvc` | `pvc://{pvc-name}/{sub-path}` for a BaseModel, `pvc://{namespace}:{pvc-name}/{sub-path}` for a ClusterBaseModel | A metadata Job reads the model from the claim. Whatever the kind, only InferenceServices in the claim's namespace can use it. See [Serve models from a PVC](../../guides/deploy-models/serve-models-from-pvc.md). |
@@ -60,6 +60,14 @@ Set `storage.storageUri`, and for `hf://`, `oci://`, `modelpack://` and `local:/
 
 !!! warning "No downloader for S3, Azure, GCS or GitHub"
     OME accepts `s3://`, `az://`, `gs://` and `github://` URIs, but has no downloader for them. The model's [node labels](#node-labels-and-status) stay `Updating`, and the model stays `In_Transit`.
+
+### Pin the `hf://` revision {#pin-the-hf-revision}
+
+The revision after `@` in an `hf://` URI is a full 40-character commit, or a branch or tag such as the default `main`. Before a download, the node turns the revision into a commit: it uses a 40-character commit as it is, and resolves anything else to the commit it points to on Hugging Face at that moment.
+
+A node resolves the revision again every time it processes the model, whatever the model's `downloadPolicy`: when the node starts matching the model, when [a change to the model](#choose-the-nodes) makes all matching nodes process it again, and when its [agent pod restarts](../../guides/operate-ome/model-agent.md#workers-and-queues). Once `main` moves, a node that processes the model again downloads the newly resolved commit and switches its copy to it. So two nodes that processed an unpinned model at different times can hold different snapshots of it.
+
+To keep every node on one snapshot, put the commit in the URI, as in `hf://Qwen/Qwen2.5-7B-Instruct@<commit>`. Models that share files with `downloadPolicy: ReuseIfExists` share one copy per resolved commit: see [Share Hugging Face artifacts](../../guides/operate-ome/shared-hf-artifacts.md).
 
 ### Credentials
 
@@ -157,6 +165,8 @@ When you change the model or a node:
 | The model's labels or annotations, or another `storage` field, such as `storageUri`, `path` or `key` | All matching nodes process the model again. A `downloadPolicy` change does this only for `hf://` models. |
 | `displayName`, `modelCapabilities` or other descriptive metadata | Nodes keep their copy as it is. |
 | A node's labels | Nothing, until you [restart the agent pod](../../guides/operate-ome/model-agent.md#a-node-never-gets-the-label) on that node. The new agent downloads models that now select the node, and keeps copies of models that no longer do. |
+
+Processing an `hf://` model again also [resolves its revision](#pin-the-hf-revision) again. Without a commit in the URI, a node that processes the model after `main` has moved downloads the new commit and switches to it.
 
 While a node processes the model, the model's label there is `Updating`, so new serving pods avoid that node until it's `Ready` again. Running pods keep running.
 
