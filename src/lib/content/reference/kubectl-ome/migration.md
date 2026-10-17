@@ -230,7 +230,7 @@ The values have these limits:
 - `--instance` is a whole number without a sign or leading zeros.
 - `--from-node` is a node name that hosts one of the Instance's pods.
 - `--hint-node` takes up to eight node names, comma-separated or in repeated flags, each once, and not the source node.
-- `--reason` is printable text up to 256 bytes, without `://` or anything that looks like a credential or token.
+- `--reason` is printable text up to 256 bytes, without `://` or anything that looks like a credential or token, and not the exact words `AutoRecover` or `ForceDelete`. OME keeps the reason as written in the request's entry in the [audit ConfigMap](#history), and marks its own entries with those two words — `AutoRecover` for a relocation, `ForceDelete` for a [force-deleted pod](../../guides/omenative/recover-stuck-deletions.md) — so a request's entry can't pass for one of OME's.
 - `--requested-by` is up to 128 letters, digits and `_.:/@+-` characters. It's a label, not your identity.
 - `--request-id` is a UUID in canonical form. It looks up a request you already sent, and never sets the ID of a new one.
 
