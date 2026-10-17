@@ -214,7 +214,7 @@ Each entry of `metricResults` holds the metric's `name`, `threshold` and `operat
 | A message that starts with `template error:` | The query uses an unknown variable or a malformed template. |
 | Another message | The query's error: the source is unreachable, it refused the token, or the sample ran out of [`queryTimeout`](#controller-settings). |
 | One entry named `auth`, with a message that starts with `resolve bearer token:` | OME couldn't read the token from its Secret. |
-| One entry named `prometheus` | OME couldn't build a client for the source's address. |
+| An entry named `prometheus` per sampled member, a secondary's as `<component>/prometheus` | OME couldn't build a client for the source's address. |
 
 ## Controller metrics
 
