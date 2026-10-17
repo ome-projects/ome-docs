@@ -57,6 +57,7 @@ ome:
         annotations:
           cloud.google.com/managed-by: slice-scheduler
           slice.gke.io/retry-on-failure: "true"
+        podAnnotations: [example.com/slice-priority]
         readyStates: [ACTIVE, ACTIVE_DEGRADED]
         readyTimeout: 10m
 ```
@@ -70,8 +71,11 @@ ome:
 | `accelerators.{name}` | How slices of one accelerator are provisioned: the Slice object's `sliceType`, the chips one host has, and the `topologies` OME may provision. Write each topology in its canonical form, such as `2x2x1`, and as a whole number of hosts. |
 | `slice.ownerKindLabel`, `slice.ownerNameLabel` | Labels that trace a Slice to the InferenceReplica it serves. They don't decide which Slices OME may delete: only `ome.io/slice-owner-uid` does. |
 | `slice.annotations` | Annotations written on every Slice OME creates, such as the ones that hand it to GKE's slice scheduler. Required: `{}` for none. |
+| `slice.podAnnotations` | Optional. Annotation keys OME copies from an opted-in component's pod template onto each Slice it creates for it, such as the key that sets a per-workload scheduling priority. Each key must be a qualified name, listed once, not set by `slice.annotations` and not `ome.io/slice-owner`, which OME sets itself. |
 | `slice.readyStates` | The `Ready` condition reasons under which pods may bind to a Slice. |
 | `slice.readyTimeout` | Optional. How long a Slice that has its partition may stay out of a ready state before OME releases it and provisions the slot again, once no pod holds it: see [A SliceReadyTimeout event appears](#a-slicereadytimeout-event-appears). A positive duration, such as `10m`. Unset, OME never times a Slice out. |
+
+With `slice.podAnnotations`, you annotate one workload's Slices from its own spec: set the values in the component's `annotations`, the block that carries Step 2's opt-in, and they reach the pod template, where OME reads them — the leader's, when the engine has a leader and workers. With this page's values, an engine whose `annotations` also carry `example.com/slice-priority: "7"` gets that annotation, with that value, on each Slice OME creates for it. OME copies the values when it creates a Slice and never modifies one that exists: a key the template doesn't set is left off, a Slice keeps the values it was created with, and a changed value reaches only the Slices created afterwards, such as the new pods' Slices during an update's surge.
 
 !!! warning "The required fields have no defaults"
     The chart's default, `{}`, provisions no slices. Once you set the block, every field the table doesn't mark optional is required, with no default in the binary, and the manager reads the block only when it starts: a field that is missing or invalid, such as a `readyTimeout` that isn't a positive duration, stops the manager from starting. See [The manager doesn't start after the upgrade](#the-manager-doesnt-start-after-the-upgrade).
@@ -100,7 +104,7 @@ kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.tpuSlic
 ```
 
 ```output
-{"accelerators":{"tpu7x":{"chipsPerHost":4,"sliceType":"tpu7x","topologies":["2x2x1","2x2x2"]}},"chipResource":"google.com/tpu","nodeLabels":{"accelerator":"cloud.google.com/gke-tpu-accelerator","slice":"cloud.google.com/gke-tpu-slice","topology":"cloud.google.com/gke-tpu-topology"},"provisionOnly":{"key":"cloud.google.com/gke-accelerator-topology-mode","value":"PROVISION_ONLY"},"slice":{"annotations":{"cloud.google.com/managed-by":"slice-scheduler","slice.gke.io/retry-on-failure":"true"},"ownerKindLabel":"cloud.google.com/slice-owner-kind","ownerNameLabel":"cloud.google.com/slice-owner-name","readyStates":["ACTIVE","ACTIVE_DEGRADED"],"readyTimeout":"10m"}}
+{"accelerators":{"tpu7x":{"chipsPerHost":4,"sliceType":"tpu7x","topologies":["2x2x1","2x2x2"]}},"chipResource":"google.com/tpu","nodeLabels":{"accelerator":"cloud.google.com/gke-tpu-accelerator","slice":"cloud.google.com/gke-tpu-slice","topology":"cloud.google.com/gke-tpu-topology"},"provisionOnly":{"key":"cloud.google.com/gke-accelerator-topology-mode","value":"PROVISION_ONLY"},"slice":{"annotations":{"cloud.google.com/managed-by":"slice-scheduler","slice.gke.io/retry-on-failure":"true"},"ownerKindLabel":"cloud.google.com/slice-owner-kind","ownerNameLabel":"cloud.google.com/slice-owner-name","podAnnotations":["example.com/slice-priority"],"readyStates":["ACTIVE","ACTIVE_DEGRADED"],"readyTimeout":"10m"}}
 ```
 
 ## Step 2: Opt the engine in
