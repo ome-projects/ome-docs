@@ -87,6 +87,7 @@ A node is unhealthy while one of its trigger conditions is `True`, and Alfred pl
 | `taint.key` | with `taint` | Matches a node taint with this key. |
 | `taint.value` | no | The taint's value, matched like `label.value`. |
 | `taint.effect` | no | `NoSchedule`, `PreferNoSchedule` or `NoExecute`. Without it, any effect matches. |
+| `cordon` | no | With `true`, Alfred cordons the nodes the trigger matches: only in execute mode, and only with the chart's [`maintenanceCordon.enabled`](#helm-chart-values), which is off by default. Alfred never uncordons. The default is `false`. See [The maintenance cordon](../../concepts/scheduling/alfred-policies.md#the-maintenance-cordon). |
 
 A node is due for maintenance when it matches any trigger. Maintenance evacuations use the cooldowns under [Workload defaults](#workload-defaults), not `healthCooldownFloorMinutes`.
 
@@ -108,6 +109,7 @@ alfredConfig:
             taint:
               key: maintenance.example.com/patching
               effect: NoSchedule
+            cordon: true
 ```
 
 ### Workload defaults
@@ -249,6 +251,7 @@ Alfred sees the change at its next observation and applies it from the next deci
 | `migration.apiVersion` | `""` | `v1` lets Alfred plan moves for OMENative Instances: see [Migration](#migration). Sets `--migration-api-version` and `--migration-service-account=ome-alfred`. |
 | `migration.acknowledgementTimeout` | `2m` | How long a migration request may go unacknowledged before Alfred marks it `stalled`. Positive, at most `1h`. Sets `--migration-ack-timeout`. |
 | `migration.failureBackoff` | `5m` | How long Alfred waits after a request fails or stalls before it sends another. Positive, at most `1h`. Sets `--migration-failure-backoff`. |
+| `maintenanceCordon.enabled` | `false` | With `true`, Alfred may cordon the nodes that a [maintenance trigger](#maintenance-triggers) with `cordon: true` matches, in execute mode. The chart grants `get` and `patch` on nodes in the separate ClusterRole `ome-alfred-maintenance-cordon`, and sets `--enable-maintenance-cordon`. Alfred never uncordons. See [The maintenance cordon](../../concepts/scheduling/alfred-policies.md#the-maintenance-cordon). |
 
 The chart runs Alfred with leader election, using the Lease `alfred.ome.io`, and keeps Alfred's ConfigMaps and Lease in the release namespace. Alfred exits at startup when a duration is out of range or a simulation worker fails to load. It logs `invalid startup configuration` or `unable to configure recommendation simulation` with the error.
 
