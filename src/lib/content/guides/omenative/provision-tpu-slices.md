@@ -368,7 +368,7 @@ The pods exist but stay `Pending`, or nothing happens at all, and `kubectl get s
 
 ### The manager doesn't start after the upgrade
 
-`kubectl rollout status` keeps waiting, and the new pods' logs show `Failed to initialize TPU slice provisioning configuration`, with every field that is missing or invalid. Fix the values and upgrade again. [The manager rollout doesn't finish](../operate-ome/configure-the-controller.md#the-manager-rollout-doesnt-finish) explains how the Deployment behaves meanwhile.
+`kubectl rollout status` keeps waiting, and the new pods' logs show `Failed to initialize TPU slice provisioning configuration`, with every field that is missing or invalid. One mistake is logged differently: `ome.io/slice-owner` in `slice.podAnnotations` shows as `Failed to create InferenceReplica controller`, with `slice annotation ome.io/slice-owner is set by the controller`. Fix the values and upgrade again. [The manager rollout doesn't finish](../operate-ome/configure-the-controller.md#the-manager-rollout-doesnt-finish) explains how the Deployment behaves meanwhile.
 
 ## Clean up
 
