@@ -219,6 +219,7 @@ The agent serves Prometheus metrics at `/metrics` on port 8080. Most have the la
 | `model_agent_md5_checksum_failed_total` | Counter | Failed verifications. |
 | `model_agent_verification_duration_seconds` | Histogram | How long verifications took. |
 | `model_agent_rate_limit_total` | Counter | Hugging Face rate-limit errors. |
+| `model_agent_rate_limit_wait_seconds` | Histogram | An estimated wait per Hugging Face rate-limit error. The agent doesn't measure the wait: every observation is a fixed 30 seconds. |
 
 Since v1.3, `podMonitor.enabled: true` creates the PodMonitor `ome-model-agent` for the Prometheus Operator, which needs the Operator's `monitoring.coreos.com/v1` CRDs. `podMonitor.interval`, `podMonitor.scrapeTimeout` and `podMonitor.additionalLabels` tune it. [Collect metrics](metrics.md) covers the other ways to scrape the agent.
 
