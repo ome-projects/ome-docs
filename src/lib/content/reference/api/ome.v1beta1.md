@@ -3306,6 +3306,44 @@ on one home.
 </tbody>
 </table>
 
+### `CandidateComponentFloor` {#ome-io-v1beta1-CandidateComponentFloor}
+
+Used by [`CandidatePlacement`](#ome-io-v1beta1-CandidatePlacement).
+
+CandidateComponentFloor records one component&#39;s floor on a Split home.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>component</code></td>
+<td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
+<td>
+
+
+Allowed values: `engine`, `decoder`, `router`.
+
+</td></tr>
+<tr><td><code>current</code></td>
+<td><code>int32</code></td>
+<td>
+
+Current is the floor on the home&#39;s member copy; zero without a copy.
+
+Minimum: `0`.
+
+</td></tr>
+<tr><td><code>desired</code></td>
+<td><code>int32</code></td>
+<td>
+
+Desired is the floor at the accepted plan&#39;s desired shares.
+
+Minimum: `0`.
+
+</td></tr>
+</tbody>
+</table>
+
 ### `CandidatePlacement` {#ome-io-v1beta1-CandidatePlacement}
 
 Used by [`PlacementStatus`](#ome-io-v1beta1-PlacementStatus).
@@ -3407,6 +3445,18 @@ Rollout mirrors this home&#39;s rollout-run provenance (run identity plus
 per-group plan digests, never the plan bodies) so plan drift between
 homes is visible from the source InferenceService. Set only when the
 source&#39;s rollout groups reference a RolloutPolicy.
+
+</td></tr>
+<tr><td><code>componentFloors</code></td>
+<td><a href="#ome-io-v1beta1-CandidateComponentFloor"><code>[]CandidateComponentFloor</code></a></td>
+<td>
+
+ComponentFloors records, on a Split home, each scaled component&#39;s floor:
+the one on the home&#39;s member copy now, and the one the accepted plan
+gives it. A current floor above the desired one is held there until its
+replacements on other homes are ready.
+
+Maximum items: `3`.
 
 </td></tr>
 </tbody>
@@ -3549,7 +3599,7 @@ LastRun is the bounded record of the home&#39;s most recently closed run.
 
 Used by [`TrafficMapCapacity`](#ome-io-v1beta1-TrafficMapCapacity).
 
-CapacitySource names which input produced an entry&#39;s Allocated count.
+CapacitySource names the authority for an entry&#39;s capacity.
 
 Underlying type: `string`.
 
@@ -3886,9 +3936,12 @@ created.
 
 Conditions mirrors the HPA&#39;s or ScaledObject&#39;s conditions
 verbatim (HPA: ScalingActive / AbleToScale / ScalingLimited;
-ScaledObject: Ready / Active / Fallback / Paused). Empty when
-ManagedBy != &#34;ome&#34; — operator-owned scalers are surfaced via
-scaleTargetRef instead.
+ScaledObject: Ready / Active / Fallback / Paused). OME adds its
+own conditions next to them: AutoscalerSwitched when the
+Component moves between an OME HPA and a KEDA ScaledObject, and
+AutoscalerResolved when it carries an autoscalerPolicyRef. The
+scaler conditions are empty when ManagedBy != &#34;ome&#34; —
+operator-owned scalers are surfaced via scaleTargetRef instead.
 
 </td></tr>
 </tbody>
@@ -4297,7 +4350,7 @@ PairingProtocol values are equal; an empty value pairs with anything.
 
 ### `ComponentType` {#ome-io-v1beta1-ComponentType}
 
-Used by [`ComponentAffinityMatch`](#ome-io-v1beta1-ComponentAffinityMatch), [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`MigrationHistoryEntry`](#ome-io-v1beta1-MigrationHistoryEntry), [`PlacementComponentDemand`](#ome-io-v1beta1-PlacementComponentDemand), [`PlacementComponentFloor`](#ome-io-v1beta1-PlacementComponentFloor), [`ProportionalPolicy`](#ome-io-v1beta1-ProportionalPolicy), [`RolloutCoordinationGroupStatus`](#ome-io-v1beta1-RolloutCoordinationGroupStatus), [`RolloutGroup`](#ome-io-v1beta1-RolloutGroup), [`RolloutRunTarget`](#ome-io-v1beta1-RolloutRunTarget).
+Used by [`CandidateComponentFloor`](#ome-io-v1beta1-CandidateComponentFloor), [`ComponentAffinityMatch`](#ome-io-v1beta1-ComponentAffinityMatch), [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`MigrationHistoryEntry`](#ome-io-v1beta1-MigrationHistoryEntry), [`PlacementComponentDemand`](#ome-io-v1beta1-PlacementComponentDemand), [`PlacementComponentFloor`](#ome-io-v1beta1-PlacementComponentFloor), [`ProportionalPolicy`](#ome-io-v1beta1-ProportionalPolicy), [`RolloutCoordinationGroupStatus`](#ome-io-v1beta1-RolloutCoordinationGroupStatus), [`RolloutGroup`](#ome-io-v1beta1-RolloutGroup), [`RolloutRunTarget`](#ome-io-v1beta1-RolloutRunTarget).
 
 ComponentType contains the different types of components of the service
 
@@ -7268,6 +7321,14 @@ step that would exceed it is paused until the pools rebalance. An explicit
 0 means zero drift. When omitted, the operator-configured default (the
 coordination block of the operator&#39;s ConfigMap) applies; if the operator
 configures no default either, the group rolls with no drift bound.
+Admission rejects a drain-first member (RecreatePod, or an in-place
+strategy on multi-node gangs) whose single drain would empty its side or
+move the serving ratio more than twice the tolerance from the start,
+since such a member could never take its first step. A group whose
+members all roll drain-first is paced by the batch step instead: each
+member&#39;s drains are counted in batches of its maxUnavailable, and no
+member opens its next batch until every member&#39;s previous batch serves.
+The ratio band is not consulted for such a group, so admission admits it.
 
 Minimum: `0`. Maximum: `100`.
 
@@ -10949,6 +11010,41 @@ inline progression shadows a ref — what the shadowed policy would pin.
 </tbody>
 </table>
 
+### `RouterCapacityEndpoint` {#ome-io-v1beta1-RouterCapacityEndpoint}
+
+Used by [`RouterSpec`](#ome-io-v1beta1-RouterSpec).
+
+RouterCapacityEndpoint names the router path that reports serving capacity
+and the router Service port that answers it.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>path</code> <span class="doc-api-required">Required</span></td>
+<td><code>string</code></td>
+<td>
+
+Path is the exact request path, for example /capacity. It must equal
+spec.routing.capacity.path, which the control plane polls. &#34;/&#34; is
+rejected because it would send every request to Port.
+
+Minimum length: `2`. Maximum length: `1024`. Pattern: `^/[^/?#]`.
+
+</td></tr>
+<tr><td><code>port</code> <span class="doc-api-required">Required</span></td>
+<td><code>int32</code></td>
+<td>
+
+Port is the router Service port that answers Path. OME adds the route
+only while the router Service exposes this port, so a wrong port leaves
+the capacity endpoint unreachable rather than the service unroutable.
+
+Minimum: `1`. Maximum: `65535`.
+
+</td></tr>
+</tbody>
+</table>
+
 ### `RouterSpec` {#ome-io-v1beta1-RouterSpec}
 
 Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec), [`ServingRuntimeSpec`](#ome-io-v1beta1-ServingRuntimeSpec).
@@ -10991,6 +11087,19 @@ Additional configuration parameters for the runner.
 This can include framework-specific settings.
 
 </td></tr>
+<tr><td><code>capacityEndpoint</code></td>
+<td><a href="#ome-io-v1beta1-RouterCapacityEndpoint"><code>RouterCapacityEndpoint</code></a></td>
+<td>
+
+CapacityEndpoint exposes one router path on the service&#39;s gateway
+hostname from a router port other than the serving port. Set it when
+spec.routing.capacity polls the router, and the router answers that
+path on another port, for example its metrics port. Each serving
+cluster&#39;s top-level HTTPRoute then sends exactly this path to Port;
+every other path still reaches the serving port. Set it on the
+InferenceService; serving runtimes reject it.
+
+</td></tr>
 </tbody>
 </table>
 
@@ -11004,6 +11113,16 @@ may remove every route arm.
 Underlying type: `string`.
 
 Allowed values: `PreserveTraffic`, `Drain`.
+
+### `RoutingCapacityMode` {#ome-io-v1beta1-RoutingCapacityMode}
+
+Used by [`RoutingCapacitySpec`](#ome-io-v1beta1-RoutingCapacitySpec), [`TrafficMapSpec`](#ome-io-v1beta1-TrafficMapSpec).
+
+RoutingCapacityMode selects how endpoint capacity participates in routing.
+
+Underlying type: `string`.
+
+Allowed values: `Ceiling`, `Reported`.
 
 ### `RoutingCapacitySpec` {#ome-io-v1beta1-RoutingCapacitySpec}
 
@@ -11029,6 +11148,16 @@ Validation: quorum must not exceed samples.
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
+<tr><td><code>mode</code></td>
+<td><a href="#ome-io-v1beta1-RoutingCapacityMode"><code>RoutingCapacityMode</code></a></td>
+<td>
+
+Mode selects a replica ceiling or an authoritative reported weight.
+Unset preserves Ceiling. In Reported mode a home&#39;s accepted report is its
+capacity in replicas, neither capped by its replica count nor scaled by
+its capacity factor. A home without one keeps its replica-based weight.
+
+</td></tr>
 <tr><td><code>disabled</code></td>
 <td><code>bool</code></td>
 <td>
@@ -11099,7 +11228,9 @@ Minimum: `1`.
 <td><code>int32</code></td>
 <td>
 
-Quorum is the number of readings required to corroborate a lower capacity.
+Quorum is the number of readings required before a report applies. In
+Ceiling mode they corroborate a lower capacity; in Reported mode the lower
+median of the window applies.
 
 Minimum: `1`.
 
@@ -11108,7 +11239,11 @@ Minimum: `1`.
 <td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#duration-v1-meta"><code>Duration</code></a></td>
 <td>
 
-MaxAge is the maximum accepted age of a capacity report.
+MaxAge is the maximum accepted age of a capacity report. Choose it above
+quorum * period: otherwise the oldest reading can expire before the next
+poll lands, and the home briefly falls back to its replica count. In
+Reported mode each further period keeps a home on its reports through one
+more failed poll.
 
 </td></tr>
 </tbody>
@@ -12193,42 +12328,53 @@ TrafficMapCapacity records why an entry&#39;s weight is what it is.
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
+<tr><td><code>reportedWeight</code></td>
+<td><a href="https://pkg.go.dev/k8s.io/apimachinery/pkg/api/resource#Quantity"><code>Quantity</code></a></td>
+<td>
+
+ReportedWeight is the accepted endpoint capacity in Reported mode, in
+replicas, and replaces the replica-based weight. Nil means no fresh
+quorum, so the entry weighs its replica count; zero means the reporter
+cannot serve traffic.
+
+</td></tr>
 <tr><td><code>allocated</code></td>
 <td><code>int32</code></td>
 <td>
 
-Allocated is the effective allocation ceiling for this home: the
-control-plane-admitted count, optionally lowered by a capacity report.
-Ready independently caps it when computing Weight.
+Allocated is the admitted replica count. In Ceiling mode a report can
+lower it, and Ready independently caps it when computing Weight.
+It is diagnostic when ReportedWeight is set, including when it is zero.
 
 </td></tr>
 <tr><td><code>ready</code></td>
 <td><code>int32</code></td>
 <td>
 
-Ready is the home&#39;s live ready-replica count. It caps Allocated when
-computing Weight; zero health-gates the entry to weight 0.
+Ready is the live ready-replica count. It caps Weight unless
+ReportedWeight is set.
 
 </td></tr>
 <tr><td><code>factor</code></td>
 <td><a href="https://pkg.go.dev/k8s.io/apimachinery/pkg/api/resource#Quantity"><code>Quantity</code></a></td>
 <td>
 
-Factor is the per-replica relative serving capacity of this home&#39;s
-accelerator (baseline &#34;1&#34;, higher = faster), so heterogeneous hardware is
-weighted by capacity rather than raw replica count: weight is proportional
-to min(allocated, ready) * factor. Defaults to &#34;1&#34; (homogeneous) when unset — the
-multiplicative identity, i.e. no scaling. It is operator-supplied config,
-never derived from raw hardware FLOPS.
+Factor is the per-replica serving capacity of this home&#39;s accelerator
+(baseline &#34;1&#34;, higher = faster), so heterogeneous hardware is weighted by
+capacity rather than raw replica count: weight is proportional to
+min(allocated, ready) * factor. Defaults to &#34;1&#34; (homogeneous) when unset —
+the multiplicative identity, i.e. no scaling. It is unset when
+ReportedWeight is, because the report already includes the hardware. It
+is operator-supplied config, never derived from raw hardware FLOPS.
 
 </td></tr>
 <tr><td><code>source</code></td>
 <td><a href="#ome-io-v1beta1-CapacitySource"><code>CapacitySource</code></a></td>
 <td>
 
-Source names which input produced Allocated. FallbackReason separately
-distinguishes an intentionally control-plane-only allocation from a
-configured endpoint source that could not supply a usable ceiling.
+Source names the capacity authority: Endpoint when a report lowered
+Allocated in Ceiling mode or ReportedWeight is set in Reported mode, and
+ControlPlane otherwise.
 
 Default: `ControlPlane`.
 
@@ -12237,7 +12383,7 @@ Default: `ControlPlane`.
 <td><code>int32</code></td>
 <td>
 
-Reported is the home&#39;s own servable-capacity figure, recorded whenever the
+Reported is the home&#39;s servable count in Ceiling mode, recorded whenever the
 endpoint source answered — including when it was at or above the plan and
 therefore did not lower Allocated. Keeping it visible in that case is what
 makes the ceiling auditable: Allocated alone cannot show that a report was
@@ -12251,8 +12397,9 @@ Minimum: `0`.
 <td>
 
 FallbackReason explains why a configured endpoint capacity source did not
-produce an applied ceiling and the control-plane allocation was retained.
-Empty means capacity polling is disabled or its latest result was usable.
+produce a current observation. The entry keeps its replica-based weight;
+in Reported mode it first uses a fresh cached report. Empty means the
+latest result was usable or polling is disabled.
 
 </td></tr>
 </tbody>
@@ -12313,8 +12460,7 @@ can set a healthy home to zero without changing its health evidence.
 <td><a href="#ome-io-v1beta1-TrafficMapCapacity"><code>TrafficMapCapacity</code></a></td>
 <td>
 
-Capacity is the provenance of Weight: weight is proportional to
-min(allocated, ready) * factor, then gated by the active probe.
+Capacity records the inputs to Weight under spec.capacityMode.
 
 </td></tr>
 <tr><td><code>probe</code></td>
@@ -12627,6 +12773,17 @@ many-ISVC-to-one-service map.
 
 Mode mirrors the ISVC&#39;s spec.placement.mode (Single/All/Split) so a
 consumer can read the routing intent without reading the ISVC.
+
+</td></tr>
+<tr><td><code>capacityMode</code></td>
+<td><a href="#ome-io-v1beta1-RoutingCapacityMode"><code>RoutingCapacityMode</code></a></td>
+<td>
+
+CapacityMode identifies the capacity authority, even for an empty table.
+In Reported mode a table in which any entry carries a reported weight is
+published at once, and an earlier positive plan never replaces it. A table
+without one follows the same retained-positive rules as Ceiling. Unset
+means Ceiling.
 
 </td></tr>
 <tr><td><code>entries</code></td>
