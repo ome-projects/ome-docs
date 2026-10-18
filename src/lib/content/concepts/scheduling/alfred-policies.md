@@ -117,6 +117,34 @@ alfredConfig:
 
 Alfred places nothing on a node that matches a trigger. Moves off such a node wait out the full [cooldowns](#cooldowns), unlike moves off `Unhealthy` nodes. [Maintenance triggers](../../reference/scheduling/alfred-configuration.md#maintenance-triggers) lists the fields.
 
+### The maintenance cordon
+
+A maintenance trigger alone doesn't keep schedulers from placing new work on its nodes, so a node under maintenance may never empty, and a move's replacement pods can even land on another node of the same rule. To close that gap, set `cordon: true` on the trigger, and install the chart with `maintenanceCordon.enabled: true`. That value grants `get` and `patch` on nodes in the separate ClusterRole `ome-alfred-maintenance-cordon`, and passes Alfred the `--enable-maintenance-cordon` flag. Without it, `cordon: true` changes nothing, and Alfred stays read-only on nodes. With Kustomize, apply `config/alfred/maintenance-cordon/rbac.yaml` next to `config/alfred`, and add `--enable-maintenance-cordon=true` to the deployment yourself.
+
+```yaml
+maintenanceCordon:
+  enabled: true
+alfredConfig:
+  policies:
+    nodeHealth:
+      maintenance:
+        triggers:
+          - name: hardware-swap
+            taint:
+              key: maintenance.example.com/hardware-swap
+              effect: NoSchedule
+            cordon: true
+```
+
+In execute mode, the leader then cordons each node that such a rule puts under maintenance, at the start of each decision pass, before it decides moves. It reads the node from the API server again, not from its cache, and cordons it only while the rule still matches. The cordon records the rule's name in the node annotation `alfred.ome.io/cordoned-for-maintenance` and emits the Normal node event `NodeCordonedForMaintenance`. Recommend-only mode never cordons. The cordon doesn't go through the node-health policy, so it still acts with `signalOnly: true`.
+
+Alfred never uncordons, and it leaves a node that something else cordoned alone: no write, no annotation. Your maintenance tooling returns the node to service. Clear the signal the rule matches as well as uncordoning, or Alfred cordons the node again on its next pass.
+
+A replacement pod can land on any schedulable node, including one Alfred failed to cordon. So while a cordon fails, for example because the ClusterRole is missing, Alfred submits no migration request: it withholds every admitted move with `MaintenanceCordonFailed`, and retries the cordon on each pass.
+
+!!! warning "The cordon permission isn't guarded"
+    `patch` on nodes lets its holder change any node field. Alfred's code limits the write to the cordon and its annotation, but no admission policy enforces that, unlike Alfred's migration writes. Opt in only where that trust is acceptable.
+
 ### Signals and events
 
 Alfred lists the nodes that aren't `Clear`, or are due for maintenance, in its recommendations, under `node.<name>` keys. It also emits events on the Node:
@@ -127,6 +155,7 @@ Alfred lists the nodes that aren't `Clear`, or are due for maintenance, in its r
 | `NodeDrainedForRepair` | A node that needs repair has no OME pod with GPUs left. |
 | `NodeMaintenanceRequested` | The node first matches a maintenance trigger. |
 | `NodeDrainedForMaintenance` | A node due for maintenance has no OME pod with GPUs left. |
+| `NodeCordonedForMaintenance` | Alfred cordons the node, under [the maintenance cordon](#the-maintenance-cordon) opt-in. |
 
 With `signalOnly: true`, the policy reports nodes and moves nothing. Use it when your own repair tooling drains nodes and acts on these events. [Alfred metrics and events](../../reference/scheduling/alfred-metrics-and-events.md#on-a-node) describes the events.
 

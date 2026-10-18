@@ -25,7 +25,7 @@ Multi-cluster serving, routing and publishing are alpha, still in development, a
 
 For each TrafficMap, the controller's built-in publisher, `gatewayapi`, writes these objects on the control-plane cluster, by default in the InferenceService's namespace, with [labels](../../reference/api/labels-and-annotations.md#endpoint-publisher-labels) such as `ome.io/placement-endpoint-isvc: chat`:
 
-- An HTTPRoute named after the InferenceService, here `chat-global`, attached to the `globalGateway` Gateway. It matches the global hostname at every path, and has a backend for each TrafficMap entry, at the entry's weight, 0 included.
+- An HTTPRoute named after the InferenceService, here `chat-global`, attached to the `globalGateway` Gateway. It matches the global hostname at every path, and has a backend for each TrafficMap entry, at the entry's weight, 0 included. It carries no request timeout: see [Allow long requests](#allow-long-requests).
 - For each backend, an `ExternalName` Service named `tmb-` and a hash. It points at the host of the URL that the entry's workload cluster reports for the service, such as `chat.prod.worker-a.example.com`.
 
 The route keeps the client's path, so `http://chat.prod.global.example.com/v1/models` reaches the engine as sent. A service with a router or a decoder belongs on the [shared host](../networking/gateway-host-schemes.md#shared-host-with-a-path-prefix) instead, as [Per-service subdomains](../networking/gateway-host-schemes.md#per-service-subdomains) warns, and its clients add its path prefix, such as `/prod/chat/`.
@@ -207,6 +207,38 @@ worker-a 203.0.113.10
 !!! warning "Choose routeNamespace before you publish"
     Changing `routeNamespace` doesn't move published routes. Each old route keeps its last weights and its hostname, so the new route gets `ClaimRejected` until you delete the old one. Delete the old Services, EndpointSlices and BackendTLSPolicies too.
 
+## Allow long requests
+
+The route carries no request timeout, so the control-plane Gateway's own default cuts long generations: 15 seconds on Envoy Gateway. The settings in [Configure route timeouts](../networking/configure-route-timeouts.md) can't change that: a component's `timeoutSeconds` and the cluster-wide `defaultRouteTimeoutSeconds` set only the HTTPRoutes that OME's ingress creation writes on the workload clusters, never the route the publisher writes.
+
+Adding `timeouts.request` to the route doesn't stick either: the publisher owns the whole spec, and puts back the one it renders on its next pass. Instead, set the timeout on the control-plane Gateway, with its implementation's own settings. On Envoy Gateway, a [BackendTrafficPolicy](https://gateway.envoyproxy.io/docs/api/extension_types/) of your own, in the Gateway's namespace, sets the request timeout of every route attached to the Gateway. This one allows 30 minutes:
+
+```yaml title="global-timeout.yaml"
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: global-timeout
+  namespace: gateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: global
+  timeout:
+    http:
+      requestTimeout: 1800s
+```
+
+```bash
+kubectl apply -f global-timeout.yaml
+```
+
+```output
+backendtrafficpolicy.gateway.envoyproxy.io/global-timeout created
+```
+
+The request's second hop keeps its own limit: the workload cluster's route still takes that cluster's `timeoutSeconds` or `defaultRouteTimeoutSeconds`, so a request through the global hostname has to finish within both. Set those on each workload cluster, as [Configure route timeouts](../networking/configure-route-timeouts.md) shows.
+
 ## Troubleshooting
 
 For `InvalidPlan`, `ClaimRejected` and `ApplyFailed`, the controller's log has the error:
@@ -299,6 +331,7 @@ The older endpoint publisher, which runs while routing is off and reads the same
 | HTTP 404. | The request reached a Gateway without a route for its hostname and path. | Turn on `rewriteHostname`, as in [Step 1](#step-1-configure-publishing). On the shared host, add the path prefix. |
 | HTTP 500, and `ResolvedRefs` is `False`. | The implementation rejects the backends, for example because it doesn't support `ExternalName` Services. | Check its support for `ExternalName` backends. |
 | The connection to a workload cluster fails. | A blocked network path to its Gateway, a wrong `backendPort`, or HTTPS with `tls` off. | Check the path, the port and [Backend TLS](#backend-tls). |
+| Long requests fail after about 15 seconds. | The route carries no request timeout, so the control-plane gateway's default applies: 15 seconds on Envoy Gateway. | Set the Gateway's own timeout, as in [Allow long requests](#allow-long-requests). |
 
 ## Clean up
 
