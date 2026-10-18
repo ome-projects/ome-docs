@@ -99,7 +99,9 @@ A `gpus` value without a preset makes the chart fail to render, including the ca
 In PD mode, the engine and decoder pods:
 
 - use their node's network. Each one takes port 8080 on its node, so a node runs at most one engine or decoder pod in PD mode, whichever model it serves.
-- run SGLang in a privileged container, which can use all of its node's devices, with the profile `oci-roce`, and since v1.3 with `cks-gb-sglang` too.
+- run SGLang in a privileged container, which can use all of its node's devices, when `rdmaProfile` is `oci-roce`, the default, and since v1.3 when it's `cks-gb-sglang`.
+
+The chart sets `privileged: true` on those containers explicitly: no RDMA profile makes a container privileged, because a privileged container sees every GPU on its node, not just the ones allocated to it. On a runtime of your own, the profile doesn't open the RDMA devices either: the container can open them only when you request your cluster's RDMA device-plugin resource, such as `rdma/hca_shared_devices_a: 1`, or set `privileged: true` on it yourself.
 
 With a profile that OME doesn't know, OME's pod webhook blocks the pods, and the component's ReplicaSet records `FailedCreate` events.
 

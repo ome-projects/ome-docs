@@ -44,6 +44,12 @@ An InferenceService that fronts standalone replicas with [`spec.replicaRefs`](..
 
 To allow longer requests, set the cluster-wide default, as in [Step 2](#step-2-set-a-cluster-wide-default). After a Helm install, there's often nothing to do: the chart's `0` already turns the timeout off. After a kustomize install, the setting is unset, so Envoy cuts requests at 15 seconds until you add it. The default applies to every InferenceService, so give a declared component that needs a different limit its own `timeoutSeconds`.
 
+### The global endpoint's route
+
+Both settings set only the HTTPRoutes that OME's ingress creation writes on the cluster that serves the InferenceService. The route that publishes a multi-cluster service's [global endpoint](../multi-cluster/publish-a-global-endpoint.md) on the control-plane cluster, such as `chat-global`, never carries a request timeout, so the control-plane gateway's default applies: 15 seconds on Envoy Gateway. Multi-cluster routing is alpha, still in development and off by default.
+
+Neither setting can change that route, and editing it doesn't stick: its publisher puts back the spec it renders on its next pass. Set the timeout on the control-plane Gateway itself, as [Allow long requests](../multi-cluster/publish-a-global-endpoint.md#allow-long-requests) shows. A request through the global hostname still passes a workload cluster's own route, which takes its timeout from this page's settings, so the request has to finish within both limits.
+
 ## Step 1: Set the timeout for one InferenceService
 
 Set `timeoutSeconds` on a component to give its routes their own timeout. A service with `spec.replicaRefs` has no components to set: see [Referenced replicas](#referenced-replicas). This is the InferenceService `qwen3-0-6b` from [Before you begin](#before-you-begin), with a 30-minute timeout on the engine:
@@ -141,7 +147,7 @@ Check the routes with the command in [Step 1](#step-1-set-the-timeout-for-one-in
 | --- | --- | --- |
 | `<none>` | The route has no timeout of its own, so the gateway's default applies: 15 seconds on Envoy Gateway. | Set a timeout, as in [Step 1](#step-1-set-the-timeout-for-one-inferenceservice) or [Step 2](#step-2-set-a-cluster-wide-default). |
 | Shorter than your longest request | The timeout is too short. | Raise the component's `timeoutSeconds`, or the default if the component doesn't set one. With `spec.replicaRefs`, raise the default: there's no component to set. |
-| What you expect, or `0s` | Another limit on the request's path, such as a load balancer in front of the gateway, or the client's own timeout. | Raise that limit. |
+| What you expect, or `0s` | Another limit on the request's path: a load balancer in front of the gateway, the client's own timeout, or, through a [global endpoint](#the-global-endpoints-route), the control-plane gateway's own default. | Raise that limit. |
 
 ### The route keeps its old timeout
 

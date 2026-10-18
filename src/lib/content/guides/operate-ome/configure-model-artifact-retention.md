@@ -3,7 +3,7 @@ title: Keep downloaded model files
 description: Keep a model's downloaded files on the nodes after you delete the model, with the models.ome/reserve-model-artifact label.
 ---
 
-When you delete a [base model](../../concepts/models/base-models.md), or change the nodes it selects, the [model agent](model-agent.md) deletes the files it downloaded there. Give the model the label `models.ome/reserve-model-artifact: "true"` first, and the files stay. You can then create the model again later, even after you reinstall OME, and serve it without downloading the weights again.
+When you delete a [base model](../../concepts/models/base-models.md), or change the nodes it selects, the [model agent](model-agent.md) deletes the files it downloaded there. Give the model the label `models.ome/reserve-model-artifact: "true"` first, and the files stay. You can then create the model again later, even after you reinstall OME, and serve it without downloading the weights again — for an `hf://` model, with the commit pinned in its URI, as [Reuse the kept files](#reuse-the-kept-files) explains.
 
 <div class="prerequisites" markdown>
 
@@ -126,6 +126,8 @@ kubectl exec -n ome ome-model-agent-daemonset-4xkqz -- ls /mnt/data/models/qwen/
 ## Reuse the kept files
 
 To serve the kept files again, create a model with the same `storageUri` and `path`. The agents check the files against the source, and download only the ones that are missing or differ. The model becomes `Ready` without downloading the kept files again. This applies to the default `downloadPolicy`, `AlwaysDownload`. For `ReuseIfExists` models, see [Share Hugging Face artifacts](shared-hf-artifacts.md).
+
+For an `hf://` model, this works when the `storageUri` [pins the commit](../../concepts/models/base-models.md#pin-the-hf-revision) that the kept files came from, as in `hf://Qwen/Qwen2.5-7B-Instruct@<commit>`. With a URI that names no commit, each node resolves `main` again when it processes the new model, and once `main` has moved, the node downloads the newly resolved commit instead of becoming `Ready` with the kept files.
 
 To serve the files without downloading anything, create a `local://` model with the directory as its URI and its `path`, such as `local:///mnt/data/models/qwen/qwen2-5-7b-instruct`. See [Serve models from node-local storage](../deploy-models/serve-models-from-local-storage.md).
 
