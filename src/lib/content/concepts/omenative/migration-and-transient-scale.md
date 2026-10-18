@@ -17,7 +17,7 @@ OMENative moves an Instance by surge: it starts a replacement Instance, the surg
 1. OME gives the surge the lowest unused index, 2. The migration record moves to `SurgePending`, and OME records a `MigrationRequestAccepted` event. [`kubectl ome instance list`](../../reference/kubectl-ome/instance.md) shows Instance 0 as `Migrating` and Instance 2 as `Creating`.
 2. OME creates the surge's pods from Instance 0's revision, with the same pod layout. They can't schedule on `gpu-node-a`, and the scheduler prefers `gpu-node-b`.
 3. When the surge is ready and serving, and has stayed ready for the component's [`lifecycle.minReadySeconds`](../../guides/roll-out-changes/pace-rollouts-with-min-ready-seconds.md#ready-versus-available), the record moves to `SurgeReady`.
-4. OME drains Instance 0, with the record in `Draining`, and then deletes it.
+4. OME drains Instance 0, with the record in `Draining`, and then deletes it. When the deleted pods stay `Terminating`, the record [parks](#parked-migrations) until they're gone.
 5. The record ends in `Completed`, with the message `migrated to instance=2`, and OME records a `MigrationCompleted` event.
 
 While the move runs, the InferenceReplica's `CURRENT` column counts the surge, one Instance over `DESIRED`:
@@ -109,7 +109,7 @@ spec:
 
 Each request has a deadline: the time OME accepts it, plus the component's `lifecycle.instanceReadyTimeout`, or OME's cluster-wide `instanceReadyTimeout` when the component sets none. The clock runs while a request waits. A paused rollout holds every migration until you resume it, and a request whose deadline passes during the pause fails when you do.
 
-A request that misses its deadline fails with a `MigrationExpired` event. OME removes the surge, if there is one, and the source goes back to `Ready`, or to `Failed` if its pods aren't ready.
+A request that misses its deadline fails with a `MigrationExpired` event. OME removes the surge, if there is one, and the source goes back to `Ready`, or to `Failed` if its pods aren't ready. A [parked](#parked-migrations) migration is the exception: with no `forceDelete` policy, it outlives its deadline.
 
 A known bug: if neither timeout is set, or the controller's `lifecycle` settings are invalid, every request fails at once with `deadline exceeded in phase Accepted: surge never allocated`. Set a timeout first, as [Set Instance readiness deadlines](../../guides/omenative/set-instance-readiness-deadlines.md) shows.
 
@@ -121,10 +121,10 @@ Migrations also use these controller settings, in the `lifecycle` entry of the `
 | `stuckPodGracePeriod` | `60s` | Not set | How old a surge pod can get while stuck in a state such as `CrashLoopBackOff` before OME fails the request. Unset leaves it to the deadline. |
 | `audit.maxMigrationsPerWindow` | `10` | Not set | How many of a component's migrations can start within `window`. |
 | `audit.window` | `1h` | Not set | The window for that cap, and how long finished records stay in `status.migrations`. |
-| `audit.maxInFlightMigrations` | `3` | Not set | Migrations running at once. It has no effect, since OME moves one Instance of a component at a time. |
+| `audit.maxInFlightMigrations` | `3` | Not set | Migrations running at once, [parked](#parked-migrations) ones included. Running migrations stay serial, so only parked ones can fill the cap. |
 | `autoMigrate.maxAttempts` | `3` | Not set | How many times OME [relocates](#automatic-relocation) an Instance. Unset turns relocation off. |
 
-A request that would go over `maxMigrationsPerWindow` fails, with a `RateLimited` event and a message such as `migration rate cap reached (10/10 in the last 1h0m0s)`. Without all three `audit` settings, as on a kustomize install, a request waits in `Accepted` until you add them or its deadline passes. OME records a `MigrationPolicyUnconfigured` event, and sets a [condition](../architecture/deployment-modes.md#conditions) of the same name on the InferenceReplica. [The request stays Accepted](../../guides/scale-and-migrate/request-an-instance-migration.md#the-request-stays-accepted) shows how to add them.
+A request that would go over `maxMigrationsPerWindow` fails, with a `RateLimited` event and a message such as `migration rate cap reached (10/10 in the last 1h0m0s)`. One that would go over `maxInFlightMigrations`, which only [parked migrations](#parked-migrations) can fill, fails the same way with `in-flight migration cap reached (3/3)`. Without all three `audit` settings, as on a kustomize install, a request waits in `Accepted` until you add them or its deadline passes. OME records a `MigrationPolicyUnconfigured` event, and sets a [condition](../architecture/deployment-modes.md#conditions) of the same name on the InferenceReplica. [The request stays Accepted](../../guides/scale-and-migrate/request-an-instance-migration.md#the-request-stays-accepted) shows how to add them.
 
 ## Automatic relocation
 
@@ -140,7 +140,7 @@ The rebuilt Instance also avoids nodes that earlier relocations left. Each reloc
 
 Once OME has taken a request, the request waits in `Accepted` while:
 
-- another migration of the same component runs: OME moves one Instance of a component at a time, oldest request first;
+- another migration of the same component runs: OME moves one Instance of a component at a time, oldest request first, skipping [parked](#parked-migrations) migrations;
 - an update's surge Instance is in flight on the component;
 - the source Instance has another operation in progress, has an unscheduled pod, or isn't `Ready`;
 - the `audit` settings aren't set (see [Deadline and caps](#deadline)).
@@ -162,6 +162,19 @@ kubectl annotate inferenceservice qwen3-0-6b -n qwen3-0-6b ome.io/migration-requ
 ```output
 inferenceservice.ome.io/qwen3-0-6b annotated
 ```
+
+## Parked migrations
+
+In `Draining`, once the source Instance's pods have drained, OME deletes them. A deleted pod only goes away when its kubelet confirms that its containers stopped, so on a dead node it can stay `Terminating` for good, holding a [pod name](instances.md#what-an-instance-is) the component reuses. When every source pod is `Terminating` past its `deletionTimestamp`, which already includes its grace period, OME parks the migration: the record keeps its `Draining` phase, the surge keeps serving, and the record's message is `parked on source teardown: pod qwen3-0-6b-engine-0-default-0 is Terminating past its own deletion deadline`, naming the first of the stuck pods by name. When no `forceDelete` policy is set, the message adds `; no forceDelete policy is configured, so only its kubelet or an operator can remove it`. A Warning `MigrationParked` event carries the message, once per park.
+
+A parked migration doesn't hold up the component's other migrations: OME skips it and runs the oldest request that isn't parked, as the event's ending says — `later migration requests for component=engine instance=0 dispatch ahead of it`. The park isn't free, though: the surge keeps `CURRENT` one over `DESIRED`, as in [How a migration works](#surge-migration), and the record keeps a slot under `audit.maxInFlightMigrations`.
+
+OME has deleted everything it owns, so only the pod's kubelet, the owner of a [finalizer on it](../../guides/omenative/recover-stuck-deletions.md#a-poddeleteblockedbyfinalizer-event), or the [force-delete escalation](../../guides/omenative/recover-stuck-deletions.md) can remove the pods. OME keeps tending the record and completes the migration on its own once they're gone. With the escalation on, OME force-deletes a source pod once its node counts as dead, so a park on a dead node ends by itself.
+
+The [deadline](#deadline) treats a park by the `forceDelete` policy:
+
+- With no policy, a parked migration outlives its deadline: failing it would tear down the serving surge while the stuck pod still holds the source's pod name, with nothing configured to ever clear it. It stays parked until the pods are removed. A park whose surge stops serving loses that protection and fails at its deadline.
+- With a policy, a source pod that stays `Terminating` past its `deletionTimestamp` plus `overdueSlack` — one the escalation doesn't act on, such as a pod with finalizers or on a node that isn't provably dead — fails the migration at its deadline, with a `MigrationExpired` event and the message `deadline exceeded in phase Draining: source drain incomplete`. OME removes the surge, and the source ends `Failed` while the pod holds its name.
 
 ## Watch migrations
 
@@ -189,6 +202,7 @@ InferenceService   qwen3-0-6b   OMENative migration uuid=3f9c2a1e-7b4d-4c8e-9a6f
 | `RateLimited` | Warning | A cap is reached. |
 | `MigrationPolicyUnconfigured` | Warning | The `audit` settings aren't set, so the request waits. |
 | `MigrationDeferred` | Warning | The source Instance is `Failed` on the revision it runs, so the request waits; the message names what holds its repair. |
+| `MigrationParked` | Warning | Every source pod of a `Draining` migration is stuck `Terminating`, so the record [parks](#parked-migrations) and later requests dispatch ahead of it. |
 | `MigrationSurgeCreateBlocked` | Warning | The API server refused a surge pod. OME retries until the deadline. |
 | `MigrationSurgeWedged` | Warning | A surge pod is stuck, so OME failed the request. |
 | `MigrationExpired` | Warning | A request passed its deadline. |
