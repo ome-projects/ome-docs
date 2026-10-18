@@ -287,6 +287,34 @@ The same request proceeds once the Instance is `Ready` again, but its deadline k
 
 Without one of those messages, the request is waiting its turn, for one of the causes in [When a request waits or fails](../../concepts/omenative/migration-and-transient-scale.md#what-refuses-a-migration-request). Pausing the service holds its migrations, but their deadlines keep running, so one whose deadline passes fails when you resume.
 
+### The migration stays Draining
+
+When `status` keeps showing the request as `Draining` while the replacement serves:
+
+```bash
+kubectl ome migration status chat -n prod --component engine
+```
+
+```output
+SUBJECT/COMP      STATUS                    DETAIL
+7c9e6679/engine   Draining/Active/Current   MSG: parked on source t...
+```
+
+The full message, which `-o yaml` prints, is:
+
+```output
+parked on source teardown: pod chat-engine-3-default-0 is Terminating past its own deletion deadline; no forceDelete policy is configured, so only its kubelet or an operator can remove it
+```
+
+The second part, from `no forceDelete policy`, appears when the [force-delete escalation](../omenative/recover-stuck-deletions.md) is off. The source Instance has drained and OME has deleted its pods, but a deleted pod stays `Terminating` until its kubelet confirms that its containers stopped — usually the node is dead. OME parks the migration and records one Warning `MigrationParked` event, whose message ends `later migration requests for component=engine instance=3 dispatch ahead of it`: other migrations of the engine go ahead of the parked one, but it keeps its replacement Instance, one over the component's count, and a `maxInFlightMigrations` slot. [Parked migrations](../../concepts/omenative/migration-and-transient-scale.md#parked-migrations) has the rules.
+
+The migration isn't stuck for good: it completes on its own once the stuck pods are gone. To remove them:
+
+- Turn on the force-delete escalation, as [Recover stuck deletions](../omenative/recover-stuck-deletions.md) shows. OME force-deletes a deleted pod once its node counts as dead, and the parked migration completes.
+- Or make sure the node is down for good, then [force-delete the pod by hand](../omenative/recover-stuck-deletions.md#manual-recovery).
+
+Without the escalation, the parked migration outlives its deadline and waits for you. With it, a pod it can't remove — one with finalizers, or on a node that isn't provably dead — fails the migration at its deadline instead, with a `MigrationExpired` event and the message `deadline exceeded in phase Draining: source drain incomplete`: OME removes the replacement, and the source Instance ends `Failed` while the pod holds its name.
+
 ### The migration fails
 
 When `status` shows `Failed`, run it with `-o yaml` to read the full message. OME also records a warning event on the InferenceService, which `kubectl get events -n prod --field-selector involvedObject.name=chat` lists. The usual messages are:
