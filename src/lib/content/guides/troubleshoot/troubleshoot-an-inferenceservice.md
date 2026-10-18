@@ -170,7 +170,11 @@ The warning `Runtime srt-qwen2-5-7b will be auto-selected for model qwen2-5-7b` 
 
 ### The InferenceService gets no pods
 
-`kubectl ome status` shows `Pod observation` as `Reported count=0 truncated=false`. Look for these causes in order, and fix the first that applies. The first three apply when the InferenceService names a base model.
+`kubectl ome status` shows `Pod observation` as `Reported count=0 truncated=false`.
+
+First rule out one healthy shape: an InferenceService that [fronts standalone replicas](../../concepts/serving/inference-services.md#referenced-replicas) through `spec.replicaRefs` runs no pods of its own, so its report counts zero pods and shows no component rows even while the fronted pools serve behind its route. The pools' pods carry each pool's own name, not the service's. Don't add an `engine` section: the webhook rejects it with `spec.engine and spec.replicaRefs cannot both be set; a service references all of its roles or none`. When a fronting service isn't Ready, check each pool under its own name — [`kubectl ome get ir`](../../reference/kubectl-ome/get.md#inferencereplicas-columns) lists the pools, and [`kubectl ome logs`](../../reference/kubectl-ome/logs.md#standalone-and-fronted-replicas) reads a pool's pods — and look for a `ReplicaRefMissing` or `ReplicaRefInvalid` Warning event, whose message names a replica the service can't front.
+
+Otherwise, look for these causes in order, and fix the first that applies. The first three apply when the InferenceService names a base model.
 
 1. `spec.model.kind` differs from the model's kind. See the next section.
 2. A `ModelReconcileError` Warning event, such as `specified base model qwen2-5-7b is disabled`. Fix the model that it names.

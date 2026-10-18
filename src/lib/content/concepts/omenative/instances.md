@@ -68,20 +68,29 @@ qwen3-0-6b-engine   engine      2         2         2       2           5m
 
 ## Instance phases
 
-An Instance's phase says what it's doing. In `Creating`, `Updating`, `Restarting`, `Migrating` and `Deleting`, an operation is in flight. `Ready`, `Pending` and `Failed` are resting phases. A `Failed` Instance can still hold the operation that failed.
+An Instance's phase says what it's doing. In `Creating`, `Updating`, `Migrating` and `Deleting`, an operation is in flight, and usually in `Restarting` too: `Restarting` with no operation means a `Ready` Instance's pods stopped serving, as [The phase follows the pods](#the-phase-follows-the-pods) explains. `Ready`, `Pending` and `Failed` are resting phases. A `Failed` Instance can still hold the operation that failed.
 
 | Phase | What it means | What comes next |
 | --- | --- | --- |
 | `Creating` | OME is creating the pods of a new, `Pending` or failed Instance, or of the replacement in a migration or a multi-pod surge. | `Ready`, or `Failed` |
-| `Ready` | The last operation finished with every pod ready, and nothing is in flight. From then on, the pod counts track readiness, not the phase. | `Updating`, `Restarting`, `Migrating`, `Deleting` or `Pending` |
+| `Ready` | The last operation finished with every pod ready, and nothing is in flight — or a failed update's Instance keeps serving on its old revision: see [The phase follows the pods](#the-phase-follows-the-pods). | `Updating`, `Restarting`, `Migrating`, `Deleting`, `Pending` or, for a failed update's Instance, `Failed` |
 | `Updating` | OME is moving the Instance to a new revision, as its [update strategy](../architecture/omenative-update-strategies.md) says. | `Ready` on the new revision, or `Failed` |
-| `Restarting` | OME is recreating all the pods at the next incarnation, after a crash loop or, under `RecreateInstanceOnPodRestart`, when a pod restarts, fails or goes missing. See [Instance restart policy](instance-restart-policy.md). | `Ready`, or `Failed` |
+| `Restarting` | With an operation: OME is recreating all the pods at the next incarnation, after a crash loop or, under `RecreateInstanceOnPodRestart`, when a pod restarts, fails or goes missing. See [Instance restart policy](instance-restart-policy.md). With none: a `Ready` Instance's pods stopped serving, and they're coming back without OME's help: see [The phase follows the pods](#the-phase-follows-the-pods). | `Ready`, or `Failed` |
 | `Migrating` | The Instance keeps serving while its replacement starts on other nodes. See [Migration and transient scale](migration-and-transient-scale.md). | Removed once the replacement is `Ready`. If the migration fails, `Ready`, or `Failed` when its pods aren't all ready. |
 | `Pending` | A `Ready` Instance lost all its pods. OME uses this phase only under the `None` restart policy, the default for single-pod Instances. | `Creating` |
 | `Failed` | An operation on the Instance failed: see [When an Instance fails](#when-an-instance-fails). | `Creating`, `Ready` or `Updating`: see [What OME does with a failed Instance](#what-ome-does-with-a-failed-instance). |
 | `Deleting` | The component is scaling down, and OME is draining and deleting the pods. | Removed once its pods are gone |
 
 A `Deleting` Instance whose drain runs past its deadline doesn't fail. OME sets the InferenceReplica's `DrainOverdue` condition and records one `DrainOverdue` warning event: see [Recover stuck deletions](../../guides/omenative/recover-stuck-deletions.md).
+
+### The phase follows the pods
+
+OME reads the published phase of a `Ready` Instance, and of one whose update failed, against the pods of the same pass, so the phase never contradicts the pod counts beside it — in both directions:
+
+- **`Restarting`, with no operation.** A `Ready` Instance with nothing in flight shows `Restarting` when it still has pods but they stop serving as a set: fewer than its desired number of pods are live, or a live pod is short of the bar the Instance passed to enter `Ready` — every container ready, with the `ome.io/serving` gate `True`. The set is down, and the kubelet or the [restart policy](instance-restart-policy.md) is bringing it back, so there's nothing to retry or reset. The Instance keeps its `runningRevision` and `readySince`, and shows `Ready` again on its own once the set serves — as soon as every pod's containers are ready with the gate `True`, even before the kubelet folds the gate into the pods' `Ready` conditions. A multi-pod Instance reads as its whole set: one crashed worker is enough, even while the leader keeps serving. With no pods left at all, the Instance shows `Pending` instead, as the table says.
+- **`Ready`, after a failed update.** An Instance whose update to a new revision failed shows `Ready` while the pods of the revision it runs all keep serving: the replacement failed, the Instance didn't. Only the pods on its own revision are read, so a crash-looping replacement beside them changes nothing. The failed attempt stays on the row — `lastFailure`, the `targetRevision` it was for and the [retry backoff](#what-ome-does-with-a-failed-instance) — and the source of a failed multi-pod surge shows `Ready` this way with its `Update` operation still recorded while OME removes the replacement. The Instance shows `Failed` again once the pods it runs stop serving.
+
+These phases describe the pods; they change nothing about what OME does next. The restart policy, the retry backoff and a revision hold act as if the phase hadn't moved, and while a rollout is stuck on the failure, `lastFailure` and the `RolloutStalled` condition keep it visible. The InferenceReplica's `Ready` condition reads the phases as published, so a failed update whose old pods keep serving doesn't set it `False` with `InstanceFailed`.
 
 ## Readiness and availability
 
@@ -152,7 +161,7 @@ What happens next depends on the operation that failed:
 
 | Operation that failed | What happens next |
 | --- | --- |
-| Create, or update of a single-pod Instance | OME clears the operation and retries when the backoff allows. An Instance that already ran the target revision stays `Failed` until its pods are ready, and OME replaces lost ones. |
+| Create, or update of a single-pod Instance | OME clears the operation and retries when the backoff allows. An Instance that already ran the target revision stays `Failed` until its pods are ready, and OME replaces lost ones. One updating from an older revision shows `Ready` between the attempts while its old pods keep serving: see [The phase follows the pods](#the-phase-follows-the-pods). |
 | Update of a multi-pod Instance under SurgeThenDrain, the default | OME deletes the replacement Instance, returns the Instance to `Ready` on its old revision, and records a `GangSurgeAbandoned` warning event. The retry backoff decides when the update tries again. |
 | Restart, or update of a multi-pod Instance under `RecreatePod`, `InPlaceIfPossible` or `InPlaceOnly` | The Instance keeps its operation. OME retries failed updates at once with new pods. A failed restart leaves it `Failed` until its pods are ready, and OME replaces lost ones. |
 | Migration | OME ends the migration, removes the replacement and clears the operation on both Instances. See [Migration and transient scale](migration-and-transient-scale.md). |
