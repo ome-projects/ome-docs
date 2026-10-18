@@ -53,7 +53,7 @@ The leader updates these counters after each decision pass. The recommendation c
 | `alfred_recommendations_rejected_total` | Counter | `policy`, `workload`, `component`, `reason` | Rows that the arbiter rejected, by reason. Withheld rows count as accepted, despite the help text. |
 | `alfred_lws_recommendations_total` | Counter | `isvc`, `action` | Rows with `LWSMigrationUnsupported` advice. `isvc` is `namespace/name`, and `action` is always `MigrateToOMENative`. |
 | `alfred_nodehealth_signals_total` | Counter | `node`, `reason` | `NodeRepairNeeded` and `NodeDrainedForRepair` events. |
-| `alfred_nodemaintenance_signals_total` | Counter | `node`, `reason` | `NodeMaintenanceRequested` and `NodeDrainedForMaintenance` events. |
+| `alfred_nodemaintenance_signals_total` | Counter | `node`, `reason` | `NodeMaintenanceRequested`, `NodeDrainedForMaintenance` and `NodeCordonedForMaintenance` events. |
 | `alfred_cooldown_overrides_total` | Counter | `policy` | Health evacuations admitted inside the standard cooldown, each with a `CooldownOverriddenForEvacuation` event. |
 
 To follow migration requests and their results, read the [recommendations ConfigMap](#the-recommendations-configmap) and the [events](#on-an-inferenceservice).
@@ -133,7 +133,7 @@ Alfred records both on its configuration ConfigMap, `alfred-config` by default (
 
 ### On a node
 
-Alfred never cordons, drains or evicts: these events are signals for your repair and maintenance tooling. The leader records them on the node, in the `default` namespace, and `kubectl describe node` shows them.
+Alfred never drains or evicts, and cordons only under [the maintenance cordon](../../concepts/scheduling/alfred-policies.md#the-maintenance-cordon) opt-in: these events are signals for your repair and maintenance tooling. The leader records them on the node, in the `default` namespace, and `kubectl describe node` shows them.
 
 | Reason | Type | When |
 | --- | --- | --- |
@@ -141,10 +141,11 @@ Alfred never cordons, drains or evicts: these events are signals for your repair
 | `NodeDrainedForRepair` | Normal | In a pass after `NodeRepairNeeded`, the node has no OME GPU occupants and isn't `Unknown`. |
 | `NodeMaintenanceRequested` | Normal | Maintenance is requested for the node. |
 | `NodeDrainedForMaintenance` | Normal | In a pass after `NodeMaintenanceRequested`, the node has no OME GPU occupants. |
+| `NodeCordonedForMaintenance` | Normal | With the [maintenance cordon](../../concepts/scheduling/alfred-policies.md#the-maintenance-cordon) opt-in, Alfred cordons the node, because a maintenance rule with `cordon: true` matches it. The message names the rule. |
 
 OME GPU occupants are OME pods that request GPUs, and the OME workloads in the node's record. A drained node can still run pods that OME doesn't manage.
 
-Each event fires once per episode, which Alfred tracks in the node's [record](#node-records). The repair events can fire again after the node returns to `Clear`, and the maintenance events after maintenance is no longer requested. `NodeDrainedForRepair` can also fire again after the node has been `Unknown`, and both drained events after an OME GPU occupant returns. A node that rejoins with a new UID starts over.
+Each event fires once per episode, which Alfred tracks in the node's [record](#node-records). The repair events can fire again after the node returns to `Clear`, and the maintenance events after maintenance is no longer requested. `NodeDrainedForRepair` can also fire again after the node has been `Unknown`, and both drained events after an OME GPU occupant returns. A node that rejoins with a new UID starts over. `NodeCordonedForMaintenance` isn't tracked in the record: Alfred records it with each cordon it writes, so it fires again when something uncordons the node while its rule still matches. The node's `alfred.ome.io/cordoned-for-maintenance` annotation also names the rule.
 
 A new leader records the maintenance events again for nodes still under maintenance. It keeps a node's repair phase from its record when the node's state and conditions haven't changed. With `recommendationsConfigMapEnabled: false` there's no record, so it records the repair events again too. See [Signals and events](../../concepts/scheduling/alfred-policies.md#signals-and-events).
 
@@ -328,6 +329,7 @@ An admitted move that Alfred doesn't request is `withheld`, with a `dispatchReas
 | `InvalidCooldown` | A cooldown setting is negative or too large, or an InferenceService's `alfred.ome.io/cooldown-minutes` isn't a whole number of 0 or more. |
 | `ConfigurationChanged` | The configuration changed during the pass. |
 | `DispatchDeadline` | The dispatcher used up its 30 seconds in the pass. |
+| `MaintenanceCordonFailed` | Alfred couldn't cordon a node that a maintenance rule with `cordon: true` matches. It retries the cordon each pass, and dispatches nothing until it holds: see [The maintenance cordon](../../concepts/scheduling/alfred-policies.md#the-maintenance-cordon). |
 | `GuardUnavailable` | The ValidatingAdmissionPolicy or binding `ome-alfred-migration-writes` is missing, differs from what Alfred expects or isn't type-checked yet. |
 | `ObservationStale` | The observation is more than 30 seconds old. |
 | `FailureBackoff` | A request failed or stalled less than `migration.failureBackoff` ago. |
