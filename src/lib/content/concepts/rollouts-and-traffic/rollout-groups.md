@@ -104,7 +104,9 @@ spec:
 - `maxSurge: 1` lets each component start one new Instance at a time. Under another strategy, `maxUnavailable: 0` would stall it.
 - `maintainRatio` keeps the two in step. OME holds a component while it's more than 25% further through its rollout than the other. It also holds an update that would move their serving ratio more than 25% from 2:1. The held component's `rolloutHold` gate is `Ratio`.
 
-`tolerance` runs from 0 to 100, and 0 allows no drift. When you leave it out, it's 5, the `ome-resources` value `ome.controller.coordination.defaultRatioTolerancePercent`. Above 50, the webhook warns that the check is effectively off (`RatioToleranceTooHigh`). A component whose update strategy is `InPlaceIfPossible` or `InPlaceOnly` skips the check.
+`tolerance` runs from 0 to 100, and 0 allows no drift. When you leave it out, it's 5, the `ome-resources` value `ome.controller.coordination.defaultRatioTolerancePercent`. Above 50, the webhook warns that the check is effectively off (`RatioToleranceTooHigh`).
+
+An update that `InPlaceIfPossible` or `InPlaceOnly` [applies in place](../architecture/omenative-update-strategies.md#in-place-updates) skips only the serving-ratio half of the check, since the patched pod returns with its capacity. The update still waits, at the same `Ratio` gate, while its component is more than `tolerance` percent further through its rollout than the other. When it goes ahead, OME records a Normal `RatioGateBypassed` event on the InferenceService: the serving-capacity band is waived for an in-place start, and the new-revision lockstep still applies.
 
 ### Canary
 
