@@ -4,7 +4,7 @@ description: Set Kubernetes appProtocol values on the Service ports OME generate
 since: v1.3
 ---
 
-OME creates a Service for each component of an [InferenceService](../../concepts/serving/inference-services.md). This guide sets the Kubernetes [`appProtocol`](https://kubernetes.io/docs/concepts/services-networking/service/#application-protocol) of those Services' ports with the `servicePortAppProtocols` field, so a gateway or service mesh uses the right protocol to reach your model server, such as cleartext HTTP/2 for an engine that serves gRPC. You set the field on a component of the InferenceService, or as a default in its [serving runtime](../../concepts/runtimes/serving-runtimes.md).
+OME creates a Service for each component of an [InferenceService](../../concepts/serving/inference-services.md). This guide sets the Kubernetes [`appProtocol`](https://kubernetes.io/docs/concepts/services-networking/service/#application-protocol) of those Services' ports with the `servicePortAppProtocols` field, so a gateway or service mesh uses the right protocol to reach your model server, such as cleartext HTTP/2 for an engine that serves gRPC. You set the field on a component of the InferenceService, or as a default in its [serving runtime](../../concepts/runtimes/serving-runtimes.md). An InferenceService that fronts standalone replicas through [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) takes neither, so the ports of its Services never carry an `appProtocol`: see [Troubleshooting](#the-port-has-no-appprotocol).
 
 <div class="prerequisites" markdown>
 
@@ -154,6 +154,8 @@ The key doesn't match a port of the component's Service, or its value is empty. 
 - The map must be on the component whose Service has the port: `spec.engine` for `llama-3-1-8b-instruct-engine`, and `spec.router` for `llama-3-1-8b-instruct-router`.
 - Only the first container's ports are on the Service, so the ports of other containers can't get an `appProtocol`.
 - A key set to `""` in the InferenceService leaves the port unset, even when the runtime sets it.
+
+An InferenceService that fronts standalone replicas with `spec.replicaRefs` can never set one: the webhook rejects `spec.engine`, `spec.decoder`, `spec.router` and `spec.runtime` next to `spec.replicaRefs`, an [InferenceReplica](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica) has no field for an `appProtocol`, and the map of a runtime the replica names in `runtimeRef` never reaches the fronting service's Services, which OME builds from the replica's pod templates alone. Every port of those Services stays without an `appProtocol`.
 
 ### The Service keeps its old ports
 
