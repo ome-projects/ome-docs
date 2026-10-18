@@ -90,12 +90,13 @@ Alfred writes only these objects:
 | The Lease `alfred.ome.io` | Either mode | Leader election. |
 | The annotation `ome.io/migration-request-v1-<uuid>` on an InferenceService | Execute mode | A migration request, with the Instance, the node to leave and up to 3 preferred target nodes. `kubectl ome migration start` writes the same request: see [Request an instance migration](../../guides/scale-and-migrate/request-an-instance-migration.md). |
 | The ConfigMap `alfred-dispatch-state` | Execute mode | The dispatch journal, where Alfred follows its requests until OMENative reports a result. |
+| A node's `spec.unschedulable`, with the annotation `alfred.ome.io/cordoned-for-maintenance` | Execute mode, with the `maintenanceCordon` opt-in | A cordon on a node that a maintenance rule with `cordon: true` puts under maintenance, so schedulers stop placing new work there. Alfred never uncordons: see [The maintenance cordon](alfred-policies.md#the-maintenance-cordon). |
 
 Don't delete or reset the dispatch journal: Alfred requests migrations only while it can read the journal. A request whose InferenceService or InferenceReplica is deleted or replaced before the migration ends blocks Alfred's migrations until you clear it: see [A request is stalled](../../guides/scheduling/let-alfred-migrate-instances.md#a-request-is-stalled).
 
 When you set `migration.apiVersion`, the chart also installs the migration guard, the ValidatingAdmissionPolicy `ome-alfred-migration-writes`. It rejects any change that Alfred makes to an InferenceService beyond adding a migration request, and Alfred executes only while the guard is in place and unchanged.
 
-Alfred never cordons or drains a node, and never evicts or deletes a pod. When OMENative migrates an Instance, its own controller creates the new pods and removes the old ones.
+Alfred never drains a node, and never evicts or deletes a pod. When OMENative migrates an Instance, its own controller creates the new pods and removes the old ones. By default Alfred never cordons a node either: it cordons only in execute mode, only the nodes that a maintenance rule with `cordon: true` puts under maintenance, and only when you opt in with the chart's `maintenanceCordon.enabled`, which grants its node permissions in a separate ClusterRole. It never uncordons. See [The maintenance cordon](alfred-policies.md#the-maintenance-cordon).
 
 !!! warning "Drained doesn't mean empty"
     The `NodeDrainedForRepair` and `NodeDrainedForMaintenance` events mean only that no OME pod holds GPUs on the node. Other pods can still run there, so check the node before you take it down.
