@@ -6,7 +6,7 @@ since: v1.3
 
 When the pod template of an [OMENative](../omenative/overview.md) component changes, OME records a new [revision](deployment-modes.md#what-ome-creates) and moves each of the component's [Instances](../omenative/instances.md) onto it. The component's `lifecycle.updateStrategy` sets how OME replaces an Instance's pods, and how many Instances move at once. By default, the new pods come up and serve before the old ones drain, even for a leader and its workers.
 
-A new image in the [InferenceService](../serving/inference-services.md) changes the pod template. So can an edit to its [serving runtime](../runtimes/serving-runtimes.md), unless the InferenceService [pins the runtime](../runtimes/runtime-revisions.md). A RawDeployment component uses `deploymentStrategy` instead, and [rollout groups](../rollouts-and-traffic/rollout-groups.md) in `spec.rollout` coordinate several components.
+A new image in the [InferenceService](../serving/inference-services.md) changes the pod template. So can an edit to its [serving runtime](../runtimes/serving-runtimes.md), unless the InferenceService [pins the runtime](../runtimes/runtime-revisions.md). A multi-node component's `worker.size` is part of the revision too: see [Changing the worker count](#changing-the-worker-count). A RawDeployment component uses `deploymentStrategy` instead, and [rollout groups](../rollouts-and-traffic/rollout-groups.md) in `spec.rollout` coordinate several components.
 
 ## The four strategies
 
@@ -211,6 +211,19 @@ kubectl get inferenceservice llama-3-2-3b-instruct -n llama-demo \
 - A live extra pod, which the reason reports as `extra pod llama-3-2-3b-instruct-engine-1-default-1 holds a surge slot until a start on its Instance replaces it`, is a replacement that a failed update attempt left running. Its slot frees when OME next starts an update on its Instance: that start evicts the pod before it creates anything, so it takes the slot the pod held and isn't charged twice. Until then, updates on the component's other Instances can't use the slot.
 
 A pod that an in-flight update still owns isn't named: a drained old pod holds its Instance's surge slot through the update itself, which doesn't finish until the pod is gone. For a leader and its workers, extra pods count in whole Instances: their number is divided by the Instance's pod count and rounded up, so the eight draining pods of a scaled-away eight-pod Instance hold one slot.
+
+## Changing the worker count
+
+For a component with a `leader` and a `worker`, the revision records `worker.size` beside the pod template. Changing `worker.size` alone records a new revision, and OME moves each Instance onto it as it does for a new pod template: whole Instances at a time, under the component's strategy and within its budgets and gates. OME never resizes a running Instance's pods.
+
+Each Instance runs the worker count that its own revision records, not the count in the spec:
+
+- An Instance still on the old revision keeps its old workers until its own update, so Instances of both counts serve side by side during the rollout.
+- Under [SurgeThenDrain](#surgethendrain), the replacement Instance comes up at the new count while the old Instance keeps serving at its old one, so the cluster needs room for both.
+- A repair doesn't change the count. OME refills a missing worker pod at the count the Instance runs, and an Instance it rebuilds on its own revision comes back at that revision's count.
+- A rollback to a stored revision, such as a [canary rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md), returns each Instance to the worker count that revision recorded, along with its pod template.
+
+[Serve a multi-node model](../../guides/omenative/serve-a-multi-node-model.md) shows where `worker.size` is set, in the InferenceService or its runtime.
 
 ## Changing the pod template mid-surge
 
