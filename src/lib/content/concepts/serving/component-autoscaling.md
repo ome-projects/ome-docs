@@ -134,7 +134,7 @@ Change the component's `class` and apply the file: a switch takes one step, whet
 - Moving to `KEDA`, OME creates the ScaledObject with the HorizontalPodAutoscaler's name in `advanced.horizontalPodAutoscalerConfig.name` and KEDA's `scaledobject.keda.sh/transfer-hpa-ownership` annotation, and KEDA takes that HorizontalPodAutoscaler over in place: the same object keeps scaling the component, now under KEDA's control. That covers a running component with no autoscaling settings, which has OME's default HorizontalPodAutoscaler.
 - Moving back to `HPA`, OME first checks with a server-side dry run that its replacement HorizontalPodAutoscaler would be accepted, then deletes the ScaledObject and every HorizontalPodAutoscaler KEDA created for it, and creates its own only after they are gone, so two HorizontalPodAutoscalers never scale the component at once.
 
-A switch that waits for KEDA, or for a deletion to finish, isn't a failure: the controller logs `Autoscaler switch in progress` and retries, and the InferenceService's ingress and status keep updating. The `AutoscalerSwitched` condition, next to the scaler's own conditions in `status.components.<component>.autoscaler.conditions`, reports the progress:
+A switch that waits for KEDA, or for a deletion to finish, isn't a failure: the controller logs `Autoscaler switch in progress` and retries, and the InferenceService's status keeps updating. The `AutoscalerSwitched` condition, next to the scaler's own conditions in `status.components.<component>.autoscaler.conditions`, reports the progress:
 
 | Status | Reason | When |
 | --- | --- | --- |
