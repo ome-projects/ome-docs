@@ -80,7 +80,7 @@ spec:
 
 The poll runs as in the other sections, but reads its results differently:
 
-- The report's count field is `weight`, required in place of `servable`: what the cluster can serve, in replicas, 0 or more. Fractions are fine, as in `{"weight": 2.5, "observedAt": "2026-09-28T10:00:00Z"}`, since only the ratios between clusters matter. A body without a number in `weight` fails the poll with `capacity report has no weight`, and the value must be finite and at most 2147483647.
+- The report's count field is `weight`, required in place of `servable`: what the cluster can serve, in replicas, 0 or more. Fractions are fine, as in `{"weight": 2.5, "observedAt": "2026-09-28T10:00:00Z"}`, since only the ratios between clusters matter. A body without `weight` fails the poll with `capacity report has no weight`, and the value must be a number, finite and at most 2147483647.
 - `quorum` is how many readings the window must hold before a report applies, and the value applied is the window's lower median, not the `quorum`-th lowest. A reading too high would overload the cluster as surely as one too low starves it, so a single outlier in either direction can't move the weight; of two readings, the smaller wins.
 - A failed poll doesn't clear the window. Readings younger than `maxAge` keep setting the weight, so each `period` that `maxAge` spans beyond `quorum` times `period` carries the cluster through one more failed poll — the example above rides out about three. Once fewer than `quorum` fresh readings remain, the cluster goes back to its replica-based weight.
 
