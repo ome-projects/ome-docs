@@ -4,7 +4,7 @@ description: Rebuild the OMENative Instances that OME marked Failed, once you've
 since: v1.3
 ---
 
-A reset rebuilds the [Instances](../../concepts/omenative/instances.md) of an [OMENative](../../concepts/architecture/deployment-modes.md#omenative) component that OME has marked `Failed`. OME deletes an Instance's pods, whether one pod or a leader and its workers, and builds it again from the component's target revision. You request a reset with the `ome.io/reset-instances` annotation, once you've fixed the cause. The examples reset Instance 0 of the `engine` component of the [InferenceService](../../concepts/serving/inference-services.md) `qwen3-0-6b`, in the namespace `qwen3-native`.
+A reset rebuilds the [Instances](../../concepts/omenative/instances.md) of an [OMENative](../../concepts/architecture/deployment-modes.md#omenative) component that OME has marked `Failed`, and those whose update attempt failed and is [parked](../../concepts/omenative/instances.md#operations). OME deletes an Instance's pods, whether one pod or a leader and its workers, and builds it again from the component's target revision. You request a reset with the `ome.io/reset-instances` annotation, once you've fixed the cause. The examples reset Instance 0 of the `engine` component of the [InferenceService](../../concepts/serving/inference-services.md) `qwen3-0-6b`, in the namespace `qwen3-native`.
 
 <div class="prerequisites" markdown>
 
@@ -17,7 +17,7 @@ A reset rebuilds the [Instances](../../concepts/omenative/instances.md) of an [O
 
 ## When to reset
 
-OME marks an Instance `Failed` when it can't create or restart it, and leaves the pods in place so that you can find the cause. [When an Instance fails](../../concepts/omenative/instances.md#when-an-instance-fails) lists the causes. Once you know the cause, pick the fix:
+OME marks an Instance `Failed` when it can't create, update or restart it, and leaves the pods in place so that you can find the cause. [When an Instance fails](../../concepts/omenative/instances.md#when-an-instance-fails) lists the causes. Once you know the cause, pick the fix:
 
 | Situation | What to do |
 | --- | --- |
@@ -36,7 +36,7 @@ List the Instances of the InferenceService:
 kubectl ome instance list qwen3-0-6b -n qwen3-native
 ```
 
-A failed Instance shows `Failed` in the `PHASE` column. In the `AOF` column, `F` means that OME recorded a failure, and `O` that the Instance still holds an operation.
+A failed Instance shows `Failed` in the `PHASE` column. In the `AOF` column, `F` means that OME recorded a failure, and `O` that the Instance still holds an operation. An Instance whose failed update attempt is parked can show `Updating` instead; a reset addresses it all the same.
 
 Show one of them, here Instance 0 of the engine. `-o wide` prints each field on its own row:
 
@@ -44,7 +44,7 @@ Show one of them, here Instance 0 of the engine. `-o wide` prints each field on 
 kubectl ome instance status qwen3-0-6b 0 --component engine -n qwen3-native -o wide
 ```
 
-The `failure reason`, `failure pod` and `failure container` rows name the last failure, such as `ImagePullBackOff`. [Output fields](../../reference/kubectl-ome/instance.md#status-output-fields) describes the other rows.
+The `failure reason`, `failure pod` and `failure container` rows name the last failure, such as `ImagePullBackOff`. A parked update attempt shows `Parked` in the `operation step` row. [Output fields](../../reference/kubectl-ome/instance.md#status-output-fields) describes the other rows.
 
 The pods are still there, so `kubectl describe pod` and `kubectl logs` show their events and output. Find the cause, and fix it as [When to reset](#when-to-reset) describes.
 
@@ -64,7 +64,7 @@ kubectl annotate inferencereplica qwen3-0-6b-engine -n qwen3-native \
 inferencereplica.ome.io/qwen3-0-6b-engine annotated
 ```
 
-The value is an index, a comma-separated list of indices, or `all` for every `Failed` Instance of the component. On the InferenceService, the annotation does nothing. To reset another component's Instances, annotate its InferenceReplica instead.
+The value is an index, a comma-separated list of indices, or `all` for every `Failed` Instance of the component and every one with a parked update attempt. On the InferenceService, the annotation does nothing. To reset another component's Instances, annotate its InferenceReplica instead.
 
 OME answers a request once. It resets the Instances that it can, records an event, and deletes the annotation, even when it resets nothing. An Instance that fails later needs a new request.
 
@@ -99,7 +99,7 @@ Then watch the Instance:
 kubectl ome instance list qwen3-0-6b -n qwen3-native
 ```
 
-The Instance stays `Failed`, with no `O` in the `AOF` column, until OME starts to rebuild it. Its phase then becomes `Creating`, and `Ready` once the pods are ready. If it stays `Failed`, see [The Instance stays Failed after the reset](#the-instance-stays-failed-after-the-reset).
+The Instance shows `Failed`, with no `O` in the `AOF` column, until OME starts to rebuild it — one that read `Updating` behind its parked attempt shows `Failed` now too. Its phase then becomes `Creating`, and `Ready` once the pods are ready. If it stays `Failed`, see [The Instance stays Failed after the reset](#the-instance-stays-failed-after-the-reset).
 
 ## Troubleshooting
 
@@ -137,12 +137,12 @@ The reason follows each skipped index:
 | Reason | What to do |
 | --- | --- |
 | `still serving` | A reset leaves an Instance alone while any of its pods serves. Request it again once no `pod[N] serving ready` row in the [Step 1](#step-1-find-the-parked-instances) status is `True`. |
-| `owned by Update`, `owned by Migrate` or `owned by Delete` | The rollout, migration or deletion that started the operation handles the Instance. If the rollout's revision is held, [release it](../roll-out-changes/release-a-held-revision.md). |
+| `owned by Update`, `owned by Migrate` or `owned by Delete` | The machinery that started the operation still handles the Instance, as with a failed multi-pod surge. A reset clears a failed update attempt only once OME has parked it, or when the attempt ended because [another controller holds the Instance's PodGroup name](../../concepts/omenative/instances.md#when-an-instance-fails). If the rollout's revision is held, [release it](../roll-out-changes/release-a-held-revision.md). |
 | `nothing to reset` | The Instance is already waiting for its rebuild: see [The Instance stays Failed after the reset](#the-instance-stays-failed-after-the-reset). If its pods stay `Terminating`, see [Recover stuck deletions](recover-stuck-deletions.md). |
-| `Phase=<phase>` | The Instance is in another phase, and needs no reset. |
+| `Phase=<phase>` | The Instance is in another phase with no parked update attempt, and needs no reset. An update that is still running skips this way, as `Phase=Updating`. |
 | `no such instance` | Check the index with `kubectl ome instance list`. |
 
-For `all`, when no Instance is `Failed`, the message ends `none is Failed; nothing to reset`.
+For `all`, when no Instance is `Failed` or holds a parked update attempt, the message ends `none is Failed; nothing to reset`.
 
 ### The request is rejected
 
