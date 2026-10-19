@@ -68,10 +68,26 @@ Multi-cluster is off by default. The chart passes these flags only when `ome.mul
 | Flag | Default | Helm value | Description |
 | --- | --- | --- | --- |
 | `--enable-multicluster` | `false` | `ome.multicluster.enabled` (`false`) | Runs the multi-cluster controllers, such as the WorkloadCluster registry. |
-| `--multicluster-role` | Empty | `ome.multicluster.role` (`""`) | `control-plane` makes this manager place InferenceServices on workload clusters instead of running their pods, and implies `--enable-multicluster`. Leave it empty on other clusters. |
+| `--multicluster-role` | Empty | `ome.multicluster.role` (`""`) | `control-plane` makes this manager place InferenceServices on workload clusters instead of running their pods, and implies `--enable-multicluster`. It also turns off the local controllers and one webhook: see [What the control-plane role turns off](#what-the-control-plane-role-turns-off). Leave it empty on other clusters. |
 | `--allow-exec-credentials` | `false` | `ome.multicluster.execCredentials.enabled` (`false`) | Lets WorkloadCluster kubeconfigs run an exec credential plugin in the manager pod. The plugin's binary has to be in the manager image. |
 | `--exec-credential-allowed-commands` | `aws,gke-gcloud-auth-plugin,kubelogin` | `ome.multicluster.execCredentials.allowedCommands` (`aws,gke-gcloud-auth-plugin,kubelogin`) | The plugin commands that `--allow-exec-credentials` allows, comma-separated. A name allows that command from the `PATH`, and an absolute path allows only that binary. |
 | `--placement-control-plane-id` | Empty | `ome.multicluster.placementControlPlaneID` (`""`) | The identity that this control plane stamps on the InferenceServices that it creates on workload clusters. Give each control plane its own when several share a workload cluster. |
+
+### What the control-plane role turns off
+
+A control-plane cluster owns no models, runtimes or workloads: those live on the workload clusters. With `--multicluster-role=control-plane`, the manager runs the multi-cluster controllers, such as the WorkloadCluster registry and the placement controller that copies InferenceServices onto the workload clusters, and none of these:
+
+- The InferenceService controller. On this cluster, the placement controller owns InferenceServices.
+- The InferenceReplica controller, even when `--enable-inferencereplica-controller` is `true`.
+- The [BaseModel](../../concepts/models/base-models.md), ClusterBaseModel, [BenchmarkJob](../../concepts/serving/benchmarks.md) and [ServingRuntime](../../concepts/runtimes/serving-runtimes.md) controllers, and runtime-revision garbage collection.
+- The [AcceleratorClass](../../concepts/runtimes/accelerator-classes.md) controller, whose discovery reads the local cluster's nodes.
+- The [AutoscalerPolicy](../../concepts/serving/autoscaler-policy.md) and [RolloutPolicy](../../concepts/rollouts-and-traffic/rollout-policy.md) status controllers.
+- One webhook: the InferenceService validator, whose runtime selection needs the runtimes and models of the cluster that serves. The copies that placement makes are validated by the workload clusters' own webhooks, against their catalogs.
+
+The manager's startup log says what the role disables, in lines such as `control-plane role: BaseModel/ClusterBaseModel/BenchmarkJob/ServingRuntime/RuntimeRevisionGC controllers disabled`.
+
+!!! warning "Admission doesn't mean a controller runs"
+    The role turns off controllers, not their webhooks: apart from the InferenceService validator, every admission webhook still runs. So a valid BenchmarkJob created on the control-plane cluster passes admission and is never reconciled: `kubectl get benchmarkjob` shows an empty `STATUS` column, since only the controller sets the status, and a search of the manager's logs for the job's name finds nothing. The startup line above is the only trace. The same goes for models and runtimes: create them, and run benchmarks, on the workload clusters that serve.
 
 ## Flags without a Helm value
 
