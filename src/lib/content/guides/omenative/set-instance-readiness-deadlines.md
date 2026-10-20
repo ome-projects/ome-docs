@@ -125,7 +125,7 @@ What OME does next depends on the cause and the operation:
 
 - Only an image or configuration error counts against the revision. OME retries the revision with backoff, then holds it until you publish a fixed one or [release it](../roll-out-changes/release-a-held-revision.md).
 - A failed Create or single-pod update then starts a new attempt. If the revision isn't at fault and the pods all ran on one node, OME can [build it on another node](../../concepts/omenative/migration-and-transient-scale.md#automatic-relocation), up to 3 times with the chart.
-- When a multi-pod update fails under the default SurgeThenDrain strategy, OME removes the replacement, and the Instance goes back to `Ready` on its old revision. Under `RecreatePod` or an in-place strategy, the Instance stays `Failed` until a new revision reaches it, and a reset skips it.
+- When a multi-pod update fails under the default SurgeThenDrain strategy, OME removes the replacement, and the Instance goes back to `Ready` on its old revision. Under `RecreatePod` or an in-place strategy, the Instance stays `Failed`, with the failed attempt parked on it, until you [reset it](reset-failed-instances.md) or a new revision reaches it.
 - A failed restart leaves the Instance `Failed`, with its pods, until you [reset it](reset-failed-instances.md) or a new revision reaches it.
 
 [What OME does with a failed Instance](../../concepts/omenative/instances.md#what-ome-does-with-a-failed-instance) has the details. OME also records an `InstanceFailed` Warning event on the InferenceService. List those events:
@@ -245,7 +245,7 @@ If you changed the chart values, put back the ones you want to keep in your valu
 
 ## Next steps
 
-- [Reset failed Instances](reset-failed-instances.md): start over an Instance that failed during a create or a restart.
+- [Reset failed Instances](reset-failed-instances.md): start over a failed Instance once you've fixed the cause.
 - [Release a held revision](../roll-out-changes/release-a-held-revision.md): let OME try a revision again after it's held.
 - [Instances](../../concepts/omenative/instances.md): the phases and operations of an Instance.
 - [Troubleshoot an InferenceService](../troubleshoot/troubleshoot-an-inferenceservice.md): find why an InferenceService doesn't serve.

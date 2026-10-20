@@ -117,12 +117,12 @@ Before OME creates, deletes or replaces an Instance's pods, it records the work 
 | Type | Steps |
 | --- | --- |
 | `Create` | `CreatePods` |
-| `Update` | `InPlace`, `Drain`, `Surge`, `SurgeDrain`, `GangSurgeTarget` or `GangSurgeTargetCleanup` |
+| `Update` | `InPlace`, `Drain`, `Surge`, `SurgeDrain`, `GangSurgeTarget`, `GangSurgeTargetCleanup` or `Parked` |
 | `Restart` | `Drain` |
 | `Migrate` | `CreateSurge`, on the source and its replacement |
 | `Delete` | `Drain` |
 
-In an update, `InPlace` updates the containers in their pods, `Drain` recreates the pods, and the steps with `Surge` in their names belong to a SurgeThenDrain update.
+In an update, `InPlace` updates the containers in their pods, `Drain` recreates the pods, and the steps with `Surge` in their names belong to a SurgeThenDrain update. `Parked` marks an update attempt that its deadline or a stuck pod ended while the Instance kept its pods: nothing drives a parked attempt, OME keeps it on the Instance while the wait for the next attempt runs, and the next one starts over it.
 
 An operation's deadline is its start time plus the component's `lifecycle.instanceReadyTimeout`. OME takes the timeout from the InferenceService, then the runtime, then the operator's settings, where the chart sets `30m`. Left unset everywhere, operations get no deadline, so a stuck Instance waits for you, and the InferenceReplica's `InstanceReadyTimeoutUnconfigured` condition is `True`. [Set Instance readiness deadlines](../../guides/omenative/set-instance-readiness-deadlines.md) shows how to set it.
 
@@ -170,7 +170,7 @@ The chart's `ome.controller.lifecycle.updateRetry` sets the retry backoff. When 
 
 When a failure didn't come from the revision, and the attempt's pods all ran on one node, OME steers the next attempt off that node. The moves need `autoMigrate.maxAttempts` in the operator's settings, where the chart allows three for each Instance. A component's `lifecycle.migrationPolicy.mode: Never` turns them off. [When a deadline runs out](../../guides/omenative/set-instance-readiness-deadlines.md#when-a-deadline-runs-out) has the details.
 
-To start a failed Instance over once you've fixed the cause, set the `ome.io/reset-instances` annotation on its InferenceReplica, as [Reset failed Instances](../../guides/omenative/reset-failed-instances.md) describes. The reset skips an Instance that still holds its failed `Update` operation.
+To start a failed Instance over once you've fixed the cause, set the `ome.io/reset-instances` annotation on its InferenceReplica, as [Reset failed Instances](../../guides/omenative/reset-failed-instances.md) describes. The reset clears a [parked](#operations) `Update` attempt, even on an Instance that reads `Updating`, and the operation an Instance kept because [another controller holds its PodGroup name](#when-an-instance-fails). It skips an Instance whose update a multi-pod surge still handles, and one that a migration or a deletion owns.
 
 ## Next steps
 
