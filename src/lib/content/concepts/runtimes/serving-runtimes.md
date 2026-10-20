@@ -144,7 +144,7 @@ Each entry in `supportedModelFormats` describes one kind of model that the runti
 | `priority` | Multiplies the entry's score when OME chooses a runtime. At least 1; unset counts as 1. |
 | `acceleratorConfig` | Settings for each accelerator class; see [Per-accelerator configuration](#per-accelerator-configuration). |
 | `modelCacheProviders` | Since v1.3. Caches to load `Sharded` models from. None can be configured yet, so leave it out; see [Distribution](../models/base-models.md#distribution). |
-| `name` | Used only by the webhook's two priority checks; see [Common errors](#what-the-admission-webhook-checks). |
+| `name` | Read by the webhook's two priority checks, never by runtime selection; see [Common errors](#what-the-admission-webhook-checks). |
 | `version` | Used only by the webhook's cross-runtime priority check, never by runtime selection: to match on a version, set `modelFormat.version`. |
 
 A model matches an entry when their format, framework, architecture and quantization agree, and a value that only one side sets doesn't match. The model agent records each model's architecture, and the quantization of quantized ones, so set `modelArchitecture` in every entry, and `quantization` only for quantized models.
