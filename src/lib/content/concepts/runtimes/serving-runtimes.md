@@ -144,8 +144,8 @@ Each entry in `supportedModelFormats` describes one kind of model that the runti
 | `priority` | Multiplies the entry's score when OME chooses a runtime. At least 1; unset counts as 1. |
 | `acceleratorConfig` | Settings for each accelerator class; see [Per-accelerator configuration](#per-accelerator-configuration). |
 | `modelCacheProviders` | Since v1.3. Caches to load `Sharded` models from. None can be configured yet, so leave it out; see [Distribution](../models/base-models.md#distribution). |
-| `name` | Used only by the webhook's priority check; see [Common errors](#what-the-admission-webhook-checks). |
-| `version` | Not used. |
+| `name` | Read by the webhook's two priority checks, never by runtime selection; see [Common errors](#what-the-admission-webhook-checks). |
+| `version` | Used only by the webhook's cross-runtime priority check, never by runtime selection: to match on a version, set `modelFormat.version`. |
 
 A model matches an entry when their format, framework, architecture and quantization agree, and a value that only one side sets doesn't match. The model agent records each model's architecture, and the quantization of quantized ones, so set `modelArchitecture` in every entry, and `quantization` only for quantized models.
 
@@ -160,7 +160,7 @@ A model matches an entry when their format, framework, architecture and quantiza
 | `disabled` | `true` stops new use: OME never auto-selects the runtime, and since v1.3 the webhook rejects InferenceServices that name it. Running pods keep serving. A disabled runtime can still be a [profile](runtime-inheritance.md) for others. |
 | `nodeSelector` | Added to the engine's and the decoder's pods. It wins over `engineConfig.nodeSelector` and `decoderConfig.nodeSelector`, and loses to the accelerator class's node selector and to the InferenceService's. |
 | `schedulerName` | The default scheduler for every component's pods. |
-| `protocolVersions` | No effect. The catalog runtimes set it; you can leave it out. |
+| `protocolVersions` | Read only by the webhook's cross-runtime priority check: two runtimes conflict only when their lists share a protocol, so a runtime that lists none never conflicts; see [Common errors](#what-the-admission-webhook-checks). The catalog runtimes set it; you can leave it out. |
 | `volumes`, `tolerations`, `affinity` and most other pod fields | Not used. Set them in `engineConfig`, `decoderConfig` or `routerConfig`. |
 
 ### The engine, decoder and router
@@ -471,12 +471,15 @@ The `ome-serving` chart creates SGLang runtimes from its own catalog, mostly wit
 | --- | --- | --- |
 | Applying a runtime fails with `unknown accelerator classes referenced in AcceleratorRequirements` | A class it lists doesn't exist. | Create the class first. |
 | Applying a runtime fails with `different priorities assigned for the model format` | Two entries with `autoSelect: true` and the same `name`, or no name, set different priorities. | Give them one `priority`. |
+| Applying a runtime fails with `same priority assigned for the model format` | Another enabled runtime of the same kind — for a ServingRuntime, one in its namespace; for a ClusterServingRuntime, any other — has an `autoSelect: true` entry that duplicates one of the new runtime's `autoSelect: true` entries at the same explicit `priority`, the runtimes' `protocolVersions` share a protocol, and their `modelSizeRange`s are the same, where both unset is the same. The message names the existing runtime, then yours. | Give the entries different priorities, or set `autoSelect: false` on one. |
 | Applying a runtime fails with an inheritance error | Its `ome.io/inherit-from` chain is broken, or it's a profile without `disabled: true`. | See [What admission checks](runtime-inheritance.md#what-admission-checks). |
 | Applying an InferenceService fails with `no supporting runtime found for model` | It leaves out `spec.runtime`, and no runtime supports its model. | See [Troubleshoot runtime selection](../../guides/deploy-models/troubleshoot-runtime-selection.md). |
 | Since v1.3, `RuntimeReady` is `False` with the reason `RuntimeNotFound` | The runtime it names is missing, or no runtime supports its model any more. | Create or fix the runtime. A running workload keeps serving meanwhile, and `RuntimeReady` doesn't count toward `Ready`. |
 | A `RuntimeValidationError` event says the runtime is disabled | The runtime it names was disabled, and it isn't [pinned](runtime-revisions.md). | Enable the runtime, or name another. The pods keep serving, but OME stops updating them. |
 | An `AcceleratorClassError` event, such as `Failed to get accelerator class for engine` | The class that OME picked doesn't exist. | Create the class; see [Select accelerators](../../guides/deploy-models/select-accelerators.md#the-inferenceservice-has-an-acceleratorclasserror-event). |
 | The controller log shows `Failed to reconcile component`, and the workload doesn't change | A malformed [placeholder](#placeholders), often a key with a dash in the field form. | Use the `index` form with the key in backquotes. |
+
+In the `same priority` check, two entries are duplicates when their `name` — compared ignoring case — `version`, `quantization` and `modelArchitecture` are all equal, where a field that both leave out counts as equal, and their `modelFormat` and `modelFramework` blocks are identical. Two runtimes' blocks never count as identical when either sets `version` or `operator`, and the CRDs that the `ome-crd` chart installs require the blocks on every entry and fill `operator: Equal` into them, so runtimes admitted through those CRDs never hit this denial. It reaches runtimes admitted without the spec schema, such as under the trimmed CRDs in [`config/crd/minimal`](https://github.com/ome-projects/ome/tree/main/config/crd/minimal), whose entries can leave the blocks out, or carry them with only a `name`.
 
 The webhook also checks `scalingPolicy`, `autoscalerPolicyRef` and each component's `autoscaler`. For a disabled runtime, it checks only the inheritance, `scalingPolicy` and `autoscalerPolicyRef`.
 
