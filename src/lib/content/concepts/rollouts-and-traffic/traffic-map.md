@@ -96,16 +96,20 @@ Each entry is a home of the InferenceService: a workload cluster that has admitt
 | `cluster` | The WorkloadCluster's name. |
 | `endpoint` | The URL of the InferenceService's copy on that cluster. |
 | `weight` | The cluster's share of the requests, relative to the other entries. |
-| `healthy` | `true` when the cluster has a ready replica and no probe gates it. It ignores capacity, so a healthy entry can still have weight 0. |
-| `capacity.allocated` | The replicas that placement admitted on the cluster, lowered to `capacity.reported` when that's lower. |
-| `capacity.ready` | The ready replicas. |
-| `capacity.factor` | The capacity factor, present only when you set one. |
-| `capacity.source` | `Endpoint` when a capacity report lowered `allocated`, otherwise `ControlPlane`. |
-| `capacity.reported`, `capacity.fallbackReason` | While capacity polling is on: the ceiling that the cluster reports, or why it has none. See [Watch the capacity state](../../guides/multi-cluster/tune-routing-capacity-polling.md#step-3-watch-the-capacity-state). |
+| `healthy` | `true` when the cluster can serve and no probe gates it: a ready replica or, when `reportedWeight` is set, a positive `reportedWeight` in place of the ready-replica test. A healthy entry can still have weight 0. |
+| `capacity.allocated` | The replicas that placement admitted on the cluster, lowered to `capacity.reported` when that's lower. When `reportedWeight` is set, it's diagnostic only. |
+| `capacity.ready` | The ready replicas. They cap the weight unless `reportedWeight` is set. |
+| `capacity.factor` | The capacity factor, present only when you set one and no `reportedWeight` replaces it: a reported weight already includes the hardware. |
+| `capacity.source` | `Endpoint` when a capacity report lowered `allocated` or `reportedWeight` is set, otherwise `ControlPlane`. |
+| `capacity.reported` | While capacity polling is on in `Ceiling` mode: the ceiling that the cluster reports, kept even when it's too high to lower `allocated`. See [Watch the capacity state](../../guides/multi-cluster/tune-routing-capacity-polling.md#step-3-watch-the-capacity-state). |
+| `capacity.reportedWeight` | While capacity polling is on in [Reported mode](../../guides/multi-cluster/tune-routing-capacity-polling.md#reported-mode): the cluster's accepted report, which replaces its replica-based weight. Missing means no current report; `"0"` means the cluster reports that it can serve nothing. |
+| `capacity.fallbackReason` | While capacity polling is on: why the cluster has no current report. See [A home falls back to its admitted replicas](../../guides/multi-cluster/tune-routing-capacity-polling.md#a-home-falls-back-to-its-admitted-replicas). |
 | `probe` | The routing health probe's last verdict for the cluster, present once a configured probe has run. See [Check the probe state](../../guides/multi-cluster/routing-health-probes.md#step-3-check-the-probe-state). |
 | `drainRefs` | The IDs of the drains that hold the cluster at weight 0. |
 
 The map leaves out `allocated` and `ready` when they're 0. [`TrafficMapEntry`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-TrafficMapEntry) in the API reference describes every field.
+
+With capacity polling in [Reported mode](../../guides/multi-cluster/tune-routing-capacity-polling.md#reported-mode), `spec.capacityMode` is `Reported`; unset means `Ceiling`. The mode binds the publisher too: a table in which any entry carries a `reportedWeight` is published at once, and the gateway's earlier weights never replace it, so a cluster that reports 0 loses its traffic right away. Without one, the publisher follows the same rules as in `Ceiling` mode, where it can keep the gateway's last positive weights while an all-zero table can still be the control plane's own replica counts lagging behind.
 
 Treat the map as read-only: OME undoes a hand edit right away.
 
@@ -113,7 +117,7 @@ Treat the map as read-only: OME undoes a hand edit right away.
 
 OME works out an entry's weight in four steps:
 
-1. It counts the replicas that can serve: the lower of `capacity.allocated` and `capacity.ready`, times the cluster's capacity factor, which is 1 unless you set one. For an InferenceService with an engine and a decoder, both counts are the lower of the two [components'](../serving/inference-services.md#components) counts.
+1. It counts the replicas that can serve: the lower of `capacity.allocated` and `capacity.ready`, times the cluster's capacity factor, which is 1 unless you set one. In [Reported mode](../../guides/multi-cluster/tune-routing-capacity-polling.md#reported-mode), a cluster with a `capacity.reportedWeight` uses it instead, as it is: no replica count caps it, and no factor scales it. For an InferenceService with an engine and a decoder, both counts are the lower of the two [components'](../serving/inference-services.md#components) counts.
 2. An entry that a routing health probe gates gets 0, with one exception that [Routable](#routable) describes.
 3. It reduces the weights to their smallest whole-number ratio, so 4 and 2 become 2 and 1.
 4. An entry that a drain holds gets 0. The other weights stay as they are.
@@ -125,7 +129,7 @@ Four settings change the weights:
 | Setting | What it does | How to use it |
 | --- | --- | --- |
 | Capacity factor | Counts a cluster's replicas for more or less. | [Weight traffic for heterogeneous clusters](../../guides/multi-cluster/weight-traffic-for-heterogeneous-clusters.md) |
-| Capacity polling | Can lower a cluster's `capacity.allocated` to what the cluster reports. | [Tune routing capacity polling](../../guides/multi-cluster/tune-routing-capacity-polling.md) |
+| Capacity polling | Can lower a cluster's `capacity.allocated` to what the cluster reports — or, in Reported mode, replace its count with the report. | [Tune routing capacity polling](../../guides/multi-cluster/tune-routing-capacity-polling.md) |
 | Routing health probe | Holds a cluster at 0 after repeated failures. | [Configure routing health probes](../../guides/multi-cluster/routing-health-probes.md) |
 | Drain | Holds a cluster at 0, whatever its capacity. | [Drain a workload cluster](../../guides/multi-cluster/drain-a-workload-cluster.md) |
 
@@ -136,6 +140,7 @@ Compare the entry with these rows, and take the first that matches:
 | What the entry shows | Why the weight is 0 |
 | --- | --- |
 | `drainRefs` lists an ID | A drain holds the cluster at 0, whatever its capacity. Remove the drain by its ID, as [Drain a workload cluster](../../guides/multi-cluster/drain-a-workload-cluster.md) shows. |
+| `capacity.reportedWeight: "0"` | The cluster reports that it can serve nothing. In [Reported mode](../../guides/multi-cluster/tune-routing-capacity-polling.md#reported-mode) the report is the cluster's capacity, so its ready replicas can't restore the weight; a positive report does. |
 | No `capacity.ready`, and `healthy: false` | The cluster has no ready replica, or the InferenceService's copy there isn't `IngressReady` yet. |
 | No `capacity.allocated`, `capacity.source: Endpoint` and `capacity.reported: 0` | The cluster reports that it can serve nothing, although its replicas are ready. |
 | No `capacity.allocated`, and `capacity.source: ControlPlane` | Placement admitted no replicas on the cluster. |
@@ -156,12 +161,12 @@ If every entry has weight 0, or the table is empty, the [Routable](#routable) co
 | Status | Reason | What it means |
 | --- | --- | --- |
 | `True` | `Routable` | At least one entry has a positive weight. |
-| `True` | `AllHomesProbeFailed` | The probe gates every cluster, and `allFailedPolicy: PreserveTraffic` keeps the weights of the clusters with ready replicas and capacity. |
+| `True` | `AllHomesProbeFailed` | The probe gates every cluster, and `allFailedPolicy: PreserveTraffic` keeps the weights that the clusters' capacity gives them. |
 | `False` | `NotPlaced` | The InferenceService's `status.placement.phase` isn't `Placed`, so the table is empty. |
 | `False` | `NoAddressableHome` | The InferenceService is placed, but no admitted cluster reports an endpoint, so the table is empty. |
 | `False` | `TrafficDrain` | Drains hold every cluster that had a positive weight. |
-| `False` | `AllHomesUnready` | No cluster has a ready replica. |
-| `False` | `NoRoutableCapacity` | No cluster that the probe leaves open has both `capacity.allocated` and `capacity.ready` above 0. |
+| `False` | `AllHomesUnready` | No cluster has a ready replica, and none has a `capacity.reportedWeight`. |
+| `False` | `NoRoutableCapacity` | No cluster that the probe leaves open has capacity: `capacity.allocated` and `capacity.ready` both above 0, or a positive `capacity.reportedWeight` in place of them. |
 | `False` | `AllHomesProbeFailed` | The probe gates every cluster, and its `allFailedPolicy` is `Drain`. |
 
 ### OverrideActive
@@ -176,12 +181,12 @@ If every entry has weight 0, or the table is empty, the [Routable](#routable) co
 
 ### CapacityFallback
 
-`CapacityFallback` is `True` when capacity polling is on and an entry has no usable report:
+`CapacityFallback` is `True` when capacity polling is on and an entry has no current report:
 
 | Status | Reason | What it means |
 | --- | --- | --- |
-| `True` | `EndpointCapacityUnavailable` | At least one entry has no usable report and uses the control plane's count. Its `capacity.fallbackReason` says why. |
-| `False` | `EndpointCapacityAvailable` | Every entry has a usable capacity report. |
+| `True` | `EndpointCapacityUnavailable` | At least one entry has no current report, and its `capacity.fallbackReason` says why. The entry uses the control plane's count — in [Reported mode](../../guides/multi-cluster/tune-routing-capacity-polling.md#reported-mode), only once its cached reports expire too. |
+| `False` | `EndpointCapacityAvailable` | Every entry has a current capacity report. |
 | `False` | `CapacityPollingDisabled` | Capacity polling is off. |
 | `False` | `NoCapacityTargets` | The table is empty, so there's nothing to poll. |
 
@@ -250,6 +255,6 @@ Some errors stop OME from updating a map. The map keeps its last table and condi
 
 - [Publish a global endpoint](../../guides/multi-cluster/publish-a-global-endpoint.md): write the map's weights into your global gateway.
 - [Weight traffic for heterogeneous clusters](../../guides/multi-cluster/weight-traffic-for-heterogeneous-clusters.md): count one cluster's replicas for more with a capacity factor.
-- [Tune routing capacity polling](../../guides/multi-cluster/tune-routing-capacity-polling.md): lower a cluster's weight to the capacity it reports.
+- [Tune routing capacity polling](../../guides/multi-cluster/tune-routing-capacity-polling.md): cap a cluster's weight at the capacity it reports, or make the report the weight.
 - [Configure routing health probes](../../guides/multi-cluster/routing-health-probes.md): gate a cluster's weight on an end-to-end probe.
 - [Drain a workload cluster](../../guides/multi-cluster/drain-a-workload-cluster.md): hold a cluster at weight 0 with kubectl ome traffic drain.

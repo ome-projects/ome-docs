@@ -15,7 +15,7 @@ Put the block in `spec.engine`, `spec.decoder` or `spec.router`. Its `class` dec
 | `class` | Use it to | What OME creates | Who sets the replica count |
 | --- | --- | --- | --- |
 | `HPA` | Scale on CPU, memory or another metric from the Kubernetes metrics APIs. | A HorizontalPodAutoscaler, `llama-3-2-1b-instruct-engine`. | The HorizontalPodAutoscaler. |
-| `KEDA` | Scale on a Prometheus query or another KEDA trigger, or scale a RawDeployment component to zero. | A ScaledObject, `scaledobject-llama-3-2-1b-instruct-engine`. | KEDA, through a HorizontalPodAutoscaler that it creates. |
+| `KEDA` | Scale on a Prometheus query or another KEDA trigger, or scale a RawDeployment component to zero. | A ScaledObject, `scaledobject-llama-3-2-1b-instruct-engine`. | KEDA, through a HorizontalPodAutoscaler that it controls. |
 | `External` | Scale with an autoscaler that you run. | Nothing. | Your autoscaler. |
 | `None` | Run a fixed number of replicas. | Nothing. | OME, which holds the count at `minReplicas`, even after a `kubectl scale`. |
 
@@ -116,7 +116,7 @@ spec:
 
 The query sums the waiting requests across the engine's pods. With `metricType: AverageValue`, KEDA divides the sum by the replica count, so it adds replicas to keep about 5 waiting requests per replica. [Collect metrics](../../guides/operate-ome/metrics.md) describes the Prometheus server and the labels it adds.
 
-The engine already has a HorizontalPodAutoscaler from the HPA example, so apply this file in two steps, as [Switch from HPA to KEDA](#switch-from-hpa-to-keda) shows.
+The engine already has a HorizontalPodAutoscaler from the HPA example. Apply the file anyway: the switch takes one step, because OME hands that HorizontalPodAutoscaler over to KEDA, as [Switch between HPA and KEDA](#switch-between-hpa-and-keda) describes.
 
 OME copies the `keda` fields into the ScaledObject as they are:
 
@@ -125,41 +125,50 @@ OME copies the `keda` fields into the ScaledObject as they are:
 | `triggers` | Required. The KEDA triggers to scale on. |
 | `pollingInterval`, `cooldownPeriod`, `fallback` | The ScaledObject settings of the same names. |
 | `idleReplicaCount` | The replica count while no trigger is active. It must be lower than `minReplicas`. |
-| `advanced` | The ScaledObject's `advanced` settings. `horizontalPodAutoscalerConfig.name` must differ from the component's name, which OME keeps for its own HorizontalPodAutoscaler. |
+| `advanced` | The ScaledObject's `advanced` settings. A `horizontalPodAutoscalerConfig.name` you set takes effect once KEDA controls the HorizontalPodAutoscaler: during [a switch from HPA](#switch-between-hpa-and-keda), OME names the handed-over HorizontalPodAutoscaler first. |
 
-### Switch from HPA to KEDA
+### Switch between HPA and KEDA
 
-OME creates the new autoscaler before it deletes the old one. A default KEDA install rejects a ScaledObject for a workload that a HorizontalPodAutoscaler already scales. So move a component from OME's HorizontalPodAutoscaler to KEDA in two steps. That includes a running component with no autoscaling settings, which has OME's default HorizontalPodAutoscaler.
+Change the component's `class` and apply the file: a switch takes one step, whether the block comes from the InferenceService, its runtime or an [AutoscalerPolicy](autoscaler-policy.md), and the component keeps a working autoscaler throughout. KEDA's admission webhook rejects a ScaledObject while another HorizontalPodAutoscaler scales the same workload, and two HorizontalPodAutoscalers on one workload fight over its replica count, so OME hands its HorizontalPodAutoscaler over instead of running both:
 
-First, set `class: External`, keep `minReplicas` at 1 or more, and apply the file. OME deletes its HorizontalPodAutoscaler and keeps the replica count. Check that the HorizontalPodAutoscaler is gone:
+- Moving to `KEDA`, OME creates the ScaledObject with the HorizontalPodAutoscaler's name in `advanced.horizontalPodAutoscalerConfig.name` and KEDA's `scaledobject.keda.sh/transfer-hpa-ownership` annotation, and KEDA takes that HorizontalPodAutoscaler over in place: the same object keeps scaling the component, now under KEDA's control. That covers a running component with no autoscaling settings, which has OME's default HorizontalPodAutoscaler.
+- Moving back to `HPA`, OME first checks with a server-side dry run that its replacement HorizontalPodAutoscaler would be accepted, then deletes the ScaledObject and every HorizontalPodAutoscaler KEDA created for it, and creates its own only after they are gone, so two HorizontalPodAutoscalers never scale the component at once.
+
+A switch that waits for KEDA, or for a deletion to finish, isn't a failure: the controller logs `Autoscaler switch in progress` and retries, and the InferenceService's status keeps updating. The `AutoscalerSwitched` condition, next to the scaler's own conditions in `status.components.<component>.autoscaler.conditions`, reports the progress:
+
+| Status | Reason | When |
+| --- | --- | --- |
+| `True` | `HPAControlledByKEDA` | KEDA controls the HorizontalPodAutoscaler through the ScaledObject, and reports the ScaledObject `Ready`. |
+| `True` | `ScaledObjectRemoved` | The ScaledObject and the HorizontalPodAutoscalers KEDA created for it are gone, and OME runs its own HorizontalPodAutoscaler. |
+| `False` | `WaitingForKEDA` | KEDA hasn't taken the HorizontalPodAutoscaler over yet. |
+| `False` | `ScaledObjectNotReady` | KEDA controls the HorizontalPodAutoscaler, but doesn't report the ScaledObject `Ready`. |
+| `False` | `WaitingForScaledObjectDeletion` | The ScaledObject still exists, usually while KEDA finishes deleting it. |
+| `False` | `WaitingForHPADeletion` | A HorizontalPodAutoscaler that KEDA created still exists. |
+
+OME writes the condition only for a component that switches, so a component that has always run one class doesn't carry it. After you apply the KEDA version of `isvc.yaml`, read it:
 
 ```bash
-kubectl get hpa llama-3-2-1b-instruct-engine -n llama-demo
+kubectl get inferenceservice llama-3-2-1b-instruct -n llama-demo \
+  -o custom-columns='SWITCHED:.status.components.engine.autoscaler.conditions[?(@.type=="AutoscalerSwitched")].status,REASON:.status.components.engine.autoscaler.conditions[?(@.type=="AutoscalerSwitched")].reason'
 ```
 
 ```output
-Error from server (NotFound): horizontalpodautoscalers.autoscaling "llama-3-2-1b-instruct-engine" not found
+SWITCHED   REASON
+True       HPAControlledByKEDA
 ```
 
-Then apply the KEDA version of `isvc.yaml`. [Check the ScaledObject](../../guides/scale-and-migrate/scale-to-zero-with-keda.md#step-2-check-the-scaledobject) shows how to confirm what it scales.
-
-A switch in one step fails, whether it comes from the InferenceService, its runtime or an AutoscalerPolicy. OME's HorizontalPodAutoscaler keeps scaling the component, and the InferenceService's ingress and status stop updating. The controller logs `Failed to reconcile component`, with an error that contains `is already managed by the hpa`:
+The HorizontalPodAutoscaler `llama-3-2-1b-instruct-engine` from the HPA example still exists, and its controller is now the ScaledObject:
 
 ```bash
-kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1
-```
-
-To recover, delete OME's HorizontalPodAutoscaler:
-
-```bash
-kubectl delete hpa llama-3-2-1b-instruct-engine -n llama-demo
+kubectl get hpa llama-3-2-1b-instruct-engine -n llama-demo \
+  -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].kind}{"\n"}'
 ```
 
 ```output
-horizontalpodautoscaler.autoscaling "llama-3-2-1b-instruct-engine" deleted from llama-demo namespace
+ScaledObject
 ```
 
-OME then creates the ScaledObject when it retries.
+OME never takes over or deletes a scaler it didn't create: a HorizontalPodAutoscaler or ScaledObject of yours under a name OME uses makes the switch fail with `is not controlled by expected owner`, as [External and None](#external-and-none) describes.
 
 ## External and None
 
@@ -217,7 +226,7 @@ OME reports each component's autoscaling in `status.components.<component>.autos
 | `specSource` | Where the block came from: see [Which setting wins](#which-setting-wins). |
 | `currentReplicas`, `desiredReplicas` | The autoscaler's current and desired replica counts, when `managedBy` is `ome`. Left out when 0. |
 | `lastScaleTime` | When the HorizontalPodAutoscaler last scaled, or when a KEDA trigger was last active. |
-| `conditions` | The conditions of the HorizontalPodAutoscaler or the ScaledObject. |
+| `conditions` | The conditions of the HorizontalPodAutoscaler or the ScaledObject, plus OME's own: [`AutoscalerSwitched`](#switch-between-hpa-and-keda) on a component that switched between `HPA` and `KEDA`, and `AutoscalerResolved` on one with a policy reference. |
 | `policy`, `shadowedPolicyRef` | Which AutoscalerPolicy supplied the block, or which one an inline block outranks: see [Conditions and status](autoscaler-policy.md#conditions-and-status). |
 
 `status.components.<component>.scaleTargetRef` names the scaled object by `apiVersion`, `kind` and `name`. [`kubectl ome autoscale`](../../reference/kubectl-ome/autoscale.md) shows these fields for every component, and explains where each setting came from.

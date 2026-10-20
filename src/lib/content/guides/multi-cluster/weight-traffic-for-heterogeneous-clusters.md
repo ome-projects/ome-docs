@@ -34,7 +34,7 @@ For example, `chat` has four replicas on `worker-a` and two on `worker-b`, whose
 - A factor counts per replica, so a cluster's share still moves as it scales or as its replicas stop being ready.
 - Only the ratios between factors matter: `worker-a: "2"` with `worker-b: "6"` gives the same weights as `worker-b: "3"` alone.
 - Factors change only the weights. OME ignores them when it places the InferenceService, in mode `Split` too: to change where replicas run, change `spec.placement`.
-- A capacity poll, a routing health probe or a drain can lower a cluster's weight, or hold it at 0, whatever its factor. See [How OME sets the weights](../../concepts/rollouts-and-traffic/traffic-map.md#how-ome-sets-the-weights).
+- A capacity poll, a routing health probe or a drain can lower a cluster's weight, or hold it at 0, whatever its factor. And a poll in [Reported mode](tune-routing-capacity-polling.md#reported-mode) replaces the whole count: an accepted report is the cluster's capacity, and OME doesn't apply the factor to it. See [How OME sets the weights](../../concepts/rollouts-and-traffic/traffic-map.md#how-ome-sets-the-weights).
 
 ## Step 1: Declare capacity factors
 
@@ -171,6 +171,7 @@ Find the cluster's entry in [Step 2](#step-2-check-the-weights):
 
 | What the entry shows | Cause and fix |
 | --- | --- |
+| `capacity.reportedWeight` is set | The capacity poll runs in [Reported mode](tune-routing-capacity-polling.md#reported-mode), and the accepted report is the cluster's capacity: OME doesn't apply the factor, and leaves it out of the entry. Fold the hardware into the reported weight, or use the poll's default `Ceiling` mode. |
 | Empty `factor` | The key doesn't match the WorkloadCluster's name, or the factors sit in the removed `spec.placement.capacityFactors` field. OME accepts any key, so compare yours with `kubectl get workloadclusters`, and keep the map in [`spec.routing.capacityFactors`](#move-from-the-removed-field). |
 | The only entry, with weight 1 | The InferenceService serves from one workload cluster, which gets all the traffic whatever its factor. |
 | Weight 0 | A drain, a probe gate or no ready replicas. See [Why a cluster's weight is zero](../../concepts/rollouts-and-traffic/traffic-map.md#why-a-clusters-weight-is-zero). |
@@ -186,7 +187,7 @@ To go back to plain replica counts, remove `spec.routing.capacityFactors` from `
 ## Next steps
 
 - [Traffic map](../../concepts/rollouts-and-traffic/traffic-map.md): the inputs of a weight, and how to tell whether the table is current.
-- [Tune routing capacity polling](tune-routing-capacity-polling.md): lower a cluster's count to the capacity that it reports.
+- [Tune routing capacity polling](tune-routing-capacity-polling.md): cap a cluster's count at the capacity that it reports, or make the report the weight.
 - [Configure routing health probes](routing-health-probes.md): take a cluster's traffic away when its endpoint fails.
 - [Drain a workload cluster](drain-a-workload-cluster.md): hold a cluster at weight 0 for maintenance.
 - [Publish a global endpoint](publish-a-global-endpoint.md): write the weights into your global gateway.
