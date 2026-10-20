@@ -159,7 +159,7 @@ google.com/tpu a100 0 0
 nvidia.com/gpu a100 32 32
 ```
 
-The columns are a resource, a flavor, the accelerators on nodes that are Ready and not cordoned, and the high-water mark that budgets are checked against. The mark also counts cordoned and not-Ready nodes, so it stays put while you drain nodes: [Lower the high-water mark](#lower-the-high-water-mark) explains when it comes down. Measured resources appear on all flavors, so `google.com/tpu` shows 0.
+The columns are a resource, a flavor, the accelerators on nodes that are Ready and not cordoned, and the high-water mark that budgets are checked against. The mark also counts cordoned and not-Ready nodes, so it stays put while you drain nodes: [Lower the high-water mark](#lower-the-high-water-mark) explains when it comes down. Measured resources appear on all flavors, so `google.com/tpu` shows 0. A 0 doesn't say on its own whether the pool is empty or a flavor failed to claim the nodes: each entry's `attribution` block does, as [Tell a measured zero from a mapping gap](#tell-a-measured-zero-from-a-mapping-gap) explains.
 
 Write the tree once `root` lists your resource and flavor. Until then, a budget for them can report `CapacityExceeded`. The tree puts the Cohort `ml-research` under `root`, with two teams under it:
 
@@ -356,6 +356,33 @@ The quota manager measures on a timer: the smaller of `quotaManager.resyncInterv
 A measurement that changes what `root` reports is written at once. The report interval bounds the rest: a measurement that finds the stamps a report interval old writes them anew, even though the numbers stand. So with the defaults, a quota manager that measures keeps every `observedAt` within about a minute of now, and the stamps say that the reporting is alive, not that the hardware changed.
 
 A stamp well past the report interval means that the measuring stopped, and with it everything this page describes: nothing raises the mark for new nodes, or lowers it for retired ones. A measurement that fails, such as a node list the API server refuses, doesn't refresh the stamps either, so check the quota manager's pods and their logs. Setting `reportInterval` to `""` or `0s` turns the refresh off, and the timer falls back to `resyncInterval`: `observedAt` then dates the last change of the numbers, and a reporter that stopped no longer shows.
+
+## Tell a measured zero from a mapping gap
+
+On this cluster, the 0 that `google.com/tpu` shows on `root` is a measured zero: every node was measured, and none advertises a TPU. But the same 0 appears when the hardware is there and the measurement couldn't claim it. A node that matches no ResourceFlavor, or two equally specific ones, is counted into no pool, so a wrong value in the A100 nodes' product label would leave `nvidia.com/gpu` at 0 with 32 GPUs installed. What tells the two apart is [`attribution`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorCapacityAttribution) on each entry of `root`'s `status.capacity`, the record of the mapping behind the numbers:
+
+```bash
+kubectl get aq root -o jsonpath='{range .status.capacity[*]}{.resourceName}{" "}{.resourceFlavor}{" "}{.allocatable}{" "}{.attribution.complete}{"\n"}{end}'
+```
+
+```output
+google.com/tpu a100 0 true
+nvidia.com/gpu a100 32 true
+```
+
+`complete` is `true` only when every node advertising the entry's resource was attributed to exactly one flavor, and every flavor carried a verifiable identity. On a 0, `true` means the pool is really empty. `false` means a node advertising the resource matched no flavor, or several equally specifically, so every number for that resource can undercount. One unclaimed node marks the whole resource: every `nvidia.com/gpu` entry turns incomplete, on every flavor, while the `google.com/tpu` entries stay complete. The block doesn't name the nodes: the `ome_quota_capacity_unattributed` [metrics](#metrics) hold the amounts and the reason, `NoMatchingFlavor` or `AmbiguousFlavor`. Create the flavor the nodes lack, or fix the labels, and the next measurement sets `complete` back to `true`.
+
+The other three fields record which mapping measured the entry:
+
+| Field | What it records |
+| --- | --- |
+| `flavorUID` | The UID of the entry's ResourceFlavor. A flavor deleted and recreated under the same name is a different UID. |
+| `nodeLabels` | The flavor's `spec.nodeLabels` when the entry was measured, kept even after the flavor changes. Absent on a flavor with no labels, which matches every node. |
+| `flavorSetHash` | A hash of the whole mapping: every ResourceFlavor's name, UID and node labels, and the measured resource list. Any flavor's change moves it, not only this entry's, because a more specific flavor elsewhere can take this pool's nodes. |
+
+The mapping is part of the status: a measurement that finds a new `flavorSetHash` rewrites every entry at once, whether or not a number moved. A flavor edit still waits for the next measurement, like a new flavor in [Check that capacity reporting is alive](#check-that-capacity-reporting-is-alive): within about a minute with the defaults.
+
+An entry carries the block only while the mapping produces its pair: the flavor exists, and the resource is in `quotaManager.capacity.resources`. When either goes, the next measurement removes the block, and keeps the entry only while it has a high-water mark above 0 to remember. So `google.com/tpu`'s all-zero entry vanishes with its flavor, and an entry without `attribution` is that leftover record: nothing vouches for its 0 allocatable, and its mark stands still, as the end of [Lower the high-water mark](#lower-the-high-water-mark) warns.
 
 ## Budget other accelerators
 
