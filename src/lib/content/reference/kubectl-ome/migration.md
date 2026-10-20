@@ -16,9 +16,40 @@ kubectl ome migration SUBCOMMAND INFERENCESERVICE [flags]
 | [`history`](#history) | Adds older migrations from the service's audit ConfigMap. |
 | [`start`](#start) | Alpha. Asks OME to move one Instance to another node. |
 
-Each subcommand takes the name of one InferenceService. `status` and `history` print a table, or the whole report with `-o json` or `-o yaml`, as [Output formats](overview.md#output-formats) describes. [Required RBAC](overview.md#required-rbac) lists the permissions each command needs, and `start` also needs the patch rule in [Guarded actions](guarded-actions.md#required-rbac).
+Each subcommand takes the name of one InferenceService. `status` and `history` read only the InferenceReplicas the service owns, as [Which replicas `status` and `history` read](#which-replicas-status-and-history-read) describes. They print a table, or the whole report with `-o json` or `-o yaml`, as [Output formats](overview.md#output-formats) describes. [Required RBAC](overview.md#required-rbac) lists the permissions each command needs, and `start` also needs the patch rule in [Guarded actions](guarded-actions.md#required-rbac).
 
 [Alfred](../../concepts/scheduling/alfred.md), OME's alpha GPU cluster caretaker, recommends Instance moves when free GPUs fragment or a node turns unhealthy and, when you [let it](../../guides/scheduling/let-alfred-migrate-instances.md), asks OMENative to carry them out. It sends the same request as `start`, so `status` and `history` show its migrations too. While any migration request waits or runs in the cluster, yours included, Alfred sends none of its own. [Global limits](../../concepts/scheduling/alfred-policies.md#global-limits) lists its other limits.
+
+## Which replicas `status` and `history` read
+
+`status` and `history` take an InferenceService, never an InferenceReplica. They read the InferenceService first, so naming a standalone replica — an [InferenceReplica](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica) you create directly, with no parent InferenceService — fails:
+
+```bash
+kubectl ome migration status pool-a -n prod
+```
+
+```output
+error: collect migration status: get InferenceService: inferenceservices.ome.io "pool-a" not found
+```
+
+`history` fails the same way. [`kubectl ome logs`](logs.md#standalone-and-fronted-replicas) takes a standalone replica's name, because it selects pods purely by label; the migration commands never do.
+
+The commands then keep only the InferenceReplicas that claim the InferenceService: the `ome.io/inferenceservice` label carries its name, `spec.parentRef` names it, and the service is the replica's one controller owner reference. OME writes all three on every InferenceReplica it creates for a service, so those appear. A replica that claims none of them isn't read and raises no issue, whatever its name. Only a replica that claims the service but fails a check is reported: its freshness is `Invalid`, its records stay hidden, and the `Source*` [issue codes](#status-output-fields) say what failed. `history` applies the same rule to its `AUTH` source, and reads the [audit ConfigMap](#history) only when the service is its controller owner too.
+
+An InferenceService whose [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) fronts standalone replicas writes nothing on them, so they don't claim it, and it has no InferenceReplicas of its own. On such a service, `status` always reports `Empty`, even while the fronted pools serve behind its route:
+
+```bash
+kubectl ome migration status front -n prod
+```
+
+```output
+SUBJECT/COMP   STATUS          DETAIL
+-/-            Empty/Current   -
+```
+
+The empty report isn't an error: the command read everything, found no InferenceReplica that claims `front`, and exits `0`. `history` reports `Empty` too: no `AUTH` records, and on a service that never had a migration the audit ConfigMap is missing, which `-o wide` shows as `NotFound` — not an issue, as [Output fields](#history-output-fields) notes.
+
+Anything a pool records in its own `status.migrations` never shows: read the replica itself, with `kubectl get inferencereplica pool-a -n prod -o yaml`. A fronting service also can't start a migration: [`start`](#start) refuses it, as [Owned replicas](guarded-actions.md#owned-replicas) describes, and the webhook rejects a migration request on a standalone replica, as [Run a standalone InferenceReplica](../../guides/omenative/run-a-standalone-inferencereplica.md#how-updates-roll-out) explains. [`kubectl ome get ir`](get.md#inferencereplicas-columns) shows which replicas a service owns: a standalone replica's PARENT column shows `-`.
 
 ## `status`
 
@@ -26,7 +57,7 @@ Each subcommand takes the name of one InferenceService. `status` and `history` p
 kubectl ome migration status INFERENCESERVICE [flags]
 ```
 
-`status` shows the migrations recorded in the InferenceReplicas' `status.migrations`: those running, and those that ended within the audit window. The ome-resources chart sets that window to one hour, in `ome.controller.lifecycle.audit.window`. A request shows up once OME accepts it. For older migrations, use [`history`](#history).
+`status` shows the migrations recorded in `status.migrations` of the [InferenceReplicas the service owns](#which-replicas-status-and-history-read): those running, and those that ended within the audit window. The ome-resources chart sets that window to one hour, in `ome.controller.lifecycle.audit.window`. A request shows up once OME accepts it. For older migrations, use [`history`](#history).
 
 ### Flags {#status-flags}
 
@@ -122,6 +153,8 @@ SUBJECT/COMP   STATUS          DETAIL
 -/-            Empty/Current   -
 ```
 
+A service that fronts pools through `spec.replicaRefs` always shows this, as [Which replicas `status` and `history` read](#which-replicas-status-and-history-read) explains.
+
 ## `history`
 
 ```text
@@ -132,7 +165,7 @@ kubectl ome migration history INFERENCESERVICE [flags]
 
 | Evidence | EVID | Source | What it holds |
 | --- | --- | --- | --- |
-| `Authoritative` | `AUTH` | The InferenceReplicas' `status.migrations` | The records [`status`](#status) shows. |
+| `Authoritative` | `AUTH` | The [owned InferenceReplicas'](#which-replicas-status-and-history-read) `status.migrations` | The records [`status`](#status) shows. |
 | `ParentSummary` | `PARENT` | The InferenceService's `status.migrationHistory` | Empty in this release. |
 | `AuditHistory` | `AUDIT` | The key `history.json` of the ConfigMap `<name>-ome-migration-audit` | An entry for each request OME accepted or rejected, and for each relocation, until the rebuilt Instance is `Ready`. It keeps the last 200 migrations that ended. |
 
