@@ -22,8 +22,8 @@ Pick triggers whose source keeps reporting while the component is at zero, such 
 
 ## Step 1: Create an InferenceService that scales to zero
 
-!!! warning "Switch a running component in two steps"
-    Move a running component from the default `HPA` class to KEDA in two steps. First set `class: External`, keep `minReplicas` at 1 or more, and apply the file: OME deletes its HorizontalPodAutoscaler and keeps the replica count. Then set `class: KEDA` with its triggers and `minReplicas: 0`, and apply the file again. In a default KEDA install, a switch in one step never completes, as [Component autoscaling](../../concepts/serving/component-autoscaling.md#switch-from-hpa-to-keda) explains.
+!!! note "A running component switches in one step"
+    A running component with the default `HPA` class moves to KEDA in one step: apply the file with `class: KEDA` and its triggers, and OME hands its HorizontalPodAutoscaler over to KEDA, which keeps scaling the component through it. The `AutoscalerSwitched` condition reports the handover, as [Switch between HPA and KEDA](../../concepts/serving/component-autoscaling.md#switch-between-hpa-and-keda) describes.
 
 Create a namespace for the example:
 
@@ -208,7 +208,6 @@ Each failed attempt logs `Failed to reconcile component` with an error:
 | In the logs | Cause | Fix |
 | --- | --- | --- |
 | `won't watch keda.sh/v1alpha1/ScaledObject resources` when the pod starts, then an error about the ScaledObject | KEDA isn't installed, or you installed it after OME. | Install KEDA, then restart the controller. |
-| `is already managed by the hpa 'llama-chat-engine'` | The component switched to KEDA in one step, and OME's HorizontalPodAutoscaler still scales it. | Delete that HorizontalPodAutoscaler. |
 | `minReplicas=0 requires typed KEDA with at least one trigger`, or `KEDA autoscaler requires at least one trigger` | The `ome.io/autoscalerClass: keda` annotation asks for KEDA, but carries no triggers. | Remove the annotation, and give the component its own `autoscaler`. |
 
 To restart the controller after you install KEDA, so that it watches ScaledObjects:
@@ -220,18 +219,6 @@ kubectl rollout restart deployment/ome-controller-manager -n ome
 ```output
 deployment.apps/ome-controller-manager restarted
 ```
-
-To delete OME's HorizontalPodAutoscaler after a switch in one step:
-
-```bash
-kubectl delete hpa llama-chat-engine -n llama-demo
-```
-
-```output
-horizontalpodautoscaler.autoscaling "llama-chat-engine" deleted from llama-demo namespace
-```
-
-With `class: KEDA`, OME doesn't create it again, and it creates the ScaledObject when it retries.
 
 ### The component doesn't wake up
 
