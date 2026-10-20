@@ -239,17 +239,7 @@ Warning: Runtime vllm-llama-3-2-1b-instruct will be auto-selected for model llam
 inferenceservice.ome.io/llama-3-2-1b-instruct configured
 ```
 
-The engine still has OME's default HorizontalPodAutoscaler, and a default KEDA install rejects a ScaledObject for a workload that another HorizontalPodAutoscaler scales. Until you delete OME's, the InferenceService's ingress and status stop updating. Delete it, as [Switch from HPA to KEDA](component-autoscaling.md#switch-from-hpa-to-keda) explains:
-
-```bash
-kubectl delete hpa llama-3-2-1b-instruct-engine -n llama-demo
-```
-
-```output
-horizontalpodautoscaler.autoscaling "llama-3-2-1b-instruct-engine" deleted from llama-demo namespace
-```
-
-OME then creates the ScaledObject `scaledobject-llama-3-2-1b-instruct-engine`, and KEDA creates its own HorizontalPodAutoscaler for it. Read the rendered server address, query and fallback replica count:
+The engine still has OME's default HorizontalPodAutoscaler. OME creates the ScaledObject `scaledobject-llama-3-2-1b-instruct-engine` and hands that HorizontalPodAutoscaler over to KEDA, which keeps scaling the engine through it, as [Switch between HPA and KEDA](component-autoscaling.md#switch-between-hpa-and-keda) describes. Read the rendered server address, query and fallback replica count:
 
 ```bash
 kubectl get scaledobject scaledobject-llama-3-2-1b-instruct-engine -n llama-demo \
@@ -330,7 +320,7 @@ queue-depth   pv1:9f2c41d07a8e   rv1:5b82d4c91f0a
 
 `portableDigest` identifies the policy's spec, and `wouldRenderDigest` identifies the render the policy would produce for this component if you removed the inline block: [Conditions and status](#conditions-and-status) describes both. Edit the shadowed policy, and the digests follow it. When the shadowed policy fails to render — it's missing, invalid or names an unbound provider — `shadowedPolicyRef` carries only the name, with no digests, and the component keeps running on the inline settings: an inline `autoscaler` wins even over a broken policy.
 
-To go back to the policy, remove the `autoscaler` block, then delete OME's HorizontalPodAutoscaler again, as in [Attach a policy to an InferenceService](#attach-a-policy-to-an-inferenceservice). The policy renders from the same inputs, so the component's `policy.resolvedDigest` equals the `wouldRenderDigest` you previewed, unless the policy, the component's replica bounds or the provider binding changed in between. [Confirm that a policy edit landed](#confirm-that-a-policy-edit-landed) shows how to read it.
+To go back to the policy, remove the `autoscaler` block: OME hands its HorizontalPodAutoscaler over to KEDA again. The policy renders from the same inputs, so the component's `policy.resolvedDigest` equals the `wouldRenderDigest` you previewed, unless the policy, the component's replica bounds or the provider binding changed in between. [Confirm that a policy edit landed](#confirm-that-a-policy-edit-landed) shows how to read it.
 
 ## Fail-closed behavior
 

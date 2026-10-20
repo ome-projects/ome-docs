@@ -5,7 +5,7 @@ status: preview
 since: v1.3
 ---
 
-A capacity poll lets a workload cluster cap its share of an [InferenceService](../../concepts/serving/inference-services.md)'s traffic at what it can serve. The control plane asks the cluster how many of the service's replicas can serve now, and counts no more than that in the cluster's [TrafficMap](../../concepts/rollouts-and-traffic/traffic-map.md) weight. Use it when a cluster knows better than the control plane what can serve: for example, how many of its [engine and decoder](../../concepts/serving/inference-services.md#components) pairs work together during a rollout. A report can lower a cluster's weight but never raise it, and a failed poll leaves the weight as it would be without one.
+A capacity poll lets a workload cluster cap its share of an [InferenceService](../../concepts/serving/inference-services.md)'s traffic at what it can serve. The control plane asks the cluster how many of the service's replicas can serve now, and counts no more than that in the cluster's [TrafficMap](../../concepts/rollouts-and-traffic/traffic-map.md) weight. Use it when a cluster knows better than the control plane what can serve: for example, how many of its [engine and decoder](../../concepts/serving/inference-services.md#components) pairs work together during a rollout. By default, in `Ceiling` mode, a report can lower a cluster's weight but never raise it, and a failed poll leaves the weight as it would be without one. [Reported mode](#reported-mode) makes the report the cluster's capacity instead: it replaces the replica count rather than capping it.
 
 Multi-cluster routing is alpha, still in development, and off by default. Its API, the capacity settings included, can change without notice. You turn it on with the `ome-resources` chart's values `ome.multicluster.enabled`, `ome.multicluster.role` and `ome.multicluster.config.routing.enabled`, as [Step 1](#step-1-set-the-operator-defaults) shows.
 
@@ -19,6 +19,8 @@ Multi-cluster routing is alpha, still in development, and off by default. Its AP
 </div>
 
 ## How the poll caps a cluster's weight
+
+This section describes the default mode, `Ceiling`. [Reported mode](#reported-mode) changes what the readings mean and what a failed poll does.
 
 A workload cluster that has admitted the InferenceService and reports an endpoint for it is a home, with an entry in the TrafficMap. OME polls a home every `period`, keeps its last `samples` readings, and takes the `quorum`-th lowest as its ceiling. With `quorum: 2`, the readings 4, 1 and 4 give a ceiling of 4, since one low reading can't set it alone, and 1, 4 and 1 give 1.
 
@@ -44,6 +46,8 @@ Your reporter answers with status 200 and a JSON body in the `Report` format, th
 {"servable": 4, "observedAt": "2026-09-28T10:00:00Z"}
 ```
 
+This is the body in the default mode, `Ceiling`. In [Reported mode](#reported-mode), OME reads a required `weight` field in place of `servable`. Each mode ignores the other's field whatever its value holds, so one reporter can answer with both at once.
+
 | Field | What it holds |
 | --- | --- |
 | `servable` | Required. How many replicas the home can serve now, as a whole number, 0 or more. For separate engine and decoder components, count the pairs that work together. |
@@ -52,6 +56,53 @@ Your reporter answers with status 200 and a JSON body in the `Report` format, th
 - Count replicas, not utilization or request slots: OME compares the count with the admitted replicas.
 - Answer at the path itself, with no login: the poll sends no credentials, and OME doesn't follow redirects.
 - Keep the reporter's clock in step with the control plane's.
+
+## Reported mode
+
+`mode: Reported` makes an accepted report the cluster's capacity, in place of its replica count. A report of 4 counts like four ready replicas on a factor-1 cluster, so it can raise the cluster's weight as well as lower it. OME applies the report as it is: the admitted replicas don't cap it, the cluster's [capacity factor](weight-traffic-for-heterogeneous-clusters.md) doesn't scale it, and its ready replicas don't gate it — fold the hardware into the number instead. A cluster without a usable report keeps its replica-based weight, so a broken reporter costs the cluster its report, not its traffic. A report of 0 takes all of the cluster's traffic away, even with a probe's `allFailedPolicy: PreserveTraffic`; a probe gate or a drain still holds a cluster at 0, whatever it reports.
+
+Add `mode: Reported` to the `capacity` block, in the chart's values or in `spec.routing.capacity`. A `spec.routing.capacity` block replaces the chart's poll as a whole, so set the mode there too, or the service polls in `Ceiling` mode:
+
+```yaml
+spec:
+  routing:
+    capacity:
+      mode: Reported
+      path: /capacity
+      method: GET
+      format: Report
+      samples: 4
+      quorum: 3
+      period: 10s
+      timeout: 3s
+      maxAge: 60s
+```
+
+The poll runs as in the other sections, but reads its results differently:
+
+- The report's count field is `weight`, required in place of `servable`: what the cluster can serve, in replicas, 0 or more. Fractions are fine, as in `{"weight": 2.5, "observedAt": "2026-09-28T10:00:00Z"}`, since only the ratios between clusters matter. A body without `weight` fails the poll with `capacity report has no weight`, and the value must be a number, finite and at most 2147483647.
+- `quorum` is how many readings the window must hold before a report applies, and the value applied is the window's lower median, not the `quorum`-th lowest. A reading too high would overload the cluster as surely as one too low starves it, so a single outlier in either direction can't move the weight; of two readings, the smaller wins.
+- A failed poll doesn't clear the window. Readings younger than `maxAge` keep setting the weight, so each `period` that `maxAge` spans beyond `quorum` times `period` carries the cluster through one more failed poll — the example above rides out about three. Once fewer than `quorum` fresh readings remain, the cluster goes back to its replica-based weight.
+
+While failed polls run down the cached readings, the TrafficMap shows the fallback coming before the weight changes: the entry's `capacity.fallbackReason` names the failure, and `CapacityFallback` turns `True`.
+
+On the TrafficMap, `spec.capacityMode` is `Reported`, and an entry whose report applies carries it in `capacity.reportedWeight`, with `capacity.source: Endpoint`. A fractional weight shows in canonical form: `2.5` shows as `2500m`. The entry's `allocated` and `ready` stay for diagnosis, and `factor` is left out. List the entries:
+
+```bash
+kubectl get trafficmap qwen3-0-6b -n qwen3-0-6b \
+  -o jsonpath='{range .spec.entries[*]}{.cluster}{" "}{.weight}{" "}{.capacity.reportedWeight}{" "}{.capacity.source}{" "}{.capacity.allocated}{" "}{.capacity.ready}{"\n"}{end}'
+```
+
+When `worker-a` reports a weight of 3 and `worker-b` reports 1, each with two admitted, ready replicas:
+
+```output
+worker-a 3 3 Endpoint 2 2
+worker-b 1 1 Endpoint 2 2
+```
+
+`worker-a` gets three quarters of the traffic: its report counts, not its two replicas, which a `Ceiling` poll would never let it exceed. [Traffic map](../../concepts/rollouts-and-traffic/traffic-map.md#how-ome-sets-the-weights) describes how the weights follow.
+
+In the chart, `mode: Reported` without the rest of the poll stops the controller from starting: see [The controller rollout doesn't finish](#the-controller-rollout-doesnt-finish). In `spec.routing.capacity`, the API server rejects it, with the message from [Step 2](#step-2-set-a-poll-for-one-service). Like any other capacity change, switching modes starts the homes over with no readings.
 
 ## Step 1: Set the operator defaults
 
@@ -82,17 +133,18 @@ Keep your other values, such as a [routing health probe](routing-health-probes.m
 
 | Field | What it sets |
 | --- | --- |
+| `mode` | `Ceiling`, the default: a report caps the cluster's weight. `Reported`: a report is the cluster's capacity. See [Reported mode](#reported-mode). |
 | `path` | The path added to a home's endpoint, starting with `/`. Setting it turns the poll on. |
 | `method` | `GET` or `POST`. |
 | `format` | `Report`. |
 | `options` | Leave it out: `Report` takes none. |
 | `samples` | How many readings to keep for each home. At least 1, and at most the chart's [`routing.observer.maxSamples`](#the-observer-limits), 100 by default. |
-| `quorum` | Which reading, from the lowest, sets the ceiling. At least 1, and at most `samples`. |
+| `quorum` | Which reading, from the lowest, sets the ceiling. In [Reported mode](#reported-mode), how many readings the window must hold. At least 1, and at most `samples`. |
 | `period` | How often to poll, as a duration such as `10s`. At least the chart's [`routing.observer.minPeriod`](#the-observer-limits), `1s` by default. |
 | `timeout` | How long a poll can take. Shorter than `period`. |
 | `maxAge` | How long a reading counts, from its `observedAt`. At least `quorum` times `period`. |
 
-Once you set `path`, every field but `options` is required, or the controller doesn't start: see [The controller rollout doesn't finish](#the-controller-rollout-doesnt-finish).
+Once you set `path`, every field but `mode` and `options` is required, or the controller doesn't start: see [The controller rollout doesn't finish](#the-controller-rollout-doesnt-finish).
 
 To choose the values:
 
@@ -120,7 +172,7 @@ deployment "ome-controller-manager" successfully rolled out
 
 ## Step 2: Set a poll for one service
 
-Give one InferenceService its own poll in its `spec.routing.capacity`, with or without a poll in the chart. It replaces the chart's poll as a whole, so set every field but `options`. For endpoints that spread polls across several reporters, this poll keeps four readings, needs three to agree before it lowers a ceiling, and lets a reading count for four periods:
+Give one InferenceService its own poll in its `spec.routing.capacity`, with or without a poll in the chart. It replaces the chart's poll as a whole, so set every field but `mode` and `options`. For endpoints that spread polls across several reporters, this poll keeps four readings, needs three to agree before it lowers a ceiling, and lets a reading count for four periods:
 
 ```yaml title="isvc.yaml"
 apiVersion: ome.io/v1beta1
@@ -182,7 +234,7 @@ FALLBACK   REASON                      MESSAGE
 False      EndpointCapacityAvailable   endpoint capacity is available for all 2 home(s)
 ```
 
-While any home has no ceiling, it's `True` with the reason `EndpointCapacityUnavailable`: see [A home falls back to its admitted replicas](#a-home-falls-back-to-its-admitted-replicas). [Traffic map](../../concepts/rollouts-and-traffic/traffic-map.md#capacityfallback) lists its other reasons.
+While any home has no current report, it's `True` with the reason `EndpointCapacityUnavailable`: see [A home falls back to its admitted replicas](#a-home-falls-back-to-its-admitted-replicas). [Traffic map](../../concepts/rollouts-and-traffic/traffic-map.md#capacityfallback) lists its other reasons.
 
 List each home's weight and capacity:
 
@@ -202,7 +254,7 @@ On `worker-b`, the ceiling of 1 lowers `allocated` from 2 to 1, so `source` is `
 
 OME leaves out `allocated` and `ready` when they're 0, so a missing number means 0. [Traffic map](../../concepts/rollouts-and-traffic/traffic-map.md#read-a-trafficmap) describes the fields.
 
-While the poll is on, the gauge `ome_trafficmap_capacity_fallback_homes`, with the labels `namespace` and `trafficmap`, counts the homes without a ceiling. Alert when it stays above 0.
+While the poll is on, the gauge `ome_trafficmap_capacity_fallback_homes`, with the labels `namespace` and `trafficmap`, counts the homes without a current report. Alert when it stays above 0.
 
 [`kubectl ome placement endpoint`](../../reference/kubectl-ome/placement.md#endpoint) shows the condition and a code for each home's fallback reason and, with `-o wide`, its capacity source. The command reads alpha features.
 
@@ -276,6 +328,7 @@ The error names the setting. For example:
 - A timeout as long as the period gives `routing.capacity.timeout (10s) must be shorter than routing.capacity.period (10s)`.
 - A period under [the observer's floor](#the-observer-limits) gives `routing.capacity.period (500ms) must be at least routing.observer.minPeriod (1s)`.
 - An observer limit set to 0 or `null` gives `routing.observer.maxSamples must be positive when routing is enabled`.
+- [`mode: Reported`](#reported-mode) without the poll's other fields gives `routing.capacity.mode Reported requires capacity polling`.
 
 Fix the value in your values file, and run `helm upgrade` again.
 
@@ -300,7 +353,7 @@ Fix the field, and apply `isvc.yaml` again.
 
 ### A home falls back to its admitted replicas
 
-When the `CapacityFallback` condition is `True`, its message counts the homes without a ceiling, as in `1 of 2 home(s) are using control-plane capacity; inspect spec.entries[].capacity.fallbackReason`. List each home's reason:
+When the `CapacityFallback` condition is `True`, its message counts the homes without a current report, as in `1 of 2 home(s) lack a current capacity observation; inspect spec.capacityMode and spec.entries[].capacity.fallbackReason`. List each home's reason:
 
 ```bash
 kubectl get trafficmap qwen3-0-6b -n qwen3-0-6b \
@@ -314,16 +367,19 @@ worker-a:
 worker-b: capacity endpoint returned HTTP 404
 ```
 
+In [Reported mode](#reported-mode), a reason can appear while the home still has its weight from earlier reports, in `capacity.reportedWeight`: the home falls back to its replica-based weight only once fewer than `quorum` of them are younger than `maxAge`.
+
 The reason says what to fix:
 
 | `fallbackReason` | What it means |
 | --- | --- |
-| `no capacity report yet`, or `capacity report awaiting quorum (1/3 accepted samples)` | Nothing's wrong. The home gets its ceiling once `quorum` polls in a row succeed. |
+| `no capacity report yet`, or `capacity report awaiting quorum (1/3 accepted samples)` | Nothing's wrong. The home gets its value once it has `quorum` accepted readings: in `Ceiling` mode from polls in a row, in [Reported mode](#reported-mode) from any polls within `maxAge`. |
 | `capacity report is stale (at least configured maximum age 40s)`, or `capacity report awaiting quorum after stale samples expired (2/3 accepted samples)` | The reporter updates less often than `maxAge`, has frozen, or has a clock that runs behind. Fix it, or raise `maxAge`. |
 | `capacity report timestamp is in the future` | The reporter's clock runs ahead of the controller's. |
 | `capacity endpoint unreachable:`, then the error | A DNS, connection or TLS error, or no answer within `timeout`. Check the network path from the controller's pods, or raise `timeout`. |
 | `capacity endpoint returned HTTP`, then the status | 404: the path doesn't reach your reporter, as [The report format](#the-report-format) explains. 3xx: OME doesn't follow redirects. 401 or 403: the poll sends no credentials. |
-| `capacity response is not a valid report:`, then the error, `capacity report has no servable count`, `capacity report has no observedAt stamp`, or `capacity report is negative (-1)` | The body isn't the report that [The report format](#the-report-format) describes, or is empty, as with `method: HEAD`. A negative count isn't read as 0. |
+| `capacity response is not a valid report:`, then the error, `capacity report has no servable count`, `capacity report has no weight`, `capacity report has no observedAt stamp`, `capacity report is negative (-1)`, or `capacity report must be finite and no greater than int32 maximum` | The body isn't the report that the poll's mode reads, as [The report format](#the-report-format) and [Reported mode](#reported-mode) describe, or is empty, as with `method: HEAD`. A negative count isn't read as 0. |
+| `capacity report unavailable` | A poll failed without a more specific error. |
 | `reading capacity response:` or `capacity request did not complete:`, then the error | The body is longer than the chart's [`routing.observer.maxResponseBytes`](#the-observer-limits), or the poll ran out of time. |
 | `capacity target is invalid:`, `capacity request URL is invalid:` or `capacity request could not be built:`, then the error | OME can't build a request from the entry's `endpoint` and the `path`. |
 | `capacity observation could not be submitted:`, then the error | The controller was starting or stopping, as in a restart. It clears on its own. |
