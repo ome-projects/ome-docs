@@ -221,7 +221,7 @@ spec:
 
 - `runtime.name` names the runtime from Step 1.
 - `leader: {}` and `worker` make the engine's Service send requests only to leaders, and `{}` keeps the runtime's leader as it is. Declare both: the webhook rejects an engine that declares only one.
-- `worker.size` is the number of workers in each Instance. It defaults to the runtime's `worker.size`, or 1.
+- `worker.size` is the number of workers in each Instance. It defaults to the runtime's `worker.size`, or 1. Changing it later records a new revision: each Instance moves to the new size through an update, not a resize of its running pods. See [Changing the worker count](../../concepts/architecture/omenative-update-strategies.md#changing-the-worker-count).
 - `minReplicas` and `maxReplicas` count Instances, and each Instance needs the GPUs of a leader and all its workers. Here, that's one Instance of two pods.
 - To use a gang-aware scheduler, add its name as `schedulerName` under `engine`, as [Bring a gang-aware scheduler](../../concepts/serving/gang-scheduling.md#bring-a-gang-aware-scheduler) shows.
 
