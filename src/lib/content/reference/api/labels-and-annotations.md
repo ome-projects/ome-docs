@@ -153,6 +153,7 @@ OME creates one [InferenceReplica](ome.v1beta1.md#ome-io-v1beta1-InferenceReplic
 
 | Key | Values | Read or set by | Description |
 | --- | --- | --- | --- |
+| `hf-model-id`, `hf-model-sha` | The Hugging Face model ID, such as `meta-llama/Llama-3.1-8B-Instruct`; the snapshot's full 40-character commit, not a branch or tag | Read by the model agent | Mark an `oci://` model's objects as a mirror of one Hugging Face snapshot. With `downloadPolicy: ReuseIfExists` and an object path in `storageUri` that ends with `<hf-model-id>/<hf-model-sha>`, the model shares the snapshot's copy on each node with `hf://` models and other mirrors, instead of downloading one of its own. The agent trusts the values, and checks the files against object storage, not Hugging Face. When the annotations are missing or invalid, or the object path doesn't end with them, the model keeps a copy of its own. See [Share OCI mirrors of Hugging Face snapshots](../../guides/operate-ome/shared-hf-artifacts.md#share-oci-mirrors-of-hugging-face-snapshots). |
 | `ome.oracle.com/skip-config-parsing` | `"true"`, in any letter case | Read by the model agent | Stops the agent from reading the model's files, so the model keeps only the metadata you set in its spec. OME ignores it for a model on a PVC. See [What OME learns from the model](../../concepts/models/base-models.md#what-ome-learns-from-the-model). |
 | `models.ome.io/category` | Any string, such as `LARGE` | Read by the controller | Sets the pod label `base-model-size`. The default is `SMALL`. |
 
