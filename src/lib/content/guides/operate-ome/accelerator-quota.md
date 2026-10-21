@@ -280,7 +280,44 @@ Kueue admits each pod on its own, so a nearly full budget can admit part of a mu
 
 To move a workload to another team, change the label. On OMENative, running pods keep charging the old team until the next rollout replaces them.
 
-Once Kueue admits the pods, `kubectl get aq team-beta` shows their GPUs under ADMITTED, next to the team's share under NOMINAL.
+Once Kueue admits the pods, `kubectl get aq team-beta` shows their GPUs under ADMITTED, next to the team's share under NOMINAL. The figures also sum onto `ml-research`: see [Read usage up the tree](#read-usage-up-the-tree).
+
+## Read usage up the tree
+
+Each node's `status.budgets` pairs every budget in its `spec.budgets` with what workloads hold against it, and the figures roll up: a team reports its own pods, and a Cohort reports what the teams underneath it consume. Every admitted GPU is charged to exactly one team, so the sum counts nothing twice. Say `team-alpha`'s pods hold 12 GPUs and `team-beta`'s hold 10, its 8 plus 2 borrowed:
+
+```bash
+kubectl get aq team-beta -o jsonpath='{range .status.budgets[*]}{.resourceName}{" "}{.resourceFlavor}{" nominal="}{.nominal}{" admitted="}{.admitted}{" reserved="}{.reserved}{" borrowed="}{.borrowed}{"\n"}{end}'
+```
+
+```output
+nvidia.com/gpu a100 nominal=8 admitted=10 reserved=10 borrowed=2
+```
+
+The same read on the Cohort shows the group's totals:
+
+```bash
+kubectl get aq ml-research -o jsonpath='{range .status.budgets[*]}{.resourceName}{" "}{.resourceFlavor}{" nominal="}{.nominal}{" admitted="}{.admitted}{" reserved="}{.reserved}{" borrowed="}{.borrowed}{"\n"}{end}'
+```
+
+```output
+nvidia.com/gpu a100 nominal=24 admitted=22 reserved=22 borrowed=0
+```
+
+Each entry carries four amounts:
+
+| Amount | What it reports |
+| --- | --- |
+| `nominal` | The budget's `nominal`, echoed from the spec. |
+| `admitted` | The GPUs admitted against the budget, borrowed ones included. On a Cohort, the teams' total. |
+| `reserved` | The GPUs held by workloads with a quota reservation, admitted or not. Never below `admitted`: the gap is work that owns the GPUs but hasn't started. |
+| `borrowed` | The `admitted` amount above the node's own `nominal`. |
+
+On a team, `borrowed` is Kueue's own figure. On a Cohort, the quota manager recomputes it against the Cohort's own `nominal` rather than summing the teams': `team-beta`'s 2 borrowed GPUs come from `team-alpha`'s idle share, inside the group, so `ml-research` reports 0. A Cohort borrows only when its teams' total passes its own share — GPUs taken from outside the group.
+
+The entries follow `spec.budgets`, so the list shows only what you authored. The CPU, memory and ephemeral storage ceilings that every ClusterQueue carries never appear, and a budget that nothing is charged to keeps an entry with every amount at 0: a budget nobody is using, not a budget that doesn't exist. A node with no budgets reports no `status.budgets` at all — `root` has none on this page, so it shows nothing while the teams run the fleet. Give it a budget, as [How quotas work](#how-quotas-work) suggests to cap the total, and it reports the whole tree's use.
+
+The quota manager rereads what Kueue holds on every pass, and a change in what a queue holds wakes one, so the figures follow admissions. When it can't read Kueue, the last figures stand rather than being zeroed: unknown and nothing held are different answers. The figures are observational — Kueue admits against its own queues, not against them — so a stale number misleads only its reader. The [metrics](#metrics) publish the same four amounts per node, as the `ome_quota_budget_*` gauges, and in `kubectl get aq`, NOMINAL and ADMITTED show the first budget's amounts, `-o wide` adds BORROWED, and `reserved` appears only in the full status.
 
 ## Change the tree
 
