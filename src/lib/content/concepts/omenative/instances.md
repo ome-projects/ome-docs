@@ -39,7 +39,9 @@ OME creates the InferenceReplica `qwen3-0-6b-engine` and two single-pod Instance
 
 An Instance keeps its index for life, in its pod names, its `ome.io/instance-index` label and `OME_INSTANCE_INDEX`. A new Instance takes the lowest free index. A migration, or a SurgeThenDrain update of a multi-pod Instance, starts the replacement at a new index and then removes the old Instance, so the indices can have gaps.
 
-On scale-down, OME first keeps the Instances that a migration or a multi-pod surge is handing over, with their replacements. It fills the remaining places with `Ready` Instances before the others, lowest indices first, and removes the rest.
+On scale-down, OME first keeps the Instances that a migration or a multi-pod surge is handing over, with their replacements. It fills the remaining places with the Instances that have no pod on a cordoned node — `Ready` ones before the others, lowest indices first — and removes the rest. So an Instance with a pod on a cordoned node leaves before any other, even a `Ready` Instance at the lowest index.
+
+An Instance sits on a cordoned node when any of its pods, a worker included, still runs on a node marked unschedulable, as `kubectl cordon` does; a terminating or finished pod doesn't count. Cordoning a node therefore steers the next scale-down, an autoscaler's included, toward the node's Instances, and when the [scale-down budget](../../guides/operate-ome/configure-the-controller.md#pace-omenative-scale-ups-and-scale-downs) splits the deletions into waves, those Instances go in the first ones.
 
 ### Incarnation
 
