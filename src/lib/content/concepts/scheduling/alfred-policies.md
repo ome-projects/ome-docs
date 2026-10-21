@@ -28,7 +28,7 @@ An OMENative Instance can move when all of these hold. Otherwise its move is adv
 | Alfred knows where the model is, and it isn't on a ReadWriteOnce or ReadWriteOncePod volume. | `ModelUnresolved`, `VolumePinned` |
 | Other nodes in the pool have room for the new pods while the old ones still run. | `NoSurgeHeadroom` |
 
-OMENative moves an Instance by surge: it starts the new pods first, and removes the old ones once the new ones serve. See [Migration and transient scale](../omenative/migration-and-transient-scale.md). For an Instance that holds TPU chips, the last condition works differently: see [TPU instances on per-Instance slices](#tpu-instances-on-per-instance-slices).
+OMENative moves an Instance by surge: it starts the new pods first, and removes the old ones once the new ones serve. See [Migration and transient scale](../omenative/migration-and-transient-scale.md). For an Instance that holds TPU chips, the last condition works differently: see [TPU Instances on per-Instance slices](#tpu-instances-on-per-instance-slices).
 
 ## Defragmentation
 
@@ -159,7 +159,7 @@ Alfred lists the nodes that aren't `Clear`, or are due for maintenance, in its r
 
 With `signalOnly: true`, the policy reports nodes and moves nothing. Use it when your own repair tooling drains nodes and acts on these events. [Alfred metrics and events](../../reference/scheduling/alfred-metrics-and-events.md#on-a-node) describes the events.
 
-### TPU instances on per-Instance slices
+### TPU Instances on per-Instance slices
 
 Surge planning and [simulation](#simulation) model GPUs, so an Instance that holds TPU chips is advice with the reason `AcceleratorPlacementUnmodeled`. One kind of TPU Instance can still move: one whose slice [OME provisions per Instance](../../guides/omenative/provision-tpu-slices.md). When OME migrates such an Instance, it creates a new slice for the replacement and the slice scheduler picks the partition, so Alfred needs no target nodes and can't simulate the placement.
 
