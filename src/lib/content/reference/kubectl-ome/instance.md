@@ -138,7 +138,7 @@ The decoder's Instance 3 is in its eighth incarnation and moving from `chat-deco
 kubectl ome instance status INFERENCESERVICE INDEX --component COMPONENT [flags]
 ```
 
-`status` shows one Instance: the row OME reports for it, the migrations it takes part in, and its pods with their Warning events. INDEX is the Instance's [index](../../concepts/omenative/instances.md#index), the first number under IDX/INC in `list`. The pod and event rows are live. The phase, revisions, pod counts, conditions, operation and last failure are what OME last recorded.
+`status` shows one Instance: the row OME reports for it, the migrations it takes part in, and its pods with their Warning events. INDEX is the Instance's [index](../../concepts/omenative/instances.md#index), the first number under IDX/INC in `list`. The pod and event rows are live. The phase, revisions, pod counts, conditions, announced markers, operation and last failure are what OME last recorded.
 
 `status` first works out the component's deployment mode, from the `ome.io/deploymentMode` annotation or else, as OME does, from the InferenceService and its runtime. A component in another mode gets the state `NotOMENative`.
 
@@ -178,7 +178,7 @@ The `deployment` and `encoding` rows always show. The others appear when they ha
 | `persisted` | The pod counts OME wrote: total, serving and available. |
 | `lifecycle` | The Instance's active pod-name slot, 0 or 1 (`activeOrdinal=`), and when it last became Ready (`readySince=`). |
 | `condition` | One row for each condition: its type, status, observed generation, evidence level and reason. |
-| `announced` | One row for each warning OME has raised once for the Instance, as `reason@episode`, such as `GangSplitRisk@#1`. |
+| `announced` | One durable marker for each warning OME has raised once for the Instance, as `reason@episode`, such as `GangSplitRisk@#1`. |
 | `operation` | The operation under way: its type, ID, step and retry count. |
 | `op target` | The revision the operation moves to, and why. |
 | `op timing` | When the operation started, when it last made progress, and its deadline. |
@@ -190,6 +190,16 @@ The `deployment` and `encoding` rows always show. The others appear when they ha
 | `pod` | One row for each pod: its name, its runner from the `ome.io/runner` label, its phase, whether it's Ready and serving, restarts, node, and whether it's being deleted. |
 | `event` | One row for each Warning event: the pod, the reason and the count. |
 | `issue` | One row for each issue code, with a reason when there is one. |
+
+An `announced` marker records that OME has raised a once-only warning: a Warning event an operator needs to read once per episode, not once per reconcile, such as `RepairHeld` when the component's unavailability budget denies a crash-loop repair. The marker's `reason` is the event's reason, and its `episode` names what the warning was about:
+
+- `#` and a number, such as `#1`, is an [incarnation](../../concepts/omenative/instances.md#incarnation): the episode of the standing warnings about the Instance as built, `GangSplitRisk` and `MaybeNoGangScheduler`, and of a warning raised while the Instance ran no operation.
+- Any other episode is the ID of the [operation](../../concepts/omenative/instances.md#operations) the warning was about, as the `operation` row prints it after `id=`, such as `update-2-9`.
+
+!!! warning "A marker can outlive its warning"
+    OME removes a marker whose episode has ended — the operation finished, or the Instance moved on to a new incarnation — only when it next announces a warning on the Instance, so an old marker doesn't mean its warning still applies. `announced RepairHeld@update-2-9` with no `operation` row says a repair was held during the finished operation `update-2-9`, not that one is held now: the `instance` row's phase, the `operation` row and the `failure` row show what the Instance is doing now.
+
+A marker never carries the event's message, and it stays on the Instance's status row after the event itself is gone. The report keeps at most 16 markers. A marker that doesn't parse as `reason@episode`, looks like a credential, or repeats another is dropped, with an `issue` row `AnnouncementInvalid`; the valid markers still show. When the row records more than 64 markers, none show, and when more than 16 of them are valid, the first 16 in alphabetical order show: either way, the report adds an `issue` row `AnnouncementsTruncated` and marks its summary truncated, the `truncated` row in `-o wide`. `-o wide` also splits each marker into `announcement[N] reason` and `announcement[N] episode` rows, and `-o json` and `-o yaml` list the pairs under `announcements`.
 
 The `op hold` row's `waiting=` shows only a token the CLI recognizes: `QuotaExceeded`, `NodeUnknown`, `SourceUnrouted`, `Unschedulable`, `PodGroupTerminating` or `Paused`. OME holds operations on tokens outside that list, such as `CapacityProvisioning`, while an Instance's pods [wait for their TPU slice](../../guides/omenative/provision-tpu-slices.md), and `AdmissionUnavailable`, while the API server can't reach an admission webhook for the operation's pod writes. The CLI shows those, like any token it doesn't know, as `waiting=Unknown`, and adds an `issue` row `OperationWaitingUnknown`. The report itself carries the normalized value, so `-o wide`, `-o json` and `-o yaml` show `Unknown` too. The real token isn't lost: both holds also record the Instance's last failure under it, so the `failure` row's `reason=` names the hold, and the InferenceReplica's own status keeps the raw `waiting`. The `op strategy` row works the same way: it shows `SurgeThenDrain`, `RecreatePod`, `InPlaceIfPossible` or `InPlaceOnly`, and any other value as `Unknown`, with an `issue` row `OperationStrategyUnknown`.
 
