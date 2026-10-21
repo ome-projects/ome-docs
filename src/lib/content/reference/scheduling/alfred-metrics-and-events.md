@@ -211,6 +211,7 @@ This row is from the default install. Instance 3 of the `engine` component of `c
 | `requestUUID` | The request's UUID. |
 | `dispatchReason` | Why the dispatcher withheld the move, or the reason for the request's latest status. See [Dispatch reasons](#dispatch-reasons). |
 | `scheduling` | The scheduler selection and simulation result. See [Scheduling results](#scheduling-results). |
+| `tpuSlice` | On a move onto a new OME-provisioned TPU slice: the Instance's `topology` and `freePartitions`, the partitions that looked free when the policy planned the move — an estimate, not a reservation. Such a move has no `target` or `hintTargets`: the slice scheduler places the new slice. See [TPU slice migration](alfred-configuration.md#tpu-slice-migration). |
 
 A planned move's `score` is its benefit less a move cost that `aggressiveness` weights. See [How Alfred picks a move](../../concepts/scheduling/alfred-policies.md#how-alfred-picks-a-move). Defragmentation advice scores 0 or less. A node-health row, advice included, scores the InferenceService's `alfred.ome.io/priority` annotation, 0.5 by default.
 
@@ -239,6 +240,8 @@ When maintenance windows are configured, the defragmentation policy proposes pla
 | `RawDeploymentMigrationUnsupported` | The component runs as a RawDeployment, which Alfred can't migrate. One row for each pod. |
 | `LWSMigrationUnsupported` | The component runs in `MultiNode` mode (deprecated). Defragmentation gives one row for the component, and node health one for each Instance. `lwsRecommendationsEnabled: false` turns these rows off. |
 | `NoSurgeHeadroom` | No node has room for the Instance's surge while its source still holds its GPUs. |
+| `AcceleratorPlacementUnmodeled` | Node health only: the Instance holds TPU chips, which surge planning and simulation can't place. With [`tpuSliceMigrationEnabled: true`](alfred-configuration.md#tpu-slice-migration), it marks a TPU Instance the slice path can't move either, for example one whose pods lack the slice-provisioning opt-in or disagree on the topology, or one that also holds GPUs. |
+| `NoTPUSliceCapacity` | Node health only, with [`tpuSliceMigrationEnabled: true`](alfred-configuration.md#tpu-slice-migration): the TPU Instance could move onto a new slice, but no free, healthy partition of its topology exists on nodes that can take work. See [TPU instances on per-Instance slices](../../concepts/scheduling/alfred-policies.md#tpu-instances-on-per-instance-slices). |
 | `VolumePinned` | A ReadWriteOnce or ReadWriteOncePod volume pins the component to its node. One row for the component. |
 | `ModelUnresolved` | Alfred can't resolve where the component's model is available. One row for the component. |
 | `MigrationSurfaceDisabled` | `omenativeMigrationEnabled` is `false`. |
