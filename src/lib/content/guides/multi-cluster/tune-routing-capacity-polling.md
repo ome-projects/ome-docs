@@ -38,7 +38,10 @@ A poll is one request, with the poll's `method` and no body, to the entry's `end
 | Gateway API with the default [shared host](../networking/gateway-host-schemes.md#shared-host-with-a-path-prefix) | `http://llm.worker-a.example.com/qwen3-0-6b/qwen3-0-6b/capacity` |
 | Kubernetes Ingress | `http://qwen3-0-6b.qwen3-0-6b.worker-a.example.com:8080/capacity`, on the engine Service's port, not your Ingress controller's |
 
-OME's HTTPRoute or Ingress sends all paths under the endpoint to the model server, which answers the poll with a 404. So add a route of your own that sends the poll URL to your reporter. For an HTTPRoute on the same Gateway, the Gateway API gives your longer path precedence over OME's. For a separate Ingress, precedence depends on your Ingress controller.
+OME's HTTPRoute or Ingress sends all paths under the endpoint to the serving port, which answers the poll with a 404. Route the poll to your reporter in one of two ways:
+
+- When the reporter is the service's [router](../../concepts/serving/inference-services.md#components), answering the path on another of its ports, set `spec.router.capacityEndpoint`: [OME then routes the path for you](#route-the-poll-to-a-router-port).
+- Otherwise, add a route of your own that sends the poll URL to your reporter. For an HTTPRoute on the same Gateway, the Gateway API gives your longer path precedence over OME's. For a separate Ingress, precedence depends on your Ingress controller.
 
 Your reporter answers with status 200 and a JSON body in the `Report` format, the only one that OME reads:
 
@@ -56,6 +59,29 @@ This is the body in the default mode, `Ceiling`. In [Reported mode](#reported-mo
 - Count replicas, not utilization or request slots: OME compares the count with the admitted replicas.
 - Answer at the path itself, with no login: the poll sends no credentials, and OME doesn't follow redirects.
 - Keep the reporter's clock in step with the control plane's.
+
+### Route the poll to a router port
+
+When the reporter is the service's router, answering the poll's path on a port other than the serving port, such as its metrics port, you don't need a route of your own. Name the path and the port in [`spec.router.capacityEndpoint`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-RouterCapacityEndpoint):
+
+```yaml
+spec:
+  router:
+    capacityEndpoint:
+      path: /capacity
+      port: 9090
+```
+
+| Field | What it sets |
+| --- | --- |
+| `path` | The path that the rule matches, exactly: the poll's `path`. The API server rejects `/`, which would send every request to `port`, and a path that differs from an enabled `spec.routing.capacity.path` in the same spec, with `spec.router.capacityEndpoint.path "/router/capacity" must equal spec.routing.capacity.path "/capacity", which the control plane polls`. Nothing compares it with the chart's poll, so match that `path` yourself. |
+| `port` | The router Service port that answers `path`, 1 through 65535. |
+
+Each serving cluster's top-level HTTPRoute gets a second rule that sends exactly `path` to the router Service on `port`; every other path still reaches the serving port, since the exact match outranks the route's prefix rule like a longer path of your own. On the default shared host, the rule matches the path under the service's prefix — `/qwen3-0-6b/qwen3-0-6b/capacity`, the poll URL's path in the table above — and rewrites it, so the router answers `/capacity` on either host scheme. [Ingress and external access](../../concepts/rollouts-and-traffic/ingress.md#routes) describes the rule.
+
+- OME adds the rule only while the router Service exposes `port`. With a wrong port, the poll keeps reaching the serving port and its 404 while the controller logs `Router Service does not expose the capacity endpoint port; capacity path not routed`; nothing shows in the service's status.
+- The field shapes HTTPRoutes only. On a workload cluster with a Kubernetes Ingress, keep a route of your own.
+- Set the field on the InferenceService: the API server rejects `capacityEndpoint` in a serving runtime's `routerConfig`, with `routerConfig: capacityEndpoint is not supported on serving runtimes; set spec.router.capacityEndpoint on the InferenceService`.
 
 ## Reported mode
 
@@ -377,7 +403,7 @@ The reason says what to fix:
 | `capacity report is stale (at least configured maximum age 40s)`, or `capacity report awaiting quorum after stale samples expired (2/3 accepted samples)` | The reporter updates less often than `maxAge`, has frozen, or has a clock that runs behind. Fix it, or raise `maxAge`. |
 | `capacity report timestamp is in the future` | The reporter's clock runs ahead of the controller's. |
 | `capacity endpoint unreachable:`, then the error | A DNS, connection or TLS error, or no answer within `timeout`. Check the network path from the controller's pods, or raise `timeout`. |
-| `capacity endpoint returned HTTP`, then the status | 404: the path doesn't reach your reporter, as [The report format](#the-report-format) explains. 3xx: OME doesn't follow redirects. 401 or 403: the poll sends no credentials. |
+| `capacity endpoint returned HTTP`, then the status | 404: the path doesn't reach your reporter — the route is missing, as [The report format](#the-report-format) explains, or [`spec.router.capacityEndpoint`](#route-the-poll-to-a-router-port) names a port that the home's router Service doesn't expose. 3xx: OME doesn't follow redirects. 401 or 403: the poll sends no credentials. |
 | `capacity response is not a valid report:`, then the error, `capacity report has no servable count`, `capacity report has no weight`, `capacity report has no observedAt stamp`, `capacity report is negative (-1)`, or `capacity report must be finite and no greater than int32 maximum` | The body isn't the report that the poll's mode reads, as [The report format](#the-report-format) and [Reported mode](#reported-mode) describe, or is empty, as with `method: HEAD`. A negative count isn't read as 0. |
 | `capacity report unavailable` | A poll failed without a more specific error. |
 | `reading capacity response:` or `capacity request did not complete:`, then the error | The body is longer than the chart's [`routing.observer.maxResponseBytes`](#the-observer-limits), or the poll ran out of time. |
