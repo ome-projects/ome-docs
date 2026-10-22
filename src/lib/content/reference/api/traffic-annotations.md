@@ -226,7 +226,7 @@ On Istio, the message also lists [endpoint override](../../concepts/rollouts-and
 
 ## Admission validation
 
-The admission webhook checks the circuit breaker, retry and timeout annotations, and pass-through prefixes, when you create or update an InferenceService. When it rejects one, kubectl prints `admission webhook "inferenceservice.ome-webhook-server.validator" denied the request:`, then a message that ends in a reason in parentheses:
+The admission webhook checks the circuit breaker, retry and timeout annotations, pass-through prefixes, and the multi-cluster [drain annotation](../../guides/multi-cluster/drain-a-workload-cluster.md#how-a-drain-is-recorded) `ome.io/traffic-drain`, when you create or update an InferenceService. When it rejects one, kubectl prints `admission webhook "inferenceservice.ome-webhook-server.validator" denied the request:`, then a message that ends in a reason in parentheses:
 
 ```text
 annotation "ome.io/retry-attempts" set to 3 requires "ome.io/retry-on" to specify retry conditions (MissingRetryOn)
@@ -241,6 +241,7 @@ annotation "ome.io/retry-attempts" set to 3 requires "ome.io/retry-on" to specif
 | `UnsupportedPassthrough` | A pass-through uses the other gateway's prefix. The message lists the prefix to use. |
 | `UnknownTrafficAnnotation` | An `ome.io/` key, such as `ome.io/retry-attempt`, is one or two characters off a [key the webhook knows](labels-and-annotations.md). The message names that key. |
 | `InvalidBoolValue` | `ome.io/managed-by-conflict-acked` has a value other than `true` or `false`. OME ignores this annotation. |
+| `InvalidTrafficDrain` | `ome.io/traffic-drain` doesn't hold drains in [the recorded form](../../guides/multi-cluster/drain-a-workload-cluster.md#how-a-drain-is-recorded): the value isn't a JSON object keyed by drain ID, repeats an ID or a field, gives a drain a field other than `cluster` and `reason` or a value that isn't a string, leaves an ID, `cluster` or `reason` empty or whitespace-padded, or has text after the closing brace. A control-plane install doesn't run this webhook, and drains apply only there, so a hand edit stores unchecked: see [The TrafficMap stops changing after a hand edit](../../guides/multi-cluster/drain-a-workload-cluster.md#the-trafficmap-stops-changing-after-a-hand-edit). |
 
 With `spec.traffic.algorithm: ConsistentHash`, the webhook admits `ome.io/circuit-breaker-per-endpoint-max-connections` above 1, and kubectl prints this after `Warning:`:
 
