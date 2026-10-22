@@ -264,6 +264,45 @@ The lines give the configured and the resolved budget (`configuredPodBudget` and
 
 Both batch sizes must be at least 1. The percentage form is digits and a `%`, from `"1%"` to `"100%"`: no sign, no spaces, no decimals — and a quoted `"100"` fails where a plain `100` works, since the manager reads every string as a percentage. The interval must be a positive duration such as `"5s"`. On any other value, the manager exits at startup with `Failed to initialize lifecycle scale configuration`, whose error names the value and the rule, such as `validate lifecycle.scaleDownPodBatchSize: invalid lifecycle.scaleDownPodBatchSize "101%" must be between 1% and 100%`, and the rollout doesn't finish: see [Troubleshooting](#the-manager-rollout-doesnt-finish). To remove a bound instead, set its field to `null`, and the chart leaves it out of the entry: without a batch size, one pass creates or deletes everything at once, and without the interval, the manager doesn't poll deletes in flight — watch events, and the exact deadlines of the [force-delete escalation and the teardown deadline](../omenative/recover-stuck-deletions.md), still wake it.
 
+## Pace canary re-checks
+
+During a [canary rollout](../../reference/rollouts/canary-progression.md), the manager drives the canary in reconcile passes, and a waiting pass schedules the next one itself, because a wait can end without anything changing in the cluster: a [timed pause](../../reference/rollouts/canary-progression.md#how-a-step-advances) runs out, a `scaleDownDelaySeconds` wait passes. Two settings under `ome.controller.rollout`, which the chart writes to the `rollout` entry of the `inferenceservice-config` ConfigMap, set how long it waits between checks:
+
+| Setting | Chart default | What it does |
+| --- | --- | --- |
+| `canaryRequeue` | `"10s"` | How soon the manager re-checks a canary in progress: a step in `Pending` waiting for its new Instances, a held gate — a timed pause, or a manual one waiting for a promote — the [`scaleDownDelaySeconds`](../../reference/rollouts/canary-progression.md#fields) wait before the canary completes, and a rollback moving Instances back. |
+| `canaryParkedRequeue` | `"5m"` | How often it revisits a canary parked at [`Failed`](../../reference/rollouts/canary-progression.md#phases), which only an action of yours moves, such as a [rollback](../roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) or a fix that gives the group a new revision. |
+
+So with the chart's values, a pause that has run out can hold its step for up to 10 more seconds, and a parked canary is looked at every 5 minutes. What the manager watches doesn't wait for the cadence: a promote or rollback annotation, like any change to the InferenceService's spec, labels or annotations, starts a pass at once. And a step whose [analysis](../../reference/rollouts/canary-analysis.md#when-queries-run) gate holds is re-checked every `interval` of its analysis instead, so sampling keeps its own cadence.
+
+This example re-checks a waiting canary every 5 seconds and revisits a parked one every minute:
+
+```yaml title="values.yaml"
+ome:
+  controller:
+    rollout:
+      canaryRequeue: "5s"
+      canaryParkedRequeue: "1m"
+```
+
+Every re-check is a reconcile pass, so a lower `canaryRequeue` adds API server load when many InferenceServices roll at once; raise it then instead. The `rollout` values that you don't set keep the chart's defaults. Upgrade with your values file, as in [Step 1](#with-a-helm-value), and check the rendered entry — with `jq`, since the entry holds other settings too:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.rollout}' \
+  | jq '{canaryRequeue, canaryParkedRequeue}'
+```
+
+```output
+{
+  "canaryRequeue": "5s",
+  "canaryParkedRequeue": "1m"
+}
+```
+
+The two settings aren't in [the list that needs a restart](#tune-the-config-cache): the manager reads them through its config cache, so even a `kubectl` edit takes effect within the cache's TTL — unlike `maxPinnedPlanBytes` in the same entry.
+
+With a value empty, or the entry absent — the kustomize manifests don't write one — the manager has no fixed cadence and falls back to its rate-limited requeue: the canary still moves, but on no schedule you can tune. A value that isn't a positive duration, such as `"0s"` or `"3d"`, counts as empty the same way. Unlike a bad `lifecycle` value, it doesn't stop the manager, and nothing logs it — so when a canary re-checks slower than the cadence you set, check the rendered entry for a typo.
+
 ## Add environment variables and files to the manager pod
 
 Three values under `ome.controller` add environment variables and files to the manager pod, such as proxy settings or a private CA bundle. All three default to empty lists, which leave the rendered Deployment unchanged:
