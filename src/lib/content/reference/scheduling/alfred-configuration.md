@@ -169,8 +169,25 @@ Alfred migrates only OMENative Instances. For RawDeployment and LeaderWorkerSet 
 | `omenativeMigrationEnabled` | boolean | `true` | Whether Alfred plans moves for OMENative Instances. With `false`, they get `MigrationSurfaceDisabled` advice. |
 | `rawDeploymentMigrationEnabled` | boolean | `false` | Reserved, with no effect: RawDeployment workloads always get `RawDeploymentMigrationUnsupported` advice. |
 | `lwsRecommendationsEnabled` | boolean | `true` | Whether Alfred records `LWSMigrationUnsupported` advice for LeaderWorkerSet workloads. With `false`, it leaves them out of its record. |
+| `tpuSliceMigrationEnabled` | boolean | `false` | Whether the node-health policy may plan moves for TPU Instances that OME provisions one slice per Instance for. See [TPU slice migration](#tpu-slice-migration). |
 
 Alfred reads each component's mode from the InferenceService, never from its runtime. So a component that's OMENative only through its runtime gets `RawDeploymentMigrationUnsupported` advice. To let Alfred move it, declare the mode in the InferenceService, as [An OMENative component shows RawDeploymentMigrationUnsupported](../../guides/scheduling/run-alfred.md#an-omenative-component-shows-rawdeploymentmigrationunsupported) shows.
+
+### TPU slice migration
+
+Alfred's surge planning and simulation model GPUs, so an Instance that holds TPU chips gets `AcceleratorPlacementUnmodeled` advice. `tpuSliceMigrationEnabled: true` makes an exception for the TPU Instances that [OME provisions one slice per Instance for](../../guides/omenative/provision-tpu-slices.md): the node-health policy may move them onto a new slice. OME creates the replacement's slice and the slice scheduler places it, so such a move names no target nodes and isn't simulated. Alfred checks only that a free, healthy partition of the Instance's topology exists, and gives `NoTPUSliceCapacity` advice when none does. [TPU Instances on per-Instance slices](../../concepts/scheduling/alfred-policies.md#tpu-instances-on-per-instance-slices) explains which Instances qualify and what makes a partition free.
+
+The check reads partitions from node and pod labels, the keys under `tpuSlicePartitions`. The defaults are GKE's TPU partition labels:
+
+| Key | Type | Default | Limits | What it does |
+| --- | --- | --- | --- | --- |
+| `tpuSlicePartitions.topologyLabel` | string | `cloud.google.com/gke-tpu-topology` | a label key | The pod `nodeSelector` key that holds a pod's slice topology, such as `2x2x2`. |
+| `tpuSlicePartitions.sliceLabel` | string | `cloud.google.com/gke-tpu-slice` | a label key | The pod `nodeSelector` key that pins a pod to its slice. The slice provisioner writes it, and the topology label, onto a slice's nodes, so a free node carries neither. |
+| `tpuSlicePartitions.idLabel` | string | `cloud.google.com/gke-tpu-partition-%s-id` | one `%s` and no other `%`; a label key once the topology fills it | The node label that names a node's partition. The topology replaces the `%s`: the nodes that share a `cloud.google.com/gke-tpu-partition-2x2x2-id` value form one `2x2x2` partition. |
+| `tpuSlicePartitions.stateLabel` | string | `cloud.google.com/gke-tpu-partition-%s-state` | like `idLabel` | The node label that holds a partition's state, with `%s` replaced the same way. |
+| `tpuSlicePartitions.healthyState` | string | `HEALTHY` | a label value, not empty | The `stateLabel` value that marks a partition usable. |
+
+A value outside its limits fails the document, with an error that names the key, and [hot reload](#hot-reload) keeps the last good configuration.
 
 ### Output and logging
 
@@ -260,7 +277,7 @@ The chart runs Alfred with leader election, using the Lease `alfred.ome.io`, and
 `migration.apiVersion: v1` lets Alfred plan moves for OMENative Instances, in either mode:
 
 - By default the value is empty, and OMENative Instances get advice that names no target nodes, usually with the reason `OMENativeUnavailable`. This is expected, and [Alfred metrics and events](alfred-metrics-and-events.md) lists the metric and event that also show it.
-- With it, each planned move names up to 3 target nodes in `hintTargets`. In recommend-only mode, the move stays advice, with the reason `SimulationRecommendOnly`, or a [scheduling reason](alfred-metrics-and-events.md#scheduling-results) when no profile fits. In execute mode, Alfred may request it.
+- With it, each planned move names up to 3 target nodes in `hintTargets`, except a [TPU slice move](#tpu-slice-migration), which names none. In recommend-only mode, the move stays advice, with the reason `SimulationRecommendOnly`, or a [scheduling reason](alfred-metrics-and-events.md#scheduling-results) when no profile fits. In execute mode, Alfred may request it.
 
 The value needs `simulation.configMapName`, or the chart fails with `migration.apiVersion requires simulation.configMapName`. Any value but `v1` fails with `migration.apiVersion must be v1 when enabled`. It also renders:
 

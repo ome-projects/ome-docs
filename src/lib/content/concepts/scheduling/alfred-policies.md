@@ -28,13 +28,13 @@ An OMENative Instance can move when all of these hold. Otherwise its move is adv
 | Alfred knows where the model is, and it isn't on a ReadWriteOnce or ReadWriteOncePod volume. | `ModelUnresolved`, `VolumePinned` |
 | Other nodes in the pool have room for the new pods while the old ones still run. | `NoSurgeHeadroom` |
 
-OMENative moves an Instance by surge: it starts the new pods first, and removes the old ones once the new ones serve. See [Migration and transient scale](../omenative/migration-and-transient-scale.md).
+OMENative moves an Instance by surge: it starts the new pods first, and removes the old ones once the new ones serve. See [Migration and transient scale](../omenative/migration-and-transient-scale.md). For an Instance that holds TPU chips, the last condition works differently: see [TPU Instances on per-Instance slices](#tpu-instances-on-per-instance-slices).
 
 ## Defragmentation
 
 A GPU cluster fragments as Instances come and go. Free GPUs end up a few to a node, so an Instance that needs a whole 8-GPU node stays `Pending` even when the cluster has more than 8 free. Moving a 2-GPU Instance off a half-empty node onto a fuller one can free the whole node. Defragmentation measures this damage and looks for such moves. `policies.defragmentation.enabled: false` turns it off.
 
-Alfred scores hardware pools separately, since only nodes with the same kind of GPU can stand in for one another. Instances without GPUs stay put.
+Alfred scores hardware pools separately, since only nodes with the same kind of GPU can stand in for one another. Instances without GPUs are never defragmentation candidates: only the node-health policy moves a TPU Instance, and only [onto a new slice](#tpu-instances-on-per-instance-slices).
 
 ### How Alfred scores a pool
 
@@ -82,7 +82,7 @@ Apart from the emergency boost, defragmentation ignores namespaces: any Instance
 
 The node-health policy moves Instances off nodes whose GPUs have failed, and off nodes you've marked for planned work. `policies.nodeHealth.enabled: false` turns it off. By default, a change to a node's conditions or maintenance triggers starts an extra decision pass (`earlyTickOn`).
 
-An Instance with a pod on an `Unhealthy` node gets a move with the reason `NodeUnhealthy`, and one on a node due for maintenance gets `NodeMaintenance`. Alfred plans the same surge move as for defragmentation, but skips the threshold and the cost, and ignores [maintenance windows](#maintenance-windows). The [arbiter](#the-arbiter) considers these moves before defragmentation's.
+An Instance with a pod on an `Unhealthy` node gets a move with the reason `NodeUnhealthy`, and one on a node due for maintenance gets `NodeMaintenance`. Alfred plans the same surge move as for defragmentation, but skips the threshold and the cost, and ignores [maintenance windows](#maintenance-windows). For a TPU Instance it can plan [a move onto a new slice](#tpu-instances-on-per-instance-slices) instead. The [arbiter](#the-arbiter) considers these moves before defragmentation's.
 
 ### Health states
 
@@ -158,6 +158,20 @@ Alfred lists the nodes that aren't `Clear`, or are due for maintenance, in its r
 | `NodeCordonedForMaintenance` | Alfred cordons the node, under [the maintenance cordon](#the-maintenance-cordon) opt-in. |
 
 With `signalOnly: true`, the policy reports nodes and moves nothing. Use it when your own repair tooling drains nodes and acts on these events. [Alfred metrics and events](../../reference/scheduling/alfred-metrics-and-events.md#on-a-node) describes the events.
+
+### TPU Instances on per-Instance slices
+
+Surge planning and [simulation](#simulation) model GPUs, so an Instance that holds TPU chips is advice with the reason `AcceleratorPlacementUnmodeled`. One kind of TPU Instance can still move: one whose slice [OME provisions per Instance](../../guides/omenative/provision-tpu-slices.md). When OME migrates such an Instance, it creates a new slice for the replacement and the slice scheduler picks the partition, so Alfred needs no target nodes and can't simulate the placement.
+
+The `config.yaml` key `tpuSliceMigrationEnabled`, `false` by default, lets the node-health policy plan these moves. A TPU Instance on a flagged node becomes a planned move when:
+
+- It holds no GPUs, and meets the [conditions above](#which-instances-alfred-can-move), except surge headroom.
+- Every member pod carries the slice-provisioning opt-in, the annotation `ome.io/tpu-slice-provisioning: "true"`, and names the same topology in its `nodeSelector`.
+- A partition of that topology is free. A partition is the set of nodes that share a value of the partition id label, and it's free when it has a node for each member pod, and every one of its nodes can take work (none is cordoned, quarantined by [node health](#health-states), due for maintenance or marked for scale-down), reports the healthy state in its partition state label, belongs to no slice, holds no pod that requests GPUs or TPU chips, and fits the member pods' node selectors and required node affinity. The slice and topology selectors don't count against that fit: the slice provisioner writes them onto the new slice's nodes.
+
+When no partition is free, the Instance is advice with `NoTPUSliceCapacity`. In every other case it keeps `AcceleratorPlacementUnmodeled`. [TPU slice migration](../../reference/scheduling/alfred-configuration.md#tpu-slice-migration) lists the labels these checks read, GKE's TPU partition labels by default.
+
+A planned slice move names no target nodes and claims no GPUs. In execute mode, just before Alfred requests it, the policy replay against a fresh observation re-checks the free partition, in place of the simulation; every other check, from the arbiter's to the dispatch journal's, applies as to any other move. The count of free partitions is an estimate, not a reservation: something else can take a partition after the check. The move surges like any other, so the Instance keeps serving on its source until the replacement serves.
 
 ## Simulation
 
