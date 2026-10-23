@@ -224,7 +224,7 @@ The drains hold every cluster that had a positive weight, so the gateway has now
 
 ### The TrafficMap stops changing after a hand edit
 
-Nothing validates a hand edit of `ome.io/traffic-drain`. When the value is invalid, OME keeps the last valid TrafficMap, so drained clusters stay drained. Capacity and health changes stop reaching the TrafficMap too, and `kubectl ome traffic drain` and `undrain` refuse with `traffic action refused: existing traffic-drain annotation is malformed or unsafe`. OME logs the error:
+Nothing validates a hand edit of `ome.io/traffic-drain` on the control-plane cluster: the webhook rule that rejects a malformed value with [`InvalidTrafficDrain`](../../reference/api/traffic-annotations.md#admission-validation) is in the InferenceService validator, the one webhook that [the control-plane role turns off](../../reference/operate-ome/controller-manager-flags.md#what-the-control-plane-role-turns-off). When the value is invalid, OME keeps the last valid TrafficMap, so drained clusters stay drained. Capacity and health changes stop reaching the TrafficMap too, and `kubectl ome traffic drain` and `undrain` refuse with `traffic action refused: existing traffic-drain annotation is malformed or unsafe`. OME logs the error:
 
 ```bash
 kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep 'parse ome.io/traffic-drain'
