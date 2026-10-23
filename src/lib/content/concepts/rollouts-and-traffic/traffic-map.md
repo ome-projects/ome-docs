@@ -136,7 +136,7 @@ Four settings change the weights:
 
 ## A placement move drains a cluster first
 
-Placement can zero a weight on its own, with no drain of yours. When it withdraws the InferenceService from a cluster — a `Single` move to another cluster, or a plan change that retires one of a `Split` or `All` placement's homes — it asks that cluster to drain first: in the control-plane InferenceService's `status.placement.candidates`, the cluster's [`allocation.drainRequested`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CandidateAllocationStatus) turns `true`, and the map's next table holds its entry at 0.
+Placement can zero a weight on its own, with no drain of yours. When a plan change retires one of a `Split` or `All` placement's homes, placement asks that cluster to drain first: in the control-plane InferenceService's `status.placement.candidates`, the cluster's [`allocation.drainRequested`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CandidateAllocationStatus) turns `true`, and the map's next table holds its entry at 0.
 
 Placement removes the InferenceService's copy from the cluster only after the map shows the zero. Until then the entry looks intact apart from its weight: it keeps its endpoint, `healthy: true` and its positive `capacity.allocated` and `capacity.ready`, and it gets no `drainRefs` — those list only the drains of the `ome.io/traffic-drain` annotation. That's the designed order of a move, not a fault, and there's nothing to undrain: the zero stays until the copy is gone and the entry leaves the table. To tell a draining cluster from a bug, read the allocations:
 
@@ -151,6 +151,8 @@ cluster-b=
 ```
 
 Placement is draining `cluster-a`, and `cluster-b` keeps its traffic. When a plan drains every cluster that has capacity, [Routable](#routable) turns `False` with reason `NoRoutableCapacity`, and the entries keep showing that capacity.
+
+A `Single` move to another cluster also drains the cluster it leaves, but the map never holds its entry at 0: the status update that requests the drain also makes the new cluster the plan's winner, and in `Single` mode a cluster that placement is draining leaves the table. Placement removes the copy only after the entry is gone, so the retiring cluster's replicas outlive its entry; until they're removed, the allocations above show the cluster with `drainRequested: true`.
 
 ## Why a cluster's weight is zero
 
