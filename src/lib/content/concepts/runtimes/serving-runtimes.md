@@ -174,7 +174,7 @@ Since v1.3, the annotation `ome.io/engine: sglang-pd` on a runtime fills in an S
 Where the runtime and the InferenceService both set a value, the InferenceService's wins, except for the [per-accelerator overrides](#per-accelerator-configuration):
 
 - Maps merge by key: `labels`, `annotations`, `nodeSelector`, and the runner's resource requests and limits.
-- Lists merge item by item: `env` and `volumes` by name, `ports` by `containerPort`, and `volumeMounts` by `mountPath`.
+- Lists merge item by item: `env` and `volumes` by name, `ports` by `containerPort`, and `volumeMounts` by `mountPath`. An `env` entry that switches between `value` and `valueFrom`, or to another kind of source, replaces the runtime's entry whole: a plain `value` can override a runtime `secretKeyRef`, and a `secretKeyRef` can replace a `value` or a `configMapKeyRef`. In [runtime inheritance](runtime-inheritance.md#what-merges), by contrast, such a switch leaves an entry with both, which Kubernetes rejects.
 - `args`, `command` and `tolerations` replace the runtime's whole list. To add a flag with `args`, repeat the runtime's other flags. Most runtimes in the catalog put their flags in `command`, so an InferenceService's `args` adds flags to theirs.
 - Single values, such as the runner's `image`, replace the runtime's.
 
