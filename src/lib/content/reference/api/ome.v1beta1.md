@@ -3037,6 +3037,17 @@ target set is NOT retried — even after the annotation is cleared. The
 rollout re-arms only when a different target set appears.
 
 </td></tr>
+<tr><td><code>rollbackRequested</code></td>
+<td><code>bool</code></td>
+<td>
+
+RollbackRequested records that this unit&#39;s rollback was applied from an
+ome.io/rollout-rollback request. The request stays on the
+InferenceService through the hold and is this unit&#39;s while set: no
+other unit&#39;s canary acts on it. It clears when the request is observed
+removed, and with the hold when the unit starts its next canary.
+
+</td></tr>
 <tr><td><code>analysisFailedChecks</code></td>
 <td><code>int32</code></td>
 <td>
@@ -3194,10 +3205,10 @@ Minimum: `0`.
 <td><a href="#ome-io-v1beta1-ComponentAffinityMatch"><code>[]ComponentAffinityMatch</code></a></td>
 <td>
 
-ComponentMatches records, under the ComponentAffinity policy, how each
-component other than the primary one matched this cluster. MatchingTerms
-and Weight hold the primary component&#39;s match. The accepted plan keeps
-them so that member floors never follow unaccepted label changes.
+ComponentMatches records the Split weight of the other components when
+the affinity terms set weights: the decoder&#39;s, and the router&#39;s when
+routers are divided. Weight holds the primary component&#39;s. The accepted
+plan keeps them so that member floors never follow unaccepted label changes.
 
 Maximum items: `2`.
 
@@ -3607,12 +3618,14 @@ Allowed values: `ControlPlane`, `Endpoint`.
 
 ### `ClusterAffinityTerm` {#ome-io-v1beta1-ClusterAffinityTerm}
 
-Used by [`ComponentClusterAffinity`](#ome-io-v1beta1-ComponentClusterAffinity), [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
+Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
 
 ClusterAffinityTerm selects WorkloadClusters by ANDing its requirements.
-Multiple terms form a union; a weight assigns replica shares to each match.
+Multiple terms form a union; weights assign replica shares to each match.
 
 Validation: a cluster affinity term must contain a requirement.
+
+Validation: weight means weights.default; it may sit beside weights.decoder and weights.router, but not beside weights.default or weights.engine.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -3621,12 +3634,21 @@ Validation: a cluster affinity term must contain a requirement.
 <td><code>int32</code></td>
 <td>
 
-Weight is permitted only for static Split. If any term has an explicit
-weight, matching term weights add and omitted weights contribute one.
-Omission must be preserved to distinguish unweighted overlapping terms.
-Weights are replica ratios, so they have no upper bound.
+Deprecated: Weight is weights.default, and is permitted only for static
+Split. It is the only weight a manager without weights support reads, so
+a rollback to such a manager keeps the engine shares set here.
 
 Minimum: `1`.
+
+</td></tr>
+<tr><td><code>weights</code></td>
+<td><a href="#ome-io-v1beta1-ClusterAffinityWeights"><code>ClusterAffinityWeights</code></a></td>
+<td>
+
+Weights sets each component&#39;s replica weight on the clusters this term
+matches, and is permitted only for static Split. If any term gives a
+component a weight, the weights of matching terms add and a term that
+gives none contributes one. Weights are ratios, so they have no upper bound.
 
 </td></tr>
 <tr><td><code>matchExpressions</code></td>
@@ -3646,6 +3668,59 @@ MatchFields selects the real metadata.name using In or NotIn. Multiple
 names are allowed; a label named metadata.name does not affect this match.
 
 Maximum items: `64`.
+
+</td></tr>
+</tbody>
+</table>
+
+### `ClusterAffinityWeights` {#ome-io-v1beta1-ClusterAffinityWeights}
+
+Used by [`ClusterAffinityTerm`](#ome-io-v1beta1-ClusterAffinityTerm).
+
+ClusterAffinityWeights holds one term&#39;s weight per component. The engine
+takes engine, then default. The decoder takes decoder, then default, then
+the engine&#39;s weight. Routers are divided across clusters only when a term
+sets router; a term without it then contributes the engine&#39;s weight.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>default</code></td>
+<td><code>int32</code></td>
+<td>
+
+Default is the weight of every component this term does not name.
+
+Minimum: `1`.
+
+</td></tr>
+<tr><td><code>engine</code></td>
+<td><code>int32</code></td>
+<td>
+
+Engine is the engine&#39;s weight.
+
+Minimum: `1`.
+
+</td></tr>
+<tr><td><code>decoder</code></td>
+<td><code>int32</code></td>
+<td>
+
+Decoder is the decoder&#39;s weight.
+
+Minimum: `1`.
+
+</td></tr>
+<tr><td><code>router</code></td>
+<td><code>int32</code></td>
+<td>
+
+Router is the router&#39;s weight. Setting it on any term divides
+router.minReplicas across the clusters; otherwise every cluster runs the
+full router policy.
+
+Minimum: `1`.
 
 </td></tr>
 </tbody>
@@ -3751,8 +3826,8 @@ Underlying type: `string`.
 
 Used by [`CandidateAllocationStatus`](#ome-io-v1beta1-CandidateAllocationStatus).
 
-ComponentAffinityMatch records how one component&#39;s own affinity terms
-matched a cluster.
+ComponentAffinityMatch records the weight the affinity terms give one
+component on a cluster.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -3763,13 +3838,6 @@ matched a cluster.
 
 
 Allowed values: `engine`, `decoder`, `router`.
-
-</td></tr>
-<tr><td><code>matchingTerms</code></td>
-<td><code>[]int32</code></td>
-<td>
-
-MatchingTerms contains zero-based indexes into the component&#39;s terms.
 
 </td></tr>
 <tr><td><code>weight</code></td>
@@ -3959,52 +4027,6 @@ Underlying type: `string`.
 
 Allowed values: `MaxReplicas`, `MinReplicas`.
 
-### `ComponentClusterAffinity` {#ome-io-v1beta1-ComponentClusterAffinity}
-
-Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
-
-ComponentClusterAffinity holds one affinity term list per component. Every
-listed component must match the same clusters. In Split, each list&#39;s weights
-set that component&#39;s shares; in Single and All the lists only select.
-
-<table class="doc-api-fields">
-<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
-<tbody>
-<tr><td><code>engine</code></td>
-<td><a href="#ome-io-v1beta1-ClusterAffinityTerm"><code>[]ClusterAffinityTerm</code></a></td>
-<td>
-
-Engine selects clusters for the engine and, in Split, weights its shares.
-It is required when the service declares an engine.
-
-Minimum items: `1`. Maximum items: `64`.
-
-</td></tr>
-<tr><td><code>decoder</code></td>
-<td><a href="#ome-io-v1beta1-ClusterAffinityTerm"><code>[]ClusterAffinityTerm</code></a></td>
-<td>
-
-Decoder selects clusters for the decoder and, in Split, weights its shares
-over the clusters that hold engine replicas. It is required when the
-service declares a decoder.
-
-Minimum items: `1`. Maximum items: `64`.
-
-</td></tr>
-<tr><td><code>router</code></td>
-<td><a href="#ome-io-v1beta1-ClusterAffinityTerm"><code>[]ClusterAffinityTerm</code></a></td>
-<td>
-
-Router selects clusters for the router. In Split, it divides
-router.minReplicas across the clusters that hold engine replicas; without
-it, each such cluster runs the full router policy.
-
-Minimum items: `1`. Maximum items: `64`.
-
-</td></tr>
-</tbody>
-</table>
-
 ### `ComponentExtensionSpec` {#ome-io-v1beta1-ComponentExtensionSpec}
 
 Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`RouterSpec`](#ome-io-v1beta1-RouterSpec).
@@ -4025,7 +4047,8 @@ Minimum number of replicas, defaults to 1 but can be set to 0 to enable scale-to
 <td><code>int</code></td>
 <td>
 
-Maximum number of replicas for autoscaling.
+Maximum number of replicas for autoscaling. A proportional-scaling
+follower that leaves it unset has no ceiling of its own.
 
 </td></tr>
 <tr><td><code>timeoutSeconds</code></td>
@@ -4350,7 +4373,7 @@ PairingProtocol values are equal; an empty value pairs with anything.
 
 ### `ComponentType` {#ome-io-v1beta1-ComponentType}
 
-Used by [`CandidateComponentFloor`](#ome-io-v1beta1-CandidateComponentFloor), [`ComponentAffinityMatch`](#ome-io-v1beta1-ComponentAffinityMatch), [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`MigrationHistoryEntry`](#ome-io-v1beta1-MigrationHistoryEntry), [`PlacementComponentDemand`](#ome-io-v1beta1-PlacementComponentDemand), [`PlacementComponentFloor`](#ome-io-v1beta1-PlacementComponentFloor), [`ProportionalPolicy`](#ome-io-v1beta1-ProportionalPolicy), [`RolloutCoordinationGroupStatus`](#ome-io-v1beta1-RolloutCoordinationGroupStatus), [`RolloutGroup`](#ome-io-v1beta1-RolloutGroup), [`RolloutRunTarget`](#ome-io-v1beta1-RolloutRunTarget).
+Used by [`CandidateComponentFloor`](#ome-io-v1beta1-CandidateComponentFloor), [`ComponentAffinityMatch`](#ome-io-v1beta1-ComponentAffinityMatch), [`FollowerScalingStatus`](#ome-io-v1beta1-FollowerScalingStatus), [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`MigrationHistoryEntry`](#ome-io-v1beta1-MigrationHistoryEntry), [`PlacementComponentDemand`](#ome-io-v1beta1-PlacementComponentDemand), [`PlacementComponentFloor`](#ome-io-v1beta1-PlacementComponentFloor), [`ProportionalPolicy`](#ome-io-v1beta1-ProportionalPolicy), [`RolloutCoordinationGroupStatus`](#ome-io-v1beta1-RolloutCoordinationGroupStatus), [`RolloutGroup`](#ome-io-v1beta1-RolloutGroup), [`RolloutRunTarget`](#ome-io-v1beta1-RolloutRunTarget), [`ScalingPolicyStatus`](#ome-io-v1beta1-ScalingPolicyStatus).
 
 ComponentType contains the different types of components of the service
 
@@ -5054,6 +5077,55 @@ TrainingJobRef references the training job that produced this weight
 </tbody>
 </table>
 
+### `FollowerScalingStatus` {#ome-io-v1beta1-FollowerScalingStatus}
+
+Used by [`ScalingPolicyStatus`](#ome-io-v1beta1-ScalingPolicyStatus).
+
+FollowerScalingStatus compares a target with the committed desired count.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>component</code></td>
+<td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>ratio</code></td>
+<td><a href="https://pkg.go.dev/k8s.io/apimachinery/pkg/api/resource#Quantity"><code>Quantity</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>target</code></td>
+<td><code>int32</code></td>
+<td>
+
+Target is the anchor&#39;s desired count times the ratio, rounded up, after
+the follower&#39;s own bounds.
+
+</td></tr>
+<tr><td><code>current</code></td>
+<td><code>int32</code></td>
+<td>
+
+Current is the follower&#39;s desired count after this pass.
+
+</td></tr>
+<tr><td><code>clamped</code></td>
+<td><code>bool</code></td>
+<td>
+
+Clamped is true when the follower&#39;s minReplicas or a declared
+maxReplicas moved the target; the Ready condition names the bound.
+
+</td></tr>
+</tbody>
+</table>
+
 ### `GroupBlueGreen` {#ome-io-v1beta1-GroupBlueGreen}
 
 Used by [`RolloutGroup`](#ome-io-v1beta1-RolloutGroup), [`RolloutPolicySpec`](#ome-io-v1beta1-RolloutPolicySpec).
@@ -5657,6 +5729,18 @@ ObservedGeneration is the InferenceReplica.metadata.generation
 the most recent status flush reflects.
 
 </td></tr>
+<tr><td><code>observedTemplateHash</code></td>
+<td><code>string</code></td>
+<td>
+
+ObservedTemplateHash is the pod-template hash (the ome.io/template-hash
+annotation the projector stamps beside the spec&#39;s templates) that
+updateRevision was last computed from. It names the roll target this
+status describes: a spec whose stamp differs asks for a revision the
+status has not recorded yet, while a spec change outside the templates
+leaves both unchanged.
+
+</td></tr>
 <tr><td><code>placementObservedGeneration</code></td>
 <td><code>int64</code></td>
 <td>
@@ -5886,10 +5970,6 @@ Used by [`InferenceService`](#ome-io-v1beta1-InferenceService).
 InferenceServiceSpec is the desired state of an InferenceService.
 
 Validation: the placement policy cannot be removed; drain and recreate the service to change placement ownership.
-
-Validation: componentAffinity needs an entry for each declared engine and decoder, and none for undeclared ones.
-
-Validation: componentAffinity.router requires a declared router.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -6226,6 +6306,14 @@ RolloutCoordination reports per-group cross-Component
 coordination state for the InferenceService. Populated only
 when spec.rollout declares blueGreen/rollingUpdate groups
 (canary groups report under status.canary instead).
+
+</td></tr>
+<tr><td><code>scalingPolicy</code></td>
+<td><a href="#ome-io-v1beta1-ScalingPolicyStatus"><code>ScalingPolicyStatus</code></a></td>
+<td>
+
+Since v1.3.
+ScalingPolicy reports the applied cross-component desired-count policy.
 
 </td></tr>
 </tbody>
@@ -7320,7 +7408,8 @@ Tolerance is the maximum percentage drift from the starting ratio. A roll
 step that would exceed it is paused until the pools rebalance. An explicit
 0 means zero drift. When omitted, the operator-configured default (the
 coordination block of the operator&#39;s ConfigMap) applies; if the operator
-configures no default either, the group rolls with no drift bound.
+configures no default either, the group rolls with no drift bound. A
+value of 100 opts out of the bound.
 Admission rejects a drain-first member (RecreatePod, or an in-place
 strategy on multi-node gangs) whose single drain would empty its side or
 move the serving ratio more than twice the tolerance from the start,
@@ -7329,6 +7418,12 @@ members all roll drain-first is paced by the batch step instead: each
 member&#39;s drains are counted in batches of its maxUnavailable, and no
 member opens its next batch until every member&#39;s previous batch serves.
 The ratio band is not consulted for such a group, so admission admits it.
+With the operator&#39;s prefillDecodeRoll.keepRatio rule on, the batch step
+paces every group that lists both the engine and the decoder, on every
+update path, and sizes each batch so that the share of each side already
+moving to the new version stays within this tolerance of the other
+side&#39;s share; a batch that cannot fit shrinks, and at least one Instance
+moves per batch, so a tight tolerance slows the roll and never stops it.
 
 Minimum: `0`. Maximum: `100`.
 
@@ -7679,7 +7774,9 @@ StartedAt is when the entry was created.
 <td>
 
 Deadline is when a non-terminal entry expires.
-Manual: accept time plus InstanceReadyTimeout.
+Manual: accept time plus InstanceReadyTimeout. Cleared while the
+Component is paused and started again, a full InstanceReadyTimeout
+from the pass the pause clears.
 
 </td></tr>
 <tr><td><code>completedAt</code></td>
@@ -8979,7 +9076,7 @@ PlacementPolicy selects the matching and allocation contract.
 
 Underlying type: `string`.
 
-Allowed values: `ClusterAffinity`, `ComponentAffinity`.
+Allowed values: `ClusterAffinity`.
 
 ### `PlacementSingleMoveStatus` {#ome-io-v1beta1-PlacementSingleMoveStatus}
 
@@ -9015,10 +9112,6 @@ PlacementSpec declares explicit multi-cluster matching and allocation intent.
 
 Validation: replacementTimeout requires Single placement.
 
-Validation: componentAffinity is required by, and only valid with, the ComponentAffinity policy.
-
-Validation: the ComponentAffinity policy reads componentAffinity, not clusterAffinity.
-
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
@@ -9027,7 +9120,6 @@ Validation: the ComponentAffinity policy reads componentAffinity, not clusterAff
 <td>
 
 Policy selects affinity matching and persisted allocation plans.
-ComponentAffinity reads per-component terms from componentAffinity.
 
 </td></tr>
 <tr><td><code>mode</code> <span class="doc-api-required">Required</span></td>
@@ -9041,22 +9133,12 @@ Mode selects the placement cardinality and replica allocation strategy.
 <td><a href="#ome-io-v1beta1-ClusterAffinityTerm"><code>[]ClusterAffinityTerm</code></a></td>
 <td>
 
-ClusterAffinity ORs terms whose requirements are ANDed, for every
-component. Requires the ClusterAffinity policy; omission then matches
-every registration.
+ClusterAffinity ORs terms whose requirements are ANDed. The engine&#39;s
+clusters are every component&#39;s clusters; in Split, each term&#39;s weights
+set the components&#39; shares. Omission matches every registration.
 An explicit empty or null list is invalid.
 
 Minimum items: `1`. Maximum items: `64`.
-
-</td></tr>
-<tr><td><code>componentAffinity</code></td>
-<td><a href="#ome-io-v1beta1-ComponentClusterAffinity"><code>ComponentClusterAffinity</code></a></td>
-<td>
-
-ComponentAffinity holds one affinity term list per component and requires
-the ComponentAffinity policy. Every component must match the same
-clusters; in Split, each component&#39;s weights set its own shares. An
-explicit null is invalid.
 
 </td></tr>
 <tr><td><code>maxSurge</code></td>
@@ -9707,6 +9789,10 @@ Default: `engine`.
 Ratios maps each follower Component to its replica ratio relative to the
 anchor. A ratio of 1.0 means parity; 0.25 means one follower per four
 anchor replicas (rounded up). Components not listed scale independently.
+A follower&#39;s minReplicas is a floor on the count it is given. Its
+maxReplicas, when set, is a ceiling; a follower that sets none has no
+ceiling of its own, and the anchor&#39;s bounds cap its count. The status
+reports a follower as clamped when either bound moved its target.
 
 </td></tr>
 </tbody>
@@ -10106,8 +10192,10 @@ by RatioBalanced pacing.
 <td><code>map[ComponentType]int32</code></td>
 <td>
 
-Original is the snapshot of desired replica counts per
-Component at rollout start. The keys are ComponentType strings.
+Original is the reference the ratio rule measures against: each
+Component&#39;s desired replica count as its spec asks for it now. It
+follows the spec, so a resize mid-roll or while idle moves it to
+the new counts. The keys are ComponentType strings.
 
 </td></tr>
 <tr><td><code>current</code></td>
@@ -10248,11 +10336,13 @@ or on a rollout that does not collapse to that sequence.
 <td><a href="#ome-io-v1beta1-MaintainRatio"><code>MaintainRatio</code></a></td>
 <td>
 
-MaintainRatio guards the cross-Component replica ratio while this group
-rolls. Meaningful only on multi-Component blueGreen/rollingUpdate groups
-(e.g. a PD engine+decoder pair); ignored on single-Component groups and
-rejected by admission on canary groups (the canary engine does not enforce
-it).
+MaintainRatio bounds how far the two sides of a multi-Component
+blueGreen/rollingUpdate group (e.g. a PD engine+decoder pair) may drift
+apart while the group rolls. A group that lists both the engine and the
+decoder is held to the operator&#39;s default tolerance even when it omits
+this field; set a tolerance of 100 to roll with no bound. Rejected by
+admission on single-Component groups (there is no second side) and on
+canary groups (the canary engine does not enforce it).
 
 </td></tr>
 </tbody>
@@ -11584,7 +11674,7 @@ owning ISVC.
 
 ### `ScalingMode` {#ome-io-v1beta1-ScalingMode}
 
-Used by [`ScalingPolicy`](#ome-io-v1beta1-ScalingPolicy).
+Used by [`ScalingPolicy`](#ome-io-v1beta1-ScalingPolicy), [`ScalingPolicyStatus`](#ome-io-v1beta1-ScalingPolicyStatus).
 
 ScalingMode declares how Components of an InferenceService scale relative
 to each other. Alpha. The API may change without notice.
@@ -11620,6 +11710,58 @@ Default: `Independent`.
 <td>
 
 Proportional configuration; required when Mode == &#34;Proportional&#34;.
+
+</td></tr>
+</tbody>
+</table>
+
+### `ScalingPolicyStatus` {#ome-io-v1beta1-ScalingPolicyStatus}
+
+Used by [`InferenceServiceStatus`](#ome-io-v1beta1-InferenceServiceStatus).
+
+ScalingPolicyStatus records the coordinator&#39;s last decision.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>mode</code></td>
+<td><a href="#ome-io-v1beta1-ScalingMode"><code>ScalingMode</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>source</code></td>
+<td><code>string</code></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>anchor</code></td>
+<td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>anchorDesired</code></td>
+<td><code>int32</code></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>followers</code></td>
+<td><a href="#ome-io-v1beta1-FollowerScalingStatus"><code>[]FollowerScalingStatus</code></a></td>
+<td>
+
+
+</td></tr>
+<tr><td><code>conditions</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#condition-v1-meta"><code>[]Condition</code></a></td>
+<td>
+
 
 </td></tr>
 </tbody>
