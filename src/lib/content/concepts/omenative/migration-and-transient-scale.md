@@ -238,7 +238,7 @@ The command refuses while a rollout, a migration or other Instance work is in pr
 ### When the count changes
 
 - When `spec.replicas` goes up, OME creates Instances at the lowest unused indices.
-- When it goes down, OME keeps `Ready` Instances first and lower indices next, and drains and deletes the rest. It keeps an Instance that's migrating, and its surge.
+- When it goes down, OME removes the Instances with a pod on a [cordoned node](instances.md#index) first, then keeps `Ready` Instances before the others, lower indices next, and drains and deletes the rest. It keeps an Instance that's migrating, and its surge.
 - A count of 0 runs one Instance until OME sets the count back to `minReplicas`. `kubectl ome scale` refuses 0.
 - A paused rollout holds scale-up, but OME still scales down.
 
