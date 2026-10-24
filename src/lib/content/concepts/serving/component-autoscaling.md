@@ -4,7 +4,7 @@ description: Each InferenceService component can carry its own autoscaler block,
 since: v1.3
 ---
 
-An `autoscaler` block lets each component of an [InferenceService](inference-services.md) scale on the signal that suits it, from CPU utilization to the requests waiting in vLLM's queue. OME can create a HorizontalPodAutoscaler or a [KEDA](https://keda.sh) ScaledObject for it, leave it to an autoscaler that you run, or hold it at a fixed count. A component with no autoscaling settings gets a HorizontalPodAutoscaler that targets 80% average CPU utilization. The `autoscaler` block and the autoscaling fields in status are alpha, and so are [AutoscalerPolicy](autoscaler-policy.md) and [`spec.scalingPolicy`](../runtimes/serving-runtimes.md#scaling-policy). Their fields and behavior can change between releases, but the block needs no feature flag.
+An `autoscaler` block lets each component of an [InferenceService](inference-services.md) scale on the signal that suits it, from CPU utilization to the requests waiting in vLLM's queue. OME can create a HorizontalPodAutoscaler or a [KEDA](https://keda.sh) ScaledObject for it, leave it to an autoscaler that you run, or hold it at a fixed count. A component with no autoscaling settings gets a HorizontalPodAutoscaler that targets 80% average CPU utilization. The `autoscaler` block and the autoscaling fields in status are alpha, and so are [AutoscalerPolicy](autoscaler-policy.md) and [`spec.scalingPolicy`](#proportional-scaling). Their fields and behavior can change between releases, but the block needs no feature flag.
 
 The examples use the `llama-demo` namespace and the `llama-3-2-1b-instruct` InferenceService from [A minimal InferenceService](inference-services.md#a-minimal-inferenceservice), and assume OME runs in the `ome` namespace.
 
@@ -17,7 +17,7 @@ Put the block in `spec.engine`, `spec.decoder` or `spec.router`. Its `class` dec
 | `HPA` | Scale on CPU, memory or another metric from the Kubernetes metrics APIs. | A HorizontalPodAutoscaler, `llama-3-2-1b-instruct-engine`. | The HorizontalPodAutoscaler. |
 | `KEDA` | Scale on a Prometheus query or another KEDA trigger, or scale a RawDeployment component to zero. | A ScaledObject, `scaledobject-llama-3-2-1b-instruct-engine`. | KEDA, through a HorizontalPodAutoscaler that it controls. |
 | `External` | Scale with an autoscaler that you run. | Nothing. | Your autoscaler. |
-| `None` | Run a fixed number of replicas. | Nothing. | OME, which holds the count at `minReplicas`, even after a `kubectl scale`. |
+| `None` | Run a fixed number of replicas. | Nothing. | OME, which holds the count at `minReplicas`, even after a `kubectl scale`. A [proportional follower](#proportional-scaling) is held at its target instead. |
 
 ## HPA
 
@@ -215,6 +215,103 @@ The block comes whole from one place, so a `class: HPA` block without `hpa` gets
 
 AutoscalerPolicy is off by default: [Turn on the feature](autoscaler-policy.md#turn-on-the-feature) shows how to turn it on. If OME can't use a policy reference, the component keeps its last autoscaler, instead of falling through to the runtime or the default: see [Fail-closed behavior](autoscaler-policy.md#fail-closed-behavior).
 
+## Proportional scaling
+
+`spec.scalingPolicy`, which is alpha, sets how the components scale relative to each other. With `mode: Independent`, the default, each component scales on its own, as the rest of this page describes. With `mode: Proportional`, the components you list as followers stop scaling on their own and track the anchor component's desired Instance count at fixed ratios: scale the anchor, and the followers follow. The schema's third mode, `Pinned`, is reserved: the webhook rejects it with `spec.scalingPolicy.mode "Pinned" is accepted by the API but not implemented; use "Independent" or omit the policy (ScalingModeNotImplemented)`.
+
+The policy comes from the InferenceService, or else from its runtime's [`scalingPolicy`](../runtimes/serving-runtimes.md#scaling-policy), whole, never merged. Proportional scaling works only on components that run on [OMENative](../omenative/overview.md) — set `spec.deploymentMode: OMENative`, or the component's `ome.io/deploymentMode` annotation — and only on components the InferenceService owns, not [referenced replicas](inference-services.md#referenced-replicas).
+
+This version of `llama-pd.yaml`, the prefill-decode InferenceService from [Serve a prefill-decode model](../../guides/omenative/serve-a-prefill-decode-model.md), scales the engine on CPU and makes the decoder follow it at half its count:
+
+```yaml title="llama-pd.yaml"
+apiVersion: ome.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama-pd
+  namespace: llama-demo
+spec:
+  deploymentMode: OMENative
+  model:
+    name: llama-3-2-1b-instruct
+  runtime:
+    name: srt-llama-3-2-1b-instruct-pd
+  scalingPolicy:
+    mode: Proportional
+    proportional:
+      anchor: engine
+      ratios:
+        decoder: "0.5"
+  engine:
+    minReplicas: 2
+    maxReplicas: 6
+    autoscaler:
+      class: HPA
+      hpa:
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+  decoder:
+    minReplicas: 1
+    maxReplicas: 4
+  router:
+    minReplicas: 1
+    maxReplicas: 1
+```
+
+- `anchor` names the component whose desired count drives the followers, `engine` by default. The anchor scales like any component: here through its own HorizontalPodAutoscaler, but KEDA, an AutoscalerPolicy or the default CPU target work too.
+- `ratios` maps each follower to its ratio. A follower's target is the anchor's desired count times the ratio, rounded up: at 4 engine Instances, the decoder's target is 2, and at 5 it's 3. A ratio of `"1"` means parity; a ratio is above 0 and at most 1000, with at most three decimal places.
+- A component the ratios leave out, like the router here, scales independently, as usual.
+
+A follower's own [replica bounds](#replica-bounds) still hold: its `minReplicas` is a floor, at least one Instance, and its `maxReplicas` — wherever it's set: the InferenceService, the runtime or the [replica defaults](../../guides/operate-ome/set-replica-defaults.md) — is a ceiling. A moved target isn't an error: the status reports the follower as clamped, the `Ready` condition's message names the bound, as in `decoder target is bounded to 4 Instances by its maxReplicas (the ratio asks for 5)`, and OME records a Warning `ScalingTargetClamped` event with that message when the bound first moves the follower to that count. When neither the follower nor the anchor has a `maxReplicas`, nothing caps the follower's count, and OME records a Warning `ScalingFollowerUnbounded` event: `decoder follows engine with no maxReplicas on either side; set maxReplicas on one of them to bound the decoder count`.
+
+OME alone writes a follower's count:
+
+- A follower with no `autoscaler` block runs with `class: None` instead of the [default HorizontalPodAutoscaler](#which-setting-wins), and OME holds its count at the target, not at `minReplicas`. A `kubectl scale` on the follower's InferenceReplica is overwritten, and [`kubectl ome scale`](../../reference/kubectl-ome/scale.md) refuses every component of the InferenceService while the mode isn't `Independent`.
+- The webhook rejects a Proportional policy whose follower sets `autoscalerPolicyRef`, with `decoder follower cannot reference AutoscalerPolicy "queue-depth" when scaling is Proportional: remove the reference or remove decoder from ratios`, or an `autoscaler` with any class but `None`, with `decoder follower autoscaler must have class None when scaling is Proportional`.
+- When a competing autoscaler reaches a follower anyway — the InferenceService's policy lists a follower whose block comes from the runtime, say — OME holds every follower at the count it has, sets the policy's `Ready` condition to `False` with reason `FollowerAutoscalerConflict`, and records a Warning event of the same name, such as `decoder follower has a competing KEDA autoscaler from the serving runtime; follower counts are held`.
+
+The webhook also rejects a `proportional` block with mode `Independent`, an empty `ratios`, a ratio that names the anchor or a component the object doesn't declare, and `spec.replicaRefs` with `Proportional scaling requires InferenceService-owned replicas`. A declared deployment mode that isn't OMENative is rejected with a message like `Proportional scaling requires OMENative decoder, not deployment mode "RawDeployment"`; a component whose mode only resolves to something else at reconcile holds with `InvalidPolicy` instead. The same checks run on a runtime's `scalingPolicy`, against `engineConfig`, `decoderConfig` and `routerConfig`. The webhook validates the policy when you create the object and when an update sets or changes it, or changes a component's autoscaler settings or deployment mode, so an unchanged stored policy never blocks an unrelated update.
+
+Whenever the InferenceService or its runtime sets `spec.scalingPolicy`, in every mode, OME reports it in `status.scalingPolicy`:
+
+| Field | What it says |
+| --- | --- |
+| `mode`, `source` | The mode in effect, and where the policy came from: `isvc` or `runtime`. |
+| `anchor`, `anchorDesired` | The anchor, and its desired Instance count. |
+| `followers` | Per follower: `component`, `ratio`, `target`, `current` — the count the follower's InferenceReplica asks for now — and `clamped`, `true` when a bound moved the target. |
+| `conditions` | The `Ready` condition. |
+
+The `Ready` condition says whether the followers carry the counts the policy asks for:
+
+| Status | Reason | When |
+| --- | --- | --- |
+| `True` | `Applied` | Every follower's desired count matches its target. |
+| `True` | `Independent` | The mode is `Independent`: the components scale independently. |
+| `False` | `FollowerPending` | A follower doesn't carry its target yet; the next pass writes it. |
+| `False` | `FollowerUnavailable` | A follower's InferenceReplica isn't projected yet. |
+| `False` | `AnchorUnavailable` | The anchor's InferenceReplica is missing, or has no desired count yet. The followers keep their counts. |
+| `False` | `FollowerAutoscalerConflict` | A follower has a competing autoscaler, which holds every follower. |
+| `False` | `InvalidPolicy` | The policy can't be applied: the anchor or a follower isn't declared or isn't on OMENative, or a ratio is invalid. The message says which; a follower it doesn't name keeps following. |
+| `False` | `ModeNotImplemented` | A stored policy carries a mode no controller coordinates. |
+
+Apply the file and wait for the InferenceService to be ready, as the guide shows. Then read the policy's status:
+
+```bash
+kubectl get inferenceservice llama-pd -n llama-demo \
+  -o custom-columns='MODE:.status.scalingPolicy.mode,ANCHOR:.status.scalingPolicy.anchor,DESIRED:.status.scalingPolicy.anchorDesired,FOLLOWER:.status.scalingPolicy.followers[0].component,TARGET:.status.scalingPolicy.followers[0].target,CURRENT:.status.scalingPolicy.followers[0].current,READY:.status.scalingPolicy.conditions[?(@.type=="Ready")].reason'
+```
+
+```output
+MODE           ANCHOR   DESIRED   FOLLOWER   TARGET   CURRENT   READY
+Proportional   engine   4         decoder    2        2         Applied
+```
+
+The engine's HorizontalPodAutoscaler has scaled it to 4 Instances, and the decoder follows at 2. Change `ratios`, or let the anchor scale, and the followers move with the next pass.
+
 ## Read the result in status
 
 OME reports each component's autoscaling in `status.components.<component>.autoscaler`:
@@ -246,7 +343,7 @@ The InferenceService webhook rejects the following, with the component and the r
 | `AutoscalerAnnotationConflict` | An `ome.io/autoscalerClass` annotation on the InferenceService while a component sets an `autoscaler` block. |
 | `AutoscalerPolicyFeatureDisabled` | An `autoscalerPolicyRef` while AutoscalerPolicy is off. |
 
-The ServingRuntime and ClusterServingRuntime webhooks check the blocks in `engineConfig`, `decoderConfig` and `routerConfig` the same way, and reject an `autoscalerPolicyRef` in a runtime. [Legacy autoscaling](../../reference/api/labels-and-annotations.md#legacy-autoscaling) lists the legacy annotations' values, and [Attach a policy to an InferenceService](autoscaler-policy.md#attach-a-policy-to-an-inferenceservice) covers policy references.
+The ServingRuntime and ClusterServingRuntime webhooks check the blocks in `engineConfig`, `decoderConfig` and `routerConfig` the same way, and reject an `autoscalerPolicyRef` in a runtime. [Legacy autoscaling](../../reference/api/labels-and-annotations.md#legacy-autoscaling) lists the legacy annotations' values, and [Attach a policy to an InferenceService](autoscaler-policy.md#attach-a-policy-to-an-inferenceservice) covers policy references. What the webhook rejects in `spec.scalingPolicy` is under [Proportional scaling](#proportional-scaling).
 
 ## Upgrade from v1.2.2 {#upgrade-from-v1-2-2}
 

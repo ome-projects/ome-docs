@@ -200,7 +200,7 @@ For a key with a dash, a dot or a slash, use `index` with the key in backquotes:
 
 ### Scaling policy {since=v1.3}
 
-`scalingPolicy` is an alpha field for how the engine, decoder and router scale together. No controller acts on it yet, and the webhook rejects any mode but `Independent`, the default, with `ScalingModeNotImplemented`. An InferenceService's `spec.scalingPolicy` replaces the runtime's.
+`scalingPolicy` is an alpha field for how the engine, decoder and router scale together. `Independent`, the default, scales each component on its own. `Proportional` makes the components it lists as followers track an anchor component's Instance count at fixed ratios, as [Proportional scaling](../serving/component-autoscaling.md#proportional-scaling) describes; the webhook checks its anchor and followers against `engineConfig`, `decoderConfig` and `routerConfig` the same way it checks an InferenceService's components. It still rejects the third mode, `Pinned`, with `ScalingModeNotImplemented`. An InferenceService's `spec.scalingPolicy` replaces the runtime's.
 
 ## How OME selects a runtime
 
