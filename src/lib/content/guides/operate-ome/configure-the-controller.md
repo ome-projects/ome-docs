@@ -264,6 +264,42 @@ The lines give the configured and the resolved budget (`configuredPodBudget` and
 
 Both batch sizes must be at least 1. The percentage form is digits and a `%`, from `"1%"` to `"100%"`: no sign, no spaces, no decimals — and a quoted `"100"` fails where a plain `100` works, since the manager reads every string as a percentage. The interval must be a positive duration such as `"5s"`. On any other value, the manager exits at startup with `Failed to initialize lifecycle scale configuration`, whose error names the value and the rule, such as `validate lifecycle.scaleDownPodBatchSize: invalid lifecycle.scaleDownPodBatchSize "101%" must be between 1% and 100%`, and the rollout doesn't finish: see [Troubleshooting](#the-manager-rollout-doesnt-finish). To remove a bound instead, set its field to `null`, and the chart leaves it out of the entry: without a batch size, one pass creates or deletes everything at once, and without the interval, the manager doesn't poll deletes in flight — watch events, and the exact deadlines of the [force-delete escalation and the teardown deadline](../omenative/recover-stuck-deletions.md), still wake it.
 
+## Pace a prefill-decode roll
+
+When a [rollout group](../../concepts/rollouts-and-traffic/rollout-groups.md) lists both the engine and the decoder, OME rolls the two components in [lockstep batches](../../concepts/rollouts-and-traffic/rollout-groups.md#batches-for-the-engine-and-the-decoder). Two settings under `ome.controller.lifecycle.prefillDecodeRoll`, which the chart writes into the same `lifecycle` entry of the `inferenceservice-config` ConfigMap and turns on by default, add rules to those batches:
+
+| Setting | Chart default | What it does |
+| --- | --- | --- |
+| `keepRatio` | `true` | Plans the engine's and the decoder's batches together, sized so that the share of each side already moving to the new revision stays within the group's `maintainRatio` tolerance of the other side's share — `ome.controller.coordination.defaultRatioTolerancePercent`, the chart's 5, when the group names none. It applies on the drain-first and the surge path alike, and a move counts from the moment it starts. It also keeps a component that updates single-pod Instances in place in the batches, counting its in-place updates against its `maxUnavailable` step. |
+| `firstSide` | `decoder` | Names the side that moves first inside every batch, `engine` or `decoder`: the other side's moves of a batch are admitted once the named side's new Instances of that batch serve. Empty lets both sides start a batch together. |
+
+Under `keepRatio`, a batch that can't fit within the tolerance shrinks, and at least one Instance moves per batch, so a tight tolerance slows a roll and never stops it. Take a group of 12 engines and 8 decoders whose components move 10% at a time — 2 engines and 1 decoder per batch: on steps of their own, five batches in, the engine is 10 of 12 Instances into its roll, 83%, while the decoder is at 5 of 8, 63%. At the tolerance of 5, the planned batches walk the two sides through 2:1, 3:2, 5:3, 6:4, 8:5, 9:6, 11:7 and 12:8 instead, so neither side's share drifts more than 5 points from the other's. A group opts out of the sizing by setting a `maintainRatio` `tolerance` of `100`.
+
+Name the `firstSide` that takes longer to come back, so one side of each batch is down at a time and both sides return close together. The waiting side's `rolloutHold` gate is `Ratio`, with a reason such as `engine batch 1 waits for decoder batch 1 to serve first (0 of 1 serving)`.
+
+The manager has no built-in rules: a field the entry leaves out is off. `keepRatio: false` turns off the paired sizing, and `firstSide: ""` the ordering; without them, the engine and the decoder still roll in lockstep batches, each side sized by its own step and with no order between the sides — unless a side updates single-pod Instances in place, which only `keepRatio` keeps in the batches. To turn both rules off, set the block to `null`, and the chart leaves it out of the entry:
+
+```yaml title="values.yaml"
+ome:
+  controller:
+    lifecycle:
+      prefillDecodeRoll: null
+```
+
+Upgrade with your values file, as in [Step 1](#with-a-helm-value), and check the rendered entry — with `jq`, since the entry holds other settings too:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.lifecycle}' | jq '{prefillDecodeRoll}'
+```
+
+```output
+{
+  "prefillDecodeRoll": null
+}
+```
+
+With the chart's defaults in place, the same command prints the block with its two fields, `"firstSide": "decoder"` and `"keepRatio": true`. The two settings aren't in [the list that needs a restart](#tune-the-config-cache): the manager reads them through its config cache, so even a `kubectl` edit takes effect within the cache's TTL — unlike the batch sizes in the same entry. A `firstSide` other than `engine`, `decoder` or empty doesn't stop the manager: it reads as empty, so both sides start their batches together while `keepRatio` stands as written, and the manager logs the bad value only at verbosity 1. So when the ordering doesn't apply, check the rendered entry for a typo.
+
 ## Pace canary re-checks
 
 During a [canary rollout](../../reference/rollouts/canary-progression.md), the manager drives the canary in reconcile passes, and a waiting pass schedules the next one itself, because a wait can end without anything changing in the cluster: a [timed pause](../../reference/rollouts/canary-progression.md#how-a-step-advances) runs out, a `scaleDownDelaySeconds` wait passes. Two settings under `ome.controller.rollout`, which the chart writes to the `rollout` entry of the `inferenceservice-config` ConfigMap, set how long it waits between checks:
