@@ -28,11 +28,15 @@ Set these values in the values file that you pass to `helm install` or `helm upg
 | --- | --- | --- | --- |
 | `scheduler.replicaCount` | integer, at least 1 | `2` | The number of replicas. Only the leader schedules, and the others wait to take over. More than one replica needs `scheduler.leaderElect: true`. |
 | `scheduler.leaderElect` | boolean | `true` | Leader election between the replicas, through the Lease `{name}` in the release's namespace. |
+| `scheduler.leaderElection` | map: `leaseDuration`, `renewDeadline`, `retryPeriod`, each a string | `60s`, `30s`, `6s` | The Lease's timing: how long it stays valid after its last renewal (`leaseDuration`), how long the leader keeps trying to renew it before it gives up (`renewDeadline`), and how long a replica waits between tries (`retryPeriod`). The chart renders the three only as a complete set: clear any one of them, and it renders none, so kube-scheduler's own `15s`, `10s` and `2s` apply, without a warning. Unlike elsewhere in the values, a misspelled key inside this map fails the install. |
 | `scheduler.deploymentStrategy.type` | string: `RollingUpdate` | `RollingUpdate` | The Deployment's update strategy. |
 | `scheduler.deploymentStrategy.rollingUpdate.maxUnavailable` | integer of at least 0, or string | `1` | How many replicas an update can stop at once. |
 | `scheduler.deploymentStrategy.rollingUpdate.maxSurge` | integer of at least 0, or string | `0` | How many extra replicas an update can start. With `0`, an update stops a replica before it starts the replacement, so it needs no spare node. |
 | `scheduler.podDisruptionBudget.enabled` | boolean | `true` | Creates the PodDisruptionBudget `{name}` for the scheduler's pods. |
 | `scheduler.podDisruptionBudget.minAvailable` | integer, at least 0 | `1` | How many replicas a voluntary disruption, like a node drain, must leave running. It must be below `scheduler.replicaCount`. |
+
+!!! note "Why the Lease outlasts kube-scheduler's"
+    kube-scheduler's own timing loses the Lease during a short API server brownout on a large cluster, and each loss restarts the scheduler and rebuilds its cache of the whole cluster. The chart's longer timing rides out the brownout. The cost is failover: a standby waits up to `leaseDuration`, so a minute by default, before it takes over from a stopped leader.
 
 ### Gangs
 
@@ -192,6 +196,9 @@ apiVersion: kubescheduler.config.k8s.io/v1
 kind: KubeSchedulerConfiguration
 leaderElection:
   leaderElect: true
+  leaseDuration: 60s
+  renewDeadline: 30s
+  retryPeriod: 6s
   resourceName: ome-scheduler
   resourceNamespace: ome
 profiles:
