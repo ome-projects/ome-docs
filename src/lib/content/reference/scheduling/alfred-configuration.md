@@ -263,7 +263,7 @@ Alfred sees the change at its next observation and applies it from the next deci
 | `healthPort` | `8081` | The port of the liveness probe (`/healthz`) and the readiness probe (`/readyz`). Sets `--health-probe-bind-address`. |
 | `configMapName` | `alfred-config` | The ConfigMap that the chart renders `alfredConfig` into, and that Alfred watches. Sets `--config-name`. |
 | `alfredConfig` | the defaults under [config.yaml keys](#configyaml-keys) | The `config.yaml` document in that ConfigMap. |
-| `simulation.configMapName` | `""` | Your [simulation](#simulation) ConfigMap. Empty turns simulation off. Sets `--simulation-workers`. |
+| `simulation.configMapName` | `""` | Your [simulation](#simulation) ConfigMap. Empty turns simulation off, and execute mode then dispatches only [TPU slice moves](#tpu-slice-migration), which need no simulation. Sets `--simulation-workers`. |
 | `simulation.timeout` | `10s` | The time limit for each simulation. Positive, at most `1m`. Sets `--simulation-timeout`. |
 | `migration.apiVersion` | `""` | `v1` lets Alfred plan moves for OMENative Instances: see [Migration](#migration). Sets `--migration-api-version` and `--migration-service-account=ome-alfred`. |
 | `migration.acknowledgementTimeout` | `2m` | How long a migration request may go unacknowledged before Alfred marks it `stalled`. Positive, at most `1h`. Sets `--migration-ack-timeout`. |
@@ -279,7 +279,7 @@ The chart runs Alfred with leader election, using the Lease `alfred.ome.io`, and
 - By default the value is empty, and OMENative Instances get advice that names no target nodes, usually with the reason `OMENativeUnavailable`. This is expected, and [Alfred metrics and events](alfred-metrics-and-events.md) lists the metric and event that also show it.
 - With it, each planned move names up to 3 target nodes in `hintTargets`, except a [TPU slice move](#tpu-slice-migration), which names none. In recommend-only mode, the move stays advice, with the reason `SimulationRecommendOnly`, or a [scheduling reason](alfred-metrics-and-events.md#scheduling-results) when no profile fits. In execute mode, Alfred may request it.
 
-The value needs `simulation.configMapName`, or the chart fails with `migration.apiVersion requires simulation.configMapName`. Any value but `v1` fails with `migration.apiVersion must be v1 when enabled`. It also renders:
+The value doesn't need `simulation.configMapName`: without it, Alfred dispatches only moves onto a new [TPU slice](#tpu-slice-migration), which need no simulation, and withholds every other admitted move with `SimulationUnavailable`. Any value but `v1` fails the chart with `migration.apiVersion must be v1 when enabled`. It also renders:
 
 - The migration guard, the ValidatingAdmissionPolicy and binding `ome-alfred-migration-writes`. It fails closed, and lets Alfred's ServiceAccount add only one bounded `ome.io/migration-request-v1-<uuid>` annotation, the same request as [Request an instance migration](../../guides/scale-and-migrate/request-an-instance-migration.md). Its denials start with `Alfred may`. It needs Kubernetes 1.30 or later: on an older cluster, the install or upgrade fails.
 - The journal, the ConfigMap `alfred-dispatch-state`, which Helm keeps when you uninstall the chart. Never delete or reset it. If it exists without `state.json`, the chart fails with `existing alfred-dispatch-state is missing state.json; restore its journal before enabling migration`.
@@ -288,7 +288,7 @@ A request that isn't acknowledged within `migration.acknowledgementTimeout` beco
 
 ## Simulation
 
-Simulation predicts whether your scheduler would place a move's replacement pods. In recommend-only mode, Alfred records the prediction. In execute mode, it requests only moves that the simulation places.
+Simulation predicts whether your scheduler would place a move's replacement pods. In recommend-only mode, Alfred records the prediction. In execute mode, it requests only moves that the simulation places, except a [TPU slice move](#tpu-slice-migration), which needs none: without workers, Alfred withholds every other admitted move with `SimulationUnavailable`.
 
 `simulation.configMapName` names a ConfigMap that you create, with `workers.json` and a scheduler configuration file for each worker. The chart mounts it at `/etc/alfred-simulation`. [Set up scheduler simulation for Alfred](../../guides/scheduling/set-up-scheduler-simulation.md#step-4-create-the-simulation-configmap) builds one.
 

@@ -343,6 +343,7 @@ Just before it writes a request, Alfred re-checks the move against a fresh obser
 | --- | --- |
 | `ObservationUnavailable` | Alfred can't build a fresh observation. |
 | `PolicyNoLongerEligible` | The policy no longer proposes the move. |
+| `SimulationUnavailable` | No simulation worker is configured, and the move needs a simulation. Only a move onto a new [TPU slice](alfred-configuration.md#tpu-slice-migration) dispatches without one. |
 | An arbiter reason, for example `WorkloadBusy` | The arbiter no longer admits the move. See [Arbiter reasons](#arbiter-reasons). |
 | `SnapshotUnavailable` | Alfred can't capture the cluster snapshot, for example because the PodGroup CRD is missing. |
 | `InFlightCap` | A migration request is waiting or in progress somewhere in the cluster. A request annotation that nothing acts on counts until you remove it: see [Admitted moves are withheld](../../guides/scheduling/let-alfred-migrate-instances.md#admitted-moves-are-withheld). |

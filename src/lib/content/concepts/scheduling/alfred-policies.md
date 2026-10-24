@@ -19,7 +19,7 @@ An OMENative Instance can move when all of these hold. Otherwise its move is adv
 
 | Condition | Reason when it fails |
 | --- | --- |
-| The chart sets `migration.apiVersion: v1`, which is empty by default and needs [simulation](#simulation). | `OMENativeUnavailable` |
+| The chart sets `migration.apiVersion: v1`, which is empty by default. | `OMENativeUnavailable` |
 | The InferenceService is movable, as it is by default: see [Per-workload annotations](#per-workload-annotations). | `OMENativeStateIneligible` |
 | `omenativeMigrationEnabled` is `true`, the default. | `MigrationSurfaceDisabled` |
 | The component's `lifecycle.migrationPolicy.mode`, its own or its runtime's, isn't `Never`. | `OMENativeStateIneligible` |
@@ -189,7 +189,7 @@ Once you set `migration.apiVersion`, the policies plan moves and their target no
 
 ### In execute mode
 
-In execute mode, just before Alfred submits a move, it looks at the cluster afresh, reruns the policies and the arbiter, and simulates the move, which must come out `Feasible`. It then checks that nothing the decision relied on has changed, and that the pods land on allowed, ready nodes outside their cooldown. Otherwise it withholds the request, with a reason such as `PredictedTargetUnsafe`. That's why `migration.apiVersion` needs simulation.
+In execute mode, just before Alfred submits a move, it looks at the cluster afresh, reruns the policies and the arbiter, and simulates the move, which must come out `Feasible`. It then checks that nothing the decision relied on has changed, and that the pods land on allowed, ready nodes outside their cooldown. Otherwise it withholds the request, with a reason such as `PredictedTargetUnsafe`. Without a simulation worker, it withholds every move that needs a simulation with `SimulationUnavailable`: only a [TPU slice move](#tpu-instances-on-per-instance-slices), which re-checks a free partition instead of simulating, can dispatch.
 
 ## The arbiter
 
