@@ -57,11 +57,34 @@ Changing the strategy doesn't start a rollout. Instance updates that start after
 
 ### SurgeThenDrain
 
-For a single-pod Instance, the new pod takes the Instance's other ordinal: `llama-3-2-3b-instruct-engine-0-default-1` replaces `llama-3-2-3b-instruct-engine-0-default-0`. If the new pod fails, the old one keeps serving while OME tries the update again. For a leader and its workers, OME starts a whole replacement Instance at a new [index](../omenative/instances.md#index), so the indices can have gaps. If the replacement fails, OME deletes it, records a `GangSurgeAbandoned` warning event, and the old Instance keeps serving. For what a further change does to a surge that's still in flight, see [Changing the pod template mid-surge](#changing-the-pod-template-mid-surge).
+For a single-pod Instance, the new pod takes the Instance's other ordinal: `llama-3-2-3b-instruct-engine-0-default-1` replaces `llama-3-2-3b-instruct-engine-0-default-0`. If the new pod fails, the old one keeps serving while OME tries the update again. For a leader and its workers, OME starts a whole replacement Instance at a new [index](../omenative/instances.md#index), so the indices can have gaps. If the replacement fails while the old Instance still serves, OME deletes it, records a `GangSurgeAbandoned` warning event, and the old Instance keeps serving; once the replacement has taken over, a lost member is rebuilt at once instead: see [A replacement gang lost after the hand-over](#a-replacement-gang-lost-after-the-hand-over). For what a further change does to a surge that's still in flight, see [Changing the pod template mid-surge](#changing-the-pod-template-mid-surge).
 
 When OME drains the old pods, their `preStop` hook and `terminationGracePeriodSeconds` cover the requests they're still serving. The update isn't finished, and the Instance's surge slot isn't free, until the drained pods are gone, so a long grace period can make the next Instance wait. Pods that no update owns hold slots of their own: see [Extra pods hold surge slots](#extra-pods-hold-surge-slots).
 
 While the extra pods can't be scheduled, the old pods keep serving. After [`unschedulableGracePeriod`](../../guides/omenative/set-instance-readiness-deadlines.md), 15 minutes with the chart, OME fails the update and tries it again later.
+
+### A replacement gang lost after the hand-over
+
+For a leader and its workers, the hand-over is the same point of no return as for a single pod: the replacement Instance's pods have taken over serving, and OME has taken the old Instance's pods out of rotation to drain them. If the replacement then loses a pod — its node died, or something deleted a worker — the Instance doesn't return to its old revision: the old pods stay out of rotation, so the Instance has nothing to fall back on. OME rebuilds the replacement at once rather than pacing the rebuild with the [retry backoff](../omenative/instances.md#what-ome-does-with-a-failed-instance) that spaces other failed updates:
+
+1. The pass that sees the loss ends the attempt. The Instance goes `Failed` with an `InstanceFailed` warning event, and its `lastFailure` records the reason `ReplacementLost` and a message such as `replacement gang (surge-index=2) lost 1 of 3 member(s) after it took over serving`. The loss counts as one of the revision's attempts, like any failed update.
+2. The next pass recreates the lost pods, with the backoff still running, and the Instance returns to `Updating` with the retry counted and a fresh `lifecycle.instanceReadyTimeout` deadline. The rebuilt replacement finishes the update as the attempt before it would have.
+
+The rebuild records a Normal `GangSurgeRebuilt` event. For an engine Instance whose replacement — a leader and two workers — lost one pod:
+
+```bash
+kubectl get events -n llama-demo --field-selector reason=GangSurgeRebuilt \
+  -o custom-columns=TYPE:.type,MESSAGE:.message
+```
+
+```output
+TYPE     MESSAGE
+Normal   OMENative component=engine instance=0 rebuilt 1 of 3 member(s) of the replacement gang (surge-index=2) at revision llama-3-2-3b-instruct-engine-7b4c2e19; retry 1 under a fresh deadline
+```
+
+A missing pod OME removed itself, because the pod had ended, isn't a loss: OME recreates it under the attempt as it stands, and it counts toward nothing.
+
+When the loss uses up the revision's attempts, three with the chart, there's no attempt left to rebuild under. OME deletes what's left of the replacement and leaves the Instance `Failed` with no operation, with a `GangSurgeHeld` warning event that ends `the Instance stays Failed until a corrected revision or a reset`: change the pod template, [release the revision](../../guides/roll-out-changes/release-a-held-revision.md) or [reset the Instance](../../guides/omenative/reset-failed-instances.md). And OME rebuilds nothing for a revision that a further change withdrew mid-surge: see [Changing the pod template mid-surge](#changing-the-pod-template-mid-surge).
 
 ### In-place updates
 
@@ -254,7 +277,7 @@ If the new pod is lost after that hand-over, OME doesn't rebuild it for the with
 - An old pod that isn't already terminating returns to rotation: OME lifts the hold that was draining it, and the Instance is `Ready` on the revision that pod runs. The message ends with `the replacement was lost after it took over serving and nothing is rebuilt at it; the source returns to rotation on revision …`.
 - With the old pod gone too, nothing is left to serve. The Instance re-enters `Failed` with no operation, and OME rebuilds it at the newest revision from scratch — a fresh start, not a repair. The message ends with `no source pod stands, so the Instance re-enters as a fresh start at revision …`.
 
-An update that already [failed](../omenative/instances.md#when-an-instance-fails) needs no abandoning: its next attempt commits to the newest revision. A multi-pod Instance follows the same rules with its whole replacement Instance, and its events use the reason `GangSurgeAbandoned` — a Normal event here, unlike the warning after a failed update. A strategy change withdraws nothing: see [Changing the strategy mid-rollout](#changing-the-strategy-mid-rollout).
+An update that already [failed](../omenative/instances.md#when-an-instance-fails) needs no abandoning: its next attempt commits to the newest revision. A multi-pod Instance follows the same rules with its whole replacement Instance, and its events use the reason `GangSurgeAbandoned` — a Normal event here, unlike the warning after a failed update. Only a withdrawn revision ends this way: a replacement gang that loses a member while its revision is still the roll's target is [rebuilt at once](#a-replacement-gang-lost-after-the-hand-over). A strategy change withdraws nothing: see [Changing the strategy mid-rollout](#changing-the-strategy-mid-rollout).
 
 ## Changing the strategy mid-rollout
 
