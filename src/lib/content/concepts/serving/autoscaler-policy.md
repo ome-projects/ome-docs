@@ -129,7 +129,7 @@ A value holds literal text and these variables only: no template functions, pipe
 OME rejects a policy that breaks these rules when you create or update it, including an invalid PromQL query and the one valid query shape that [Queries that compute the replica count](#queries-that-compute-the-replica-count) describes. [AutoscalerPolicySpec](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AutoscalerPolicySpec) in the API reference lists every field.
 
 !!! note "Why the schema lists values OME rejects"
-    OME rejects `enforcement: Required` with `EnforcementRequiredReserved: enforcement Required is a reserved shape and not implemented; use Default`. The value is reserved for a future enforcement tier, as the `ClusterAutoscalerPolicy` kind in [a component's reference](#attach-a-policy-to-an-inferenceservice) is for a future cluster-scoped policy. Rejecting a reserved value keeps it out of every stored object, so a controller too old to know the feature can never read a `Required` policy as `Default`, or a cluster-scoped reference as a namespaced policy. The `Proportional` and `Pinned` modes of an InferenceService's [`scalingPolicy`](inference-services.md#scaling) are in the schema but rejected the same way.
+    OME rejects `enforcement: Required` with `EnforcementRequiredReserved: enforcement Required is a reserved shape and not implemented; use Default`. The value is reserved for a future enforcement tier, as the `ClusterAutoscalerPolicy` kind in [a component's reference](#attach-a-policy-to-an-inferenceservice) is for a future cluster-scoped policy. Rejecting a reserved value keeps it out of every stored object, so a controller too old to know the feature can never read a `Required` policy as `Default`, or a cluster-scoped reference as a namespaced policy. The `Pinned` mode of an InferenceService's [`scalingPolicy`](inference-services.md#scaling) is in the schema but rejected the same way.
 
 This `HPA` policy keeps CPU use at 60%, and when it scales down, it keeps the highest replica count recommended in the last 5 minutes:
 
@@ -269,6 +269,7 @@ The `engine`, `decoder` and `router` can each name a policy, the same one or dif
 - any reference until the controller has found the CRD at startup, with a message that starts with `AutoscalerPolicyFeatureDisabled`;
 - `kind: ClusterAutoscalerPolicy` in a reference, with `AutoscalerPolicyRefKindReserved: spec.engine.autoscalerPolicyRef.kind "ClusterAutoscalerPolicy" is not supported (ClusterAutoscalerPolicy is a reserved shape); use AutoscalerPolicy`. The schema lists the kind, but it's reserved until a cluster-scoped policy exists, so a reference needs only `name`: `kind: AutoscalerPolicy` is the default and the only kind there is;
 - `autoscalerPolicyRef` in a runtime, because references go only in an InferenceService;
+- a reference on a component that a `Proportional` [`scalingPolicy`](component-autoscaling.md#proportional-scaling) names as a follower, with `decoder follower cannot reference AutoscalerPolicy "queue-depth" when scaling is Proportional: remove the reference or remove decoder from ratios`, because a follower's count comes from its anchor;
 - `minReplicas: 0` with only a reference: [scale to zero](../../guides/scale-and-migrate/scale-to-zero-with-keda.md) needs the component's own `autoscaler` with `class: KEDA`.
 
 ## Inline settings win
