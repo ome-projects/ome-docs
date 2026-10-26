@@ -31,8 +31,8 @@ So a component can take `minReplicas` from the InferenceService and `maxReplicas
 
 A manifest install, with `make install` or `kubectl apply -k config/default`, [sets no defaults](#set-the-defaults-without-helm), so a component with no bounds anywhere runs one replica.
 
-!!! warning "Set `minReplicas` on every component in a canary group"
-    In a [canary group](../../concepts/rollouts-and-traffic/rollout-groups.md), a step's wait for ready new instances reads only the InferenceService, which doesn't hold the defaults. Without `minReplicas` there, the step can wait for instances that never start, or record its traffic before any new instance is ready. [New-revision capacity](../../reference/rollouts/canary-progression.md#new-revision-capacity) has the details.
+!!! note "Canary steps count the defaults"
+    A step in a [canary group](../../concepts/rollouts-and-traffic/rollout-groups.md) sizes against the Instance count the component is scaled to, which OME fills from the component's resolved `minReplicas` — these defaults included — and which an autoscaler can move. [New-revision capacity](../../reference/rollouts/canary-progression.md#new-revision-capacity) has the details.
 
 ## Step 1: Set the defaults
 
@@ -156,7 +156,7 @@ kubectl patch inferenceservice qwen3-0-6b -n qwen3-0-6b --type merge \
 inferenceservice.ome.io/qwen3-0-6b patched
 ```
 
-Removing the values from your manifest isn't enough: a client-side `kubectl apply`, the default, leaves in place values that it didn't set. In a canary group, patch out only `maxReplicas`.
+Removing the values from your manifest isn't enough: a client-side `kubectl apply`, the default, leaves in place values that it didn't set.
 
 Then check the defaults that the manager reads:
 

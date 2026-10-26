@@ -118,9 +118,9 @@ Each step's `capacity` applies to each component. Step 1 moves 2 of the 4 engine
 | An unquoted integer | `2` | That many, up to the desired replicas. |
 | A quoted number without `%` | `"2"` | None: admission rejects it. |
 
-A component's desired replicas are its `minReplicas`. Set `minReplicas` on each component in the group, in the InferenceService itself. Without it, a step can wait for Instances that never start until its [ready timeout](#readytimeout), or start its gate before any new Instance is ready. [Set replica defaults](../../guides/operate-ome/set-replica-defaults.md) explains why defaults from the runtime or the chart don't count.
+A component's desired replicas are the Instance count it is scaled to: the `spec.replicas` of its [InferenceReplica](../api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica), which OME fills from the component's resolved `minReplicas` — from the InferenceService, its runtime or the [replica defaults](../../guides/operate-ome/set-replica-defaults.md) — and which its [autoscaler](../../concepts/serving/component-autoscaling.md) moves as it scales. A step sizes against that live count, not the `minReplicas` floor: a `"50%"` step on an engine that an autoscaler has at 8 Instances stages 4 new Instances, even with `minReplicas: 4`. Only when the replica carries no count does OME fall back to the component's `minReplicas` in the InferenceService itself, then to its `maxReplicas`.
 
-A step replaces Instances; it doesn't add any. The rest of the desired replicas stay on the previous revision, and Instances that an autoscaler adds above them run the new revision. Each component works out its own count, as the [prefill-decode example](#canary-prefill-and-decode-together) shows. For a multi-node component, capacity counts whole Instances, each a leader and its workers.
+A step replaces Instances; it doesn't add any. The rest of the desired replicas stay on the previous revision. When an autoscaler changes the count during a step, the step re-sizes against it: a percentage keeps its share, and an integer keeps its count. Each component works out its own count, as the [prefill-decode example](#canary-prefill-and-decode-together) shows. For a multi-node component, capacity counts whole Instances, each a leader and its workers.
 
 ## How a step advances
 
