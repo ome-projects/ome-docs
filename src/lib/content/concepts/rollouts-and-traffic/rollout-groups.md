@@ -50,7 +50,7 @@ kubectl apply -f mistral-pd.yaml
 inferenceservice.ome.io/mistral-pd created
 ```
 
-- When a change gives both a new revision, they roll out together by [blue-green](#choose-a-progression), since the group sets no progression.
+- When a change gives both a new revision, they roll out together by [blue-green](#choose-a-progression), since the group sets no progression, paced in [batches](#batches-for-the-engine-and-the-decoder).
 - The router is in no group, so it rolls out on its own.
 - While a component's update waits, `status.components.<component>.lifecycle.rolloutHold` names the gate that holds it. [Lifecycle status](../architecture/deployment-modes.md#lifecycle-status) lists the gates.
 - An edit to `spec.rollout` during a rollout [applies to the next one](rollout-policy.md#when-the-reference-is-resolved).
@@ -63,7 +63,7 @@ Each group can set:
 | `canary`, `blueGreen` or `rollingUpdate` | The progression. Set at most one. See [Choose a progression](#choose-a-progression). |
 | `policyRef` | Alpha, and off by default. A [RolloutPolicy](rollout-policy.md) that supplies the progression when the group sets none. |
 | `soak` | In a [sequence](#roll-components-one-at-a-time), how long to wait between components. |
-| `maintainRatio` | For a blue-green or rolling-update group of two or more components. Keeps them in step, and their replica ratio within `tolerance` percent. See [Rolling update](#rolling-update). |
+| `maintainRatio` | For a blue-green or rolling-update group of two or more components. Keeps them in step, and their replica ratio within `tolerance` percent. See [Rolling update](#rolling-update) and [Batches for the engine and the decoder](#batches-for-the-engine-and-the-decoder). |
 
 ## Choose a progression
 
@@ -108,9 +108,23 @@ spec:
 
 An update that `InPlaceIfPossible` or `InPlaceOnly` [applies in place](../architecture/omenative-update-strategies.md#in-place-updates) skips only the serving-ratio half of the check, since the patched pod returns with its capacity. The update still waits, at the same `Ratio` gate, while its component is more than `tolerance` percent further through its rollout than the other. When it goes ahead, OME records a Normal `RatioGateBypassed` event on the InferenceService: the serving-capacity band is waived for an in-place start, and the new-revision lockstep still applies.
 
-When every component in the group drains first — it updates by `RecreatePod`, or by an in-place strategy on a multi-pod [Instance](../omenative/instances.md), which recreates the whole gang — OME paces the group in batches instead, whether or not it sets `maintainRatio`, and consults neither the serving-ratio band nor the further-through hold: the batches are what keep the components in step. Each component's drains are counted in batches of its step, the stricter of the group's `maxUnavailable` resolved against its replicas, rounded up for a percentage, and its own [`lifecycle.updateStrategy.rollingUpdate.maxUnavailable`](../architecture/omenative-update-strategies.md#pacing-with-rollingupdate). No component starts its next batch until every component's current batch serves on the new revision.
+### Batches for the engine and the decoder
 
-With four engines and two decoders on `RecreatePod` and `maxUnavailable: "50%"`, the first batch drains two engines and one decoder together. The decoder's second drain then waits, at the same `Ratio` gate, with a reason that names the two batches: `decoder batch 2 waits for engine batch 1 to serve (0 of 2 serving)`. Both new engines serving releases it. An update attempt that ends without serving counts toward its batch until OME retries it, so a failed Instance doesn't hold the other components, and a batch still short counts its failures, as in `1 of 3 serving, 1 failed`. One component that surges, or updates single-pod Instances in place, puts the group back under the holds above.
+OME paces a blue-green or rolling-update group that lists both the engine and the decoder in batches instead, whether or not it sets `maintainRatio`, when each of the two counts its moves in a step of its own:
+
+- A component that drains first — it updates by `RecreatePod`, or by an in-place strategy on a multi-pod [Instance](../omenative/instances.md), which recreates the whole gang — counts its drains. Its step is the stricter of the group's `maxUnavailable` resolved against its replicas, rounded up for a percentage, and its own [`lifecycle.updateStrategy.rollingUpdate.maxUnavailable`](../architecture/omenative-update-strategies.md#pacing-with-rollingupdate).
+- A component on the default `SurgeThenDrain` [update strategy](../architecture/omenative-update-strategies.md) counts its surges, the new Instances it starts. Its step is the stricter of the group's `maxSurge` — 25% when the group sets none — and its own [`lifecycle.updateStrategy.rollingUpdate.maxSurge`](../architecture/omenative-update-strategies.md#pacing-with-rollingupdate), resolved the same way.
+
+No component starts its next batch until every component's current batch serves on the new revision, and the batches are what keep the components in step: for the batched components, OME consults neither the serving-ratio band nor the further-through hold above. A router in the group joins the batches when it counts its moves the way the engine or the decoder does, and stays under the holds above otherwise. A component that updates single-pod Instances in place counts no drains or surges, so it puts the group back under the holds above — unless the operator's `keepRatio` rule below makes it count its in-place updates against its `maxUnavailable` step, like a drain-first component.
+
+With four engines and two decoders on `RecreatePod` and `maxUnavailable: "50%"`, the first batch drains two engines and one decoder together. The decoder's second drain then waits, at the same `Ratio` gate, with a reason that names the two batches: `decoder batch 2 waits for engine batch 1 to serve (0 of 2 serving)`. Both new engines serving releases it. An update attempt that ends without serving counts toward its batch until OME retries it, so a failed Instance doesn't hold the other components, and a batch still short counts its failures, as in `1 of 3 serving, 1 failed`.
+
+The `ome-resources` chart adds two rules to these batches, on by default in its [`lifecycle.prefillDecodeRoll`](../../guides/operate-ome/configure-the-controller.md#pace-a-prefill-decode-roll) block — so on a default install, an engine-decoder group rolls in paired, decoder-first batches, even one that surges and sets no `maintainRatio`:
+
+- `keepRatio: true` plans the two components' batches together, sized so that the share of each side already moving to the new revision stays within the group's `tolerance` of the other side's share — the operator default, the chart's 5, when the group names none. A move counts from the moment it starts, on the drain-first and the surge path alike. A batch that can't fit within the tolerance shrinks, and at least one Instance moves per batch, so a tight tolerance slows the roll and never stops it. A group opts out of the sizing with a `tolerance` of `100`.
+- `firstSide: decoder` makes the decoder move first inside every batch: the engine's moves of a batch are admitted once the decoder's new Instances of that batch serve. Until then the engine waits, at the same `Ratio` gate, with a reason such as `engine batch 1 waits for decoder batch 1 to serve first (0 of 1 serving)`.
+
+The OME binary applies neither rule without the operator's block. [Pace a prefill-decode roll](../../guides/operate-ome/configure-the-controller.md#pace-a-prefill-decode-roll) shows what each rule does, with a worked example, and how to turn one or both off.
 
 ### Canary
 
