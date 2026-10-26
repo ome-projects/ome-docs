@@ -115,12 +115,13 @@ Treat the map as read-only: OME undoes a hand edit right away.
 
 ## How OME sets the weights
 
-OME works out an entry's weight in four steps:
+OME works out an entry's weight in five steps:
 
 1. It counts the replicas that can serve: the lower of `capacity.allocated` and `capacity.ready`, times the cluster's capacity factor, which is 1 unless you set one. In [Reported mode](../../guides/multi-cluster/tune-routing-capacity-polling.md#reported-mode), a cluster with a `capacity.reportedWeight` uses it instead, as it is: no replica count caps it, and no factor scales it. For an InferenceService with an engine and a decoder, both counts are the lower of the two [components'](../serving/inference-services.md#components) counts.
 2. An entry that a routing health probe gates gets 0, with one exception that [Routable](#routable) describes.
 3. It reduces the weights to their smallest whole-number ratio, so 4 and 2 become 2 and 1.
-4. An entry that a drain holds gets 0. The other weights stay as they are.
+4. An entry whose cluster placement is draining gets 0. See [A placement move drains a cluster first](#a-placement-move-drains-a-cluster-first).
+5. An entry that a drain holds gets 0. The other weights stay as they are.
 
 Divide a weight by the sum of the weights for its share: in the example, `cluster-a` gets two thirds of the requests.
 
@@ -133,6 +134,26 @@ Four settings change the weights:
 | Routing health probe | Holds a cluster at 0 after repeated failures. | [Configure routing health probes](../../guides/multi-cluster/routing-health-probes.md) |
 | Drain | Holds a cluster at 0, whatever its capacity. | [Drain a workload cluster](../../guides/multi-cluster/drain-a-workload-cluster.md) |
 
+## A placement move drains a cluster first
+
+Placement can zero a weight on its own, with no drain of yours. When a plan change retires one of a `Split` or `All` placement's homes, placement asks that cluster to drain first: in the control-plane InferenceService's `status.placement.candidates`, the cluster's [`allocation.drainRequested`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CandidateAllocationStatus) turns `true`, and the map's next table holds its entry at 0.
+
+Placement removes the InferenceService's copy from the cluster only after the map shows the zero. Until then the entry looks intact apart from its weight: it keeps its endpoint, `healthy: true` and its positive `capacity.allocated` and `capacity.ready`, and it gets no `drainRefs` — those list only the drains of the `ome.io/traffic-drain` annotation. That's the designed order of a move, not a fault, and there's nothing to undrain: the zero stays until the copy is gone and the entry leaves the table. To tell a draining cluster from a bug, read the allocations:
+
+```bash
+kubectl get inferenceservice llama-chat -n llama-demo \
+  -o jsonpath='{range .status.placement.candidates[*]}{.cluster}={.allocation.drainRequested}{"\n"}{end}'
+```
+
+```output
+cluster-a=true
+cluster-b=
+```
+
+Placement is draining `cluster-a`, and `cluster-b` keeps its traffic. When a plan drains every cluster that has capacity, [Routable](#routable) turns `False` with reason `NoRoutableCapacity`, and the entries keep showing that capacity.
+
+A `Single` move to another cluster also drains the cluster it leaves, but the map never holds its entry at 0: the status update that requests the drain also makes the new cluster the plan's winner, and in `Single` mode a cluster that placement is draining leaves the table. Placement removes the copy only after the entry is gone, so the retiring cluster's replicas outlive its entry; until they're removed, the allocations above show the cluster with `drainRequested: true`.
+
 ## Why a cluster's weight is zero
 
 Compare the entry with these rows, and take the first that matches:
@@ -140,6 +161,7 @@ Compare the entry with these rows, and take the first that matches:
 | What the entry shows | Why the weight is 0 |
 | --- | --- |
 | `drainRefs` lists an ID | A drain holds the cluster at 0, whatever its capacity. Remove the drain by its ID, as [Drain a workload cluster](../../guides/multi-cluster/drain-a-workload-cluster.md) shows. |
+| No `drainRefs`, `healthy: true`, and `capacity.allocated` and `capacity.ready` above 0 | Placement is draining the cluster: [a placement move removes the cluster's copy only after this zero is in the map](#a-placement-move-drains-a-cluster-first), so the entry keeps its counts until then. The cluster's entry in `status.placement.candidates` shows `allocation.drainRequested: true`, and there's no drain to remove. |
 | `capacity.reportedWeight: "0"` | The cluster reports that it can serve nothing. In [Reported mode](../../guides/multi-cluster/tune-routing-capacity-polling.md#reported-mode) the report is the cluster's capacity, so its ready replicas can't restore the weight; a positive report does. |
 | No `capacity.ready`, and `healthy: false` | The cluster has no ready replica, or the InferenceService's copy there isn't `IngressReady` yet. |
 | No `capacity.allocated`, `capacity.source: Endpoint` and `capacity.reported: 0` | The cluster reports that it can serve nothing, although its replicas are ready. |
@@ -166,7 +188,7 @@ If every entry has weight 0, or the table is empty, the [Routable](#routable) co
 | `False` | `NoAddressableHome` | The InferenceService is placed, but no admitted cluster reports an endpoint, so the table is empty. |
 | `False` | `TrafficDrain` | Drains hold every cluster that had a positive weight. |
 | `False` | `AllHomesUnready` | No cluster has a ready replica, and none has a `capacity.reportedWeight`. |
-| `False` | `NoRoutableCapacity` | No cluster that the probe leaves open has capacity: `capacity.allocated` and `capacity.ready` both above 0, or a positive `capacity.reportedWeight` in place of them. |
+| `False` | `NoRoutableCapacity` | No cluster that the probe leaves open, and that placement isn't draining, has capacity: `capacity.allocated` and `capacity.ready` both above 0, or a positive `capacity.reportedWeight` in place of them. When [a placement move drains](#a-placement-move-drains-a-cluster-first) every cluster that has capacity, the entries keep those counts. |
 | `False` | `AllHomesProbeFailed` | The probe gates every cluster, and its `allFailedPolicy` is `Drain`. |
 
 ### OverrideActive
