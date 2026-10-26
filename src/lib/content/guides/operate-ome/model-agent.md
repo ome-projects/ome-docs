@@ -272,7 +272,7 @@ A model's label can stay `Updating` because:
 
 - The agent restarted: see the warning in [Configure the agent](#step-2-change-a-setting).
 - The model is waiting its turn, or still downloading. For a Hugging Face model, `progress` in the node's ConfigMap shows how far it has got: see [Step 3](#step-3-check-where-a-model-is-ready).
-- Another `oci://` model is downloading the same files. The log has `Same-path model` lines that end in `before starting duplicate download`: see [How downloads run](#workers-and-queues).
+- Another `oci://` model is downloading the same files. The log has a `Waiting for artifact operation` line every 30 seconds: see [How downloads run](#workers-and-queues).
 - The agent has no downloader for the model's scheme, `s3://`, `az://`, `gs://` or `github://`, and logs `unknown storage type`. See [Where the weights come from](../../concepts/models/base-models.md#where-the-weights-come-from).
 - The agent can't parse the `oci://` URI, and logs `Failed to get target directory path for model` with the reason. Use the form from the same section.
 
