@@ -4,7 +4,7 @@ description: Load your schedulers' configurations into Alfred, so that it predic
 since: v1.3
 ---
 
-Scheduler simulation lets [Alfred](../../concepts/scheduling/alfred.md) predict where the replacement pods of each move would land, by running your scheduler's configuration against a copy of the cluster. In recommend-only mode, the prediction shows in Alfred's recommendations. To [let Alfred migrate Instances](let-alfred-migrate-instances.md), you need it: Alfred sends a request only when the simulation places every replacement pod. Alfred is alpha.
+Scheduler simulation lets [Alfred](../../concepts/scheduling/alfred.md) predict where the replacement pods of each move would land, by running your scheduler's configuration against a copy of the cluster. In recommend-only mode, the prediction shows in Alfred's recommendations. To [let Alfred migrate Instances](let-alfred-migrate-instances.md), you need it for every move except one onto a new [TPU slice](../../concepts/scheduling/alfred-policies.md#tpu-instances-on-per-instance-slices), which needs no simulation: Alfred sends the other moves only when the simulation places every replacement pod, and withholds them with `SimulationUnavailable` while no worker is configured. Alfred is alpha.
 
 Alfred runs each simulation in a worker: the `/alfred-simulator` binary in Alfred's image, loaded with the configuration of one scheduler. You list the workers in an immutable ConfigMap, and give Alfred the identities that the workers report. Alfred checks the workers when it starts, and exits when one fails to load or reports another identity.
 
@@ -351,7 +351,7 @@ configmap "alfred-simulation-1" deleted from ome namespace
 
 ## Next steps
 
-- [Let Alfred migrate Instances](let-alfred-migrate-instances.md): turn on execute mode, which needs the simulation.
+- [Let Alfred migrate Instances](let-alfred-migrate-instances.md): turn on execute mode, which needs the simulation for every move but one onto a new TPU slice.
 - [Alfred configuration](../../reference/scheduling/alfred-configuration.md#scheduling-profiles): the scheduling profiles and the simulation values.
 - [Alfred metrics and events](../../reference/scheduling/alfred-metrics-and-events.md#scheduling-results): every scheduling result.
 - [OME scheduler](../../concepts/scheduling/ome-scheduler.md): the scheduler that places Instances of more than one pod.

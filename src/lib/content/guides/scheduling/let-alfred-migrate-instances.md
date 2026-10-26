@@ -10,7 +10,7 @@ Alfred can then move any OMENative Instance, in any namespace, that its [defragm
 
 - Alfred's only change to a workload is one request annotation on its InferenceService, and a migration guard that the chart installs rejects any other. Alfred never drains a node, and never evicts or deletes a pod. It cordons a node only when you also opt in with the chart's `maintenanceCordon.enabled` and mark a maintenance rule `cordon: true`, and it never uncordons: see [What Alfred changes in your cluster](../../concepts/scheduling/alfred.md#what-alfred-changes-in-your-cluster).
 - Alfred sends one request at a time, and none while any migration request in the cluster is waiting or in progress, yours included.
-- Just before it sends a request, Alfred checks the move again, and sends it only when a simulation places every replacement pod on a ready node that the plan allowed.
+- Just before it sends a request, Alfred checks the move again, and sends it only when a simulation places every replacement pod on a ready node that the plan allowed. A move onto a new [TPU slice](../../concepts/scheduling/alfred-policies.md#tpu-instances-on-per-instance-slices) isn't simulated: its re-check looks for a free partition instead.
 - Alfred follows its requests in a journal until OMENative reports their results, and never cancels or replaces one.
 - Caps, cooldowns, maintenance windows and a failure backoff bound what Alfred moves: see [Safety bounds](../../concepts/scheduling/alfred-policies.md#safety-bounds).
 
@@ -30,7 +30,9 @@ The examples use an InferenceService `chat` in the namespace `prod`, whose engin
 
 ## Step 1: Configure the simulation workers
 
-Alfred sends a request only when a simulation of your scheduler places every replacement pod, so set up the simulation first, as [Set up scheduler simulation for Alfred](set-up-scheduler-simulation.md) shows. Once its predictions show in the recommendation record, go on to Step 2 with the same `values.yaml`.
+For every move except one onto a new TPU slice, Alfred sends a request only when a simulation of your scheduler places every replacement pod, so set up the simulation first, as [Set up scheduler simulation for Alfred](set-up-scheduler-simulation.md) shows. Once its predictions show in the recommendation record, go on to Step 2 with the same `values.yaml`.
+
+Without `simulation.configMapName`, Alfred dispatches only moves onto a new TPU slice, which need no simulation, and withholds every other admitted move with `SimulationUnavailable`. To let Alfred migrate only [the TPU Instances that OME provisions one slice per Instance for](../../reference/scheduling/alfred-configuration.md#tpu-slice-migration), you can skip this step.
 
 ## Step 2: Turn on the migration API
 
@@ -227,7 +229,6 @@ SUBJECT/COMP      STATUS                       DETAIL
 `helm upgrade` stops with an error that ends in one of these messages:
 
 - `migration.apiVersion must be v1 when enabled`: set `migration.apiVersion` to `v1`, or leave it empty.
-- `migration.apiVersion requires simulation.configMapName`: set up the simulation first, as in [Step 1](#step-1-configure-the-simulation-workers).
 - `existing alfred-dispatch-state is missing state.json; restore its journal before enabling migration`: put the journal's `state.json` back before you set `migration.apiVersion`.
 
 ### Moves stay advisory
@@ -253,6 +254,7 @@ Check each withheld move's `dispatchReason` in the record:
 | `JournalUnavailable` | Alfred can't read or write `alfred-dispatch-state`, or its `state.json` is invalid. |
 | `SnapshotUnavailable` | Alfred can't copy the cluster, for example because the PodGroup CRD is missing. |
 | `SourceUnsupported` | No profile fits the Instance's pods, their node affinity still differs from the InferenceReplica's template after an earlier migration, or the node's `kubernetes.io/hostname` label differs from its name. |
+| `SimulationUnavailable` | The move needs a simulation, and no simulation worker is configured. Set one up, as in [Step 1](#step-1-configure-the-simulation-workers): without it, only a TPU slice move can dispatch. |
 | `SimulationNotFeasible`, `PredictedTargetUnsafe` | The last simulation didn't place every replacement pod on a ready node that the plan allowed. |
 | `UnresolvedRequest`, `MultipleUnresolvedRequests` | One of Alfred's requests is still under way, as expected during a migration. If it has stalled, see [A request is stalled](#a-request-is-stalled). |
 | `FailureBackoff` | One of Alfred's requests failed or stalled less than `migration.failureBackoff` ago. |
