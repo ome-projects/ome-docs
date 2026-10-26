@@ -18,7 +18,18 @@ Install the charts at the version that your manifest install came from. The comm
 
 ## Step 1: Prepare the InferenceService CRD
 
-The manifest install's `inferenceservices.ome.io` CRD has a conversion webhook, and the annotation `cert-manager.io/inject-ca-from`, which has cert-manager write a CA bundle into it. The chart's CRD has neither, and Helm leaves both in place when it takes the CRD over. Remove the annotation, so that cert-manager stops writing the CA bundle, and then the conversion webhook:
+Whether the `inferenceservices.ome.io` CRD carries a conversion webhook, and the annotation `cert-manager.io/inject-ca-from`, which has cert-manager write a CA bundle into it, depends on the checkout your install came from: the manifests on `main` no longer stamp them, and older manifests stamp both. The chart's CRD has neither, and Helm leaves both in place when it takes the CRD over, so check what your CRD carries:
+
+```bash
+kubectl get crd inferenceservices.ome.io -o custom-columns='CONVERSION:.spec.conversion.strategy,INJECT-CA-FROM:.metadata.annotations.cert-manager\.io/inject-ca-from'
+```
+
+```output
+CONVERSION   INJECT-CA-FROM
+Webhook      ome/serving-cert
+```
+
+`None` is the conversion strategy of a CRD that doesn't set one: when the command prints `None` and `<none>`, your install stamped neither, so skip to [Step 2](#step-2-install-the-ome-crd-chart). Otherwise, remove the annotation, so that cert-manager stops writing the CA bundle, and then the conversion webhook:
 
 ```bash
 kubectl annotate crd inferenceservices.ome.io cert-manager.io/inject-ca-from-
