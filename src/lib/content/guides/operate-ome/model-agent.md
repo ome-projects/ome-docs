@@ -150,9 +150,11 @@ The chart writes these values into the DaemonSet in plain text, so give each mod
 
 The chart runs two download workers, so at most two models download at once on a node, and the others wait their turn. After a restart, the agent checks its models again, and downloads go first: the agent re-checks an `oci://` model that was `Ready` before the restart, and that still has its files on the node, only when no download is waiting. Checks of `hf://` models, and of models that weren't `Ready` or that lost their files, queue up with the downloads, so a new model's download can wait behind them.
 
+The chart also runs one high-priority worker, for work that shouldn't wait behind those downloads. Deletes go to the front of its queue: see [How a delete stops a download](#how-a-delete-stops-a-download). A new `oci://` model also starts on it: the worker checks whether the model can reuse files already on the node, and re-queues it for the two download workers when it needs a download after all, so at most two models still download at once.
+
 The agent doesn't retry a failed model by itself. It tries again when [its pod restarts](#a-model-stays-updating), or when [a change to the model](../../concepts/models/base-models.md#choose-the-nodes) makes the nodes process it again.
 
-When two `oci://` models name the same files, one downloads them, and the other reuses them once they're ready, or downloads them itself after 30 minutes.
+When two `oci://` models name the same files, one downloads them, and the other reuses them once they're ready, or downloads them itself after 30 minutes. The waiting model re-checks every 30 seconds on the high-priority worker, so the reuse waits only for the other model's download, not for a free download worker.
 
 With `storage.downloadPolicy: ReuseIfExists`, models that use the same Hugging Face files share one copy on each node: see [Share Hugging Face artifacts](shared-hf-artifacts.md).
 
@@ -163,7 +165,7 @@ When you delete a model, the agent stops the model's work on each node, so a nod
 - A download that's waiting its turn never starts: the delete drops it from the queue.
 - The agent cancels the model's running download as soon as it sees the deletion. A Hugging Face download stops right away. Since v1.3, an `oci://` download stops too: the agent starts no new files, lets a file under 200 MiB finish, and stops the multipart transfer of a larger file mid-file, removing its temporary files. A request to object storage that has already started keeps its retries and returns first, so the stop can wait for one request. On v1.2.2, the agent can't stop an `oci://` download once it has started: it runs to completion.
 
-A canceled download doesn't mark the model `Failed` on the node. The agent then deletes the files that reached the node and removes the model's label, following the rules in [Delete a model](../../concepts/models/base-models.md#deleting-a-model), and the model's deletion finishes once every node reports its copy deleted.
+A canceled download doesn't mark the model `Failed` on the node. The agent then deletes the files that reached the node and removes the model's label, following the rules in [Delete a model](../../concepts/models/base-models.md#deleting-a-model), and the model's deletion finishes once every node reports its copy deleted. That cleanup never waits for a free download worker: the delete runs on the [high-priority worker](#workers-and-queues), ahead of that worker's other queued work, even while both download workers spend hours on other models' downloads.
 
 ### The `.hf-artifact-locks` directories {#hf-artifact-locks}
 
