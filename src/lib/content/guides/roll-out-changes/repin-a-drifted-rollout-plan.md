@@ -29,6 +29,8 @@ A repin applies edits to a group's progression, whether the group sets it inline
 
 DRIFT tracks progressions and the number of groups, so an edit to a group's components, order, soak or `maintainRatio` alone leaves it `False`.
 
+Removing `spec.rollout` entirely is the exception: no run opens once it's gone, so there's no next run to wait for, and a repin closes the run at once instead of moving it. The command refuses an empty plan, so that repin is annotation-only. See [Close the run after removing `spec.rollout`](#close-the-run).
+
 The run keeps its ID, start time and target revisions. The canary keeps its step, or takes the last step if the new plan has fewer steps, and a canary that finished stays finished. When that step's traffic weight is higher than the weight OME recorded for the canary, the canary holds before the step until you [release it](#what-the-controller-does-next).
 
 !!! warning "Capacity sets the canary's share of requests"
@@ -143,6 +145,31 @@ inferenceservice.ome.io/chat annotated
 
 To replace a repin that still waits, add `--overwrite`. The value `now` in place of a digest skips the digest check, and the controller pins whatever the plan is when it acts. Then check the result as in [Step 3](#step-3-check-the-result).
 
+## Close the run after removing `spec.rollout` {#close-the-run}
+
+Deleting `spec.rollout` mid-run doesn't end the run: it continues on the plan it recorded, and closes when that plan finishes or rolls back. The controller records a Warning `RolloutGroupRemovedMidRun` event, and DRIFT turns `True/SpecNewerThanRun` with the message `spec.rollout removed mid-run; the run continues on its recorded plan and closes when that plan finishes or rolls back — end it sooner with ome.io/rollout-rollback, or close it at once with ome.io/rollout-repin`.
+
+With no groups left, the current plan is the empty plan, and a repin to it closes the run instead of moving it. `kubectl ome rollout repin` refuses an empty plan, so set the annotation yourself. There are no group digests to join, so use the value `now`:
+
+```bash
+kubectl annotate inferenceservice chat -n prod ome.io/rollout-repin=now
+```
+
+```output
+inferenceservice.ome.io/chat annotated
+```
+
+The controller closes the run `Superseded`, records it in `status.rollout.lastRun`, removes the annotation, and gives a Normal `RolloutRunClosed` event with a message like `run chat-0123456789ab closed by repin to an empty plan`. The repin counts as `applied` in `ome_rollout_repin_total`. No run opens after the close, since the spec declares no groups. Check the conditions:
+
+```bash
+kubectl get inferenceservice chat -n prod -o custom-columns='PLAN-READY:.status.conditions[?(@.type=="RolloutPlanReady")].reason,DRIFT:.status.conditions[?(@.type=="RolloutPlanDrift")].reason'
+```
+
+```output
+PLAN-READY    DRIFT
+NoActiveRun   InSync
+```
+
 ## Troubleshooting
 
 A refused `repin` changes nothing and exits `1`, and a conflict exits `3`. [Refusals](../../reference/kubectl-ome/rollout.md#repin-refusals) lists them all, and [Guarded actions](../../reference/kubectl-ome/guarded-actions.md) covers the errors that all actions share.
@@ -154,6 +181,7 @@ A refused `repin` changes nothing and exits `1`, and a conflict exits `3`. [Refu
 | `rollout repin refused: a rollout action mailbox is already present` | A repin, promote or rollback annotation is on the InferenceService. | Wait for the controller to act on a repin or promote, and retry. Remove a rollback annotation yourself before you apply a fix, as [Roll back the canary](promote-or-roll-back-a-canary.md#roll-back-the-canary) shows. |
 | `rollout repin refused: the current plan is already pinned` | The run already follows the current plan. | If DRIFT is `True`, see [DRIFT stays True after the repin](#drift-stays-true-after-the-repin). |
 | `rollout repin refused: no active pinned run` | No rollout run is in progress. | None needed: the next run pins the current plan. |
+| `rollout repin refused: empty live plans are not supported by this command` | `spec.rollout` is gone, or has no groups left. | The command can't close a run. To close it at once, set the annotation yourself, as [Close the run after removing `spec.rollout`](#close-the-run) shows. |
 | `rollout repin refused: this command supports at most one canary group` | The spec has more than one canary group. | Let the edit wait for the next run. |
 | `guarded annotation patch rejected; refresh rollout explain and retry explicitly` | The InferenceService changed after the command read it, for example in a status update. | Explain the rollout again, then run `repin` again. |
 | `rollout repin request outcome unknown; do not replay, check rollout explain` | The API server may have stored the annotation. | Check the result as in [Step 3](#step-3-check-the-result) before you run `repin` again. |
