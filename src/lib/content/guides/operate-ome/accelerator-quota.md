@@ -325,7 +325,63 @@ Edit `quota-tree.yaml` and apply it again. To check a change without writing it,
 
 Raising `team-alpha` to 20, for example, would bring the children of `ml-research` to 28, more than its 24. The apply fails with an error that ends in `admission webhook "acceleratorquota.ome-quota-manager.validator" denied the request: ml-research: budget nvidia.com/gpu on a100 is 24 but its children total 28`.
 
-To change a node's role, delete the node and create it again: changing `spec.role` in place leaves the old Kueue object behind.
+To move a team under another Cohort, point its `spec.parentRef.name` at the new parent: `parentRef` is mutable, and the quota manager updates the team's ClusterQueue in place. Kueue object names come from a node's name, never from its place in the tree, so nothing is deleted or recreated: the queue, its LocalQueue in `ml-serving` and its admitted workloads all survive the move. Say `team-beta` becomes its own group. In `quota-tree.yaml`, add the Cohort `ml-platform` before `team-beta` — the webhook denies a team whose parent doesn't exist yet — and point `team-beta` at it:
+
+```yaml
+apiVersion: ome.io/v1beta1
+kind: AcceleratorQuota
+metadata:
+  name: ml-platform
+spec:
+  role: Cohort
+  parentRef:
+    name: root
+  budgets:
+    - resourceName: nvidia.com/gpu
+      resourceFlavor: a100
+      nominal: "12"
+---
+apiVersion: ome.io/v1beta1
+kind: AcceleratorQuota
+metadata:
+  name: team-beta
+spec:
+  role: ClusterQueue
+  parentRef:
+    name: ml-platform
+  budgets:
+    - resourceName: nvidia.com/gpu
+      resourceFlavor: a100
+      nominal: "8"
+      borrowingLimit: "4"
+```
+
+```bash
+kubectl apply -f quota-tree.yaml
+```
+
+```output
+acceleratorquota.ome.io/ml-research unchanged
+acceleratorquota.ome.io/ml-platform created
+acceleratorquota.ome.io/team-alpha unchanged
+acceleratorquota.ome.io/team-beta configured
+```
+
+The ClusterQueue `team-beta` is the same object with a new cohort, not a replacement:
+
+```bash
+kubectl get clusterqueues.kueue.x-k8s.io -l ome.io/quota-managed-by=ome-quota-manager -o custom-columns=NAME:.metadata.name,COHORT:.spec.cohortName
+```
+
+```output
+NAME         COHORT
+team-alpha   ml-research
+team-beta    ml-platform
+```
+
+Its pods keep running and keep charging `team-beta`, whose usage now sums onto `ml-platform` instead of `ml-research`, as in [Read usage up the tree](#read-usage-up-the-tree). The webhook judges a move by what it alone breaks: the new parent must exist and be a Cohort, since a team takes no children; the node can't become its own ancestor or go past the depth bound; and its budgets must fit the new parent's — a team too big for its new Cohort fails with the same `children total` error as above, against the new parent's budget. Removing the team from `ml-research` can't break a rule: its children then total less. A Cohort moves the same way, and its subtree comes along unchanged, because children name their parent, not their path.
+
+To change a node's role, on the other hand, delete the node and create it again: changing `spec.role` in place leaves the old Kueue object behind.
 
 ## Lower the high-water mark
 
@@ -640,6 +696,7 @@ kubectl apply -f quota-tree.yaml --dry-run=server
 
 ```output
 acceleratorquota.ome.io/ml-research unchanged (server dry run)
+acceleratorquota.ome.io/ml-platform unchanged (server dry run)
 acceleratorquota.ome.io/team-alpha unchanged (server dry run)
 acceleratorquota.ome.io/team-beta unchanged (server dry run)
 ```
@@ -704,14 +761,15 @@ acceleratorquota.ome.io "team-alpha" deleted
 acceleratorquota.ome.io "team-beta" deleted
 ```
 
-Then delete the Cohort. The webhook denies deleting a node that still has children:
+Then delete the Cohorts. The webhook denies deleting a node that still has children:
 
 ```bash
-kubectl delete aq ml-research
+kubectl delete aq ml-research ml-platform
 ```
 
 ```output
 acceleratorquota.ome.io "ml-research" deleted
+acceleratorquota.ome.io "ml-platform" deleted
 ```
 
 Uninstall the chart:
