@@ -26,7 +26,7 @@ The simulation profiles, `scheduling.profiles`, are under [Scheduling profiles](
 | `observationLoopInterval` | duration | `30s` | at least `1s` | How often every replica observes the cluster. Above `30s`, simulations can fail with `ObservationStale`. |
 | `earlyTickOn` | list of strings | `[NodeConditionChange, NodeMaintenanceChange]` | `NodeConditionChange` or `NodeMaintenanceChange` | The node changes that make the leader run an extra decision pass. `[]` turns extra passes off. |
 
-`NodeConditionChange` fires when any node condition appears, disappears, or changes its status or last transition time. `NodeMaintenanceChange` fires when a node starts or stops matching a [maintenance trigger](#maintenance-triggers).
+`NodeConditionChange` fires when any node condition appears, disappears, or changes its status or last transition time. `NodeMaintenanceChange` fires when an edit to a node changes which [maintenance triggers](#maintenance-triggers) it matches. A `valueIsStartTime` start time that passes without an edit doesn't fire one: the next regular pass picks it up.
 
 ### Defragmentation policy
 
@@ -83,11 +83,14 @@ A node is unhealthy while one of its trigger conditions is `True`, and Alfred pl
 | `condition.type` | with `condition` | Matches a node condition of this type. |
 | `condition.status` | with `condition` | The condition's status: `"True"`, `"False"` or `"Unknown"`. Quote it: unquoted, YAML reads `True` and `False` as booleans, and Alfred rejects the document. |
 | `label.key` | with `label` | Matches a node label with this key. |
-| `label.value` | no | The label's value. Without it, any value matches; `""` matches only an empty value. |
+| `label.value` | no | The label's value. Without it, and without `valueIsStartTime`, any value matches; `""` matches only an empty value. |
+| `label.valueIsStartTime` | no | With `true`, the trigger reads the label's value as the Unix time, in whole seconds, when maintenance starts, and matches from that time on. It can't be combined with `label.value`: setting both fails the document. The default is `false`. |
 | `taint.key` | with `taint` | Matches a node taint with this key. |
 | `taint.value` | no | The taint's value, matched like `label.value`. |
 | `taint.effect` | no | `NoSchedule`, `PreferNoSchedule` or `NoExecute`. Without it, any effect matches. |
 | `cordon` | no | With `true`, Alfred cordons the nodes the trigger matches: only in execute mode, and only with the chart's [`maintenanceCordon.enabled`](#helm-chart-values), which is off by default. Alfred never uncordons. The default is `false`. See [The maintenance cordon](../../concepts/scheduling/alfred-policies.md#the-maintenance-cordon). |
+
+With `valueIsStartTime: true`, the label's value names when maintenance starts: a node labeled `maintenance.example.com/start-at=1767355200` is left alone until 2026-01-02T12:00:00Z and due for maintenance from then on, like the `patching-start-time` trigger below. A value that isn't such a number matches at once: the key alone asks for maintenance, so the value can delay it but never cancel it. A node without the key never matches, with or without the option. A start time that passes without an edit to the node takes effect at the next regular decision pass, every `decisionLoopInterval`, not through an early `NodeMaintenanceChange` pass, which only a node edit fires.
 
 A node is due for maintenance when it matches any trigger. Maintenance evacuations use the cooldowns under [Workload defaults](#workload-defaults), not `healthCooldownFloorMinutes`.
 
@@ -105,6 +108,10 @@ alfredConfig:
             label:
               key: maintenance.example.com/state
               value: patching
+          - name: patching-start-time
+            label:
+              key: maintenance.example.com/start-at
+              valueIsStartTime: true
           - name: patching-taint
             taint:
               key: maintenance.example.com/patching
