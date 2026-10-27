@@ -133,7 +133,44 @@ A step starts by moving its capacity to the new revision, and waits in `Pending`
 | Manual | `pause: {}` | You promote it with `kubectl ome rollout promote`. |
 | Analysis | `analysis` | Its metric checks pass, after the optional `initialDelay` and no sooner than the step's `pause.duration`. See [Canary metric analysis](canary-analysis.md). |
 
-GATE in `kubectl ome rollout status` shows these names. If a step's ready Instances drop below its count, the step goes back to `Pending`, and its clock starts again once its new Instances are ready. The one capacity loss a step doesn't wait out is a [crash-looping canary pod](#crash-looping-canary-pods): it parks the canary at `Failed` before OME checks any gate. At the last step, the gate holds the canary in `Promoting` until it passes.
+GATE in `kubectl ome rollout status` shows these names. If a step's ready Instances drop below its count, the step goes back to `Pending`, and its clock starts again once its new Instances are ready. The one capacity loss a step doesn't wait out is a [crash-looping canary pod](#crash-looping-canary-pods): it parks the canary at `Failed` before OME checks any gate. To end a step's wait yourself, [force the step](#force-a-step-past-its-capacity-wait). At the last step, the gate holds the canary in `Promoting` until it passes.
+
+## Force a step past its capacity wait
+
+A step whose new Instances can't all become ready waits in `Pending`, and a [ready timeout](#readytimeout) ends that wait at `Failed`. The `ome.io/rollout-promote-force` annotation ends it with an advance instead. Set it to the canary's `canaryRevisionHash`, from the canary status of the group's [primary component](#phases); no `kubectl ome` command sets it:
+
+```bash
+kubectl get inferenceservice chat -n prod \
+  -o jsonpath='{.status.components.engine.canary.canaryRevisionHash}'
+```
+
+```output
+bbbbbbbb
+```
+
+```bash
+kubectl annotate inferenceservice chat -n prod ome.io/rollout-promote-force=bbbbbbbb
+```
+
+```output
+inferenceservice.ome.io/chat annotated
+```
+
+One force moves the canary one step, at any step:
+
+- The step stops waiting for its new Instances. Its capacity wait keeps no clock, so it can't park at `Failed`, and OME still asks for the step's count, so capacity keeps converging behind the advance.
+- The step's gate — manual, timed or analysis — opens without a separate promote, and the canary advances. The next step's capacity wait and gate apply as usual.
+- Status records the step's `traffic`, but the written [weights](#traffic-split) follow the pods that serve: while no new Instance serves, the stable revision keeps every request, so a forced step never routes traffic onto nothing.
+
+OME emits the Warning event `CanaryStepForced` on the InferenceService, naming the step, counted from 0, the revision, and how many of the step's Instances were ready, and removes the annotation once the advance is saved. On the last step, the force opens the gate into `Promoting` and stays until the canary completes: the completion waits, without parking, for every Instance to serve the new revision and for [`scaleDownDelaySeconds`](#fields), however long that takes. To force another step, wait for OME to remove the annotation, then set it again: one force is one step's. A value that isn't the current canary's revision hash does nothing, and admission rejects one that isn't lowercase letters and digits, at least 6 of them.
+
+The force never overrides:
+
+- a [paused or frozen rollout](../../guides/roll-out-changes/pause-and-resume-a-rollout.md): the canary holds its step, and the force doesn't survive the pause to act on resume;
+- a `Failed` canary, parked by a ready timeout or a [crash-looping canary pod](#crash-looping-canary-pods);
+- a rollback, rolling or held.
+
+In each case OME removes the annotation without advancing anything, and records a `CanaryForceIgnored` warning event that names the reason. The plain [`ome.io/rollout-promote`](../api/labels-and-annotations.md#rollout-actions) is the opposite trade: it opens the step's gate, but waits for the step's new Instances.
 
 ## Phases
 
@@ -156,6 +193,7 @@ The canary's phase is in `status.components.<component>.rolloutPhase` of the gro
 | --- | --- |
 | A change gives the group a newer revision | Starts again at step 1 with the newest revision, and keeps the same stable revision. A `Failed` canary starts again too, when the newest revision is neither its own nor the stable one: see [`readyTimeout`](#readytimeout). |
 | You pause the rollout | Holds its step, but its clocks keep running, so it can advance or fail as soon as you resume. See [Pause and resume a rollout](../../guides/roll-out-changes/pause-and-resume-a-rollout.md). |
+| You set [`ome.io/rollout-promote-force`](#force-a-step-past-its-capacity-wait) to its revision hash | Stops waiting for the step's new Instances, opens the step's gate and moves one step, while capacity converges behind the advance. Paused, `Failed`, rolling back or rolled back, it doesn't move: OME removes the annotation and records a `CanaryForceIgnored` warning event instead. |
 | You run the alpha `kubectl ome rollout rollback`, or [its analysis](canary-analysis.md#how-a-sample-is-judged) rolls it back | Records 0% for the new revision at once, and moves every Instance back to the stable revision. The component stays on the stable revision until a change produces a revision other than those two. See [Roll back the canary](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary). |
 | A rollback finds a component's stable revision with no live Instance | From the analysis, the rollback doesn't start: the canary parks at `Failed` where it stands, records the reason `StableRevisionMissing`, and emits the Warning event `CanaryStableRevisionEmpty`. From you, it proceeds, with the same Warning event. See [When the stable revision runs no Instance](canary-analysis.md#when-the-stable-revision-runs-no-instance). |
 | A step runs past its [ready timeout](#readytimeout) | Goes to `Failed`. A stalled analysis with `onInconclusive: RollbackOnStall` rolls it back instead. |
@@ -185,9 +223,9 @@ The ready timeout bounds how long a step waits in `Pending` for its new Instance
 | 2 | `readyTimeout` in the group's `canary` | Above zero. |
 | 3 | `defaultReadyTimeout` in the `rollout` block of the `inferenceservice-config` ConfigMap | `15m` with the ome-resources chart (`ome.controller.rollout.defaultReadyTimeout`). The kustomize manifests don't set it. |
 
-With none set, a step never times out: it waits in `Pending` until its Instances are ready. A [crash-looping canary pod](#crash-looping-canary-pods) still parks the canary at `Failed`, timeout or none. The timeout counts from when the step last entered `Pending`. For an analysis, it counts from the last conclusive sample, or from when the step's new Instances were ready if there's none yet.
+With none set, a step never times out: it waits in `Pending` until its Instances are ready, or until you [force the step](#force-a-step-past-its-capacity-wait). A [crash-looping canary pod](#crash-looping-canary-pods) still parks the canary at `Failed`, timeout or none. The timeout counts from when the step last entered `Pending`. For an analysis, it counts from the last conclusive sample, or from when the step's new Instances were ready if there's none yet.
 
-When it expires, the phase is `Failed`. The canary keeps its Instances and its recorded traffic, the stable Instances keep serving, and `promote` refuses. Apply a fix that gives the group a revision other than the failed canary's and the stable one, and a fresh canary starts at step 1 toward it, with the same stable revision. A [rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) also works on a failed canary: every Instance returns to the stable revision, as [When a step never becomes ready](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#when-a-step-never-becomes-ready) shows. A [crash-looping canary pod](#crash-looping-canary-pods) parks the canary the same way, except that the step's recorded traffic returns to the stable revision at once.
+When it expires, the phase is `Failed`. The canary keeps its Instances and its recorded traffic, the stable Instances keep serving, and `promote` refuses. A [force](#force-a-step-past-its-capacity-wait) doesn't lift the park either: it only ends a live step's wait before the timeout expires. Apply a fix that gives the group a revision other than the failed canary's and the stable one, and a fresh canary starts at step 1 toward it, with the same stable revision. A [rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) also works on a failed canary: every Instance returns to the stable revision, as [When a step never becomes ready](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#when-a-step-never-becomes-ready) shows. A [crash-looping canary pod](#crash-looping-canary-pods) parks the canary the same way, except that the step's recorded traffic returns to the stable revision at once.
 
 ## Crash-looping canary pods
 
