@@ -143,6 +143,8 @@ The old pods' logs go with them. When a pod failed, the Instance's [`lastFailure
 
 A restart has until the Instance readiness timeout to get its new pods serving: the component's `lifecycle.instanceReadyTimeout`, or `30m` with the ome-resources chart. When the time runs out, or a new pod stays stuck past the stuck-pod grace period, the Instance becomes `Failed`. OME keeps a `Failed` Instance and its pods for you to inspect until you [reset it](../../guides/omenative/reset-failed-instances.md) or a new revision reaches it.
 
+The new pods render from the ControllerRevision that stores the Instance's revision; only the component's current revision renders without one, straight from the InferenceService and its runtime. [Revision pruning](../../reference/api/labels-and-annotations.md#omenative-operations) never deletes a revision an Instance still runs or targets, but when something else has deleted that ControllerRevision, the rebuild creates nothing: a pod rendered from the current template under the missing revision's label would be routed, counted and drained as one revision while running another. One `RepairRevisionGone` warning event per attempt names the Instance and the gone revision, and the attempt runs to the readiness timeout above. From `Failed`, the rollout replaces the pods at the component's current revision, which needs no stored ControllerRevision.
+
 ## Observe a restart
 
 OME records a restart's events on the InferenceService:
@@ -152,6 +154,7 @@ OME records a restart's events on the InferenceService:
 | `RestartTriggered` | Warning | A restart starts. The message names the Instance, the trigger and the new incarnation. |
 | `RestartCompleted` | Normal | The Instance is `Ready` again. |
 | `RepairHeld` | Warning | A crash-loop repair that takes a serving Instance offline waits for `maxUnavailable`. |
+| `RepairRevisionGone` | Warning | A rebuild's revision has no ControllerRevision left, so OME creates no pods while the attempt runs to its deadline. Once per attempt. |
 | `FoundOrphan` | Warning | A pod without the `ome.io/instance-incarnation` label holds up the restart until the pod is gone. |
 | `InstanceFailed` | Warning | The restart ran out of time, or a new pod stayed stuck, and the Instance is `Failed`. |
 
