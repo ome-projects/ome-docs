@@ -759,10 +759,13 @@ The controller removes the annotation and reports the outcome as an event on the
 | --- | --- | --- |
 | `RolloutPlanRepinned` | Normal | The run follows the new plan, keeping its identity and progress, and DRIFT returns to `False/InSync`. |
 | `RolloutRepinRejected` | Warning | The current plan doesn't render, or another edit changed its digest. Run `repin` again to request the current plan. |
+| `RolloutRunClosed` | Normal | The spec declares no rollout groups any more, so the current plan is the empty plan: the repin closes the run `Superseded` instead of moving it, as in `run chat-0123456789ab closed by repin to an empty plan`. |
 
 A canary keeps its step number, or takes the new plan's last step if the new plan has fewer steps. If that step's traffic weight is higher than the one last recorded, the canary holds before the step, with HOLD `CanaryPreStep`. When the current plan already matches the pinned plan, the controller removes the annotation without an event.
 
 An annotation left when a run closes stays until the next run opens. Set by hand, the value `now` skips the digest check, as [Repin by annotation](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#repin-by-annotation) shows.
+
+When `spec.rollout` was removed mid-run, only the annotation closes the run: the command refuses an empty plan. [Close the run after removing `spec.rollout`](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#close-the-run) shows the value to set.
 
 The live plan must keep the pinned topology: the same number of groups, and the same progression, components, order, soak and ratio in each. [Repin a drifted rollout plan](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md) shows the command in use.
 
@@ -790,7 +793,7 @@ Besides the refusals [every action shares](guarded-actions.md#target-checks), `r
 | Message | Cause |
 | --- | --- |
 | `rollout repin refused: no active pinned run` | No run is active. |
-| `rollout repin refused: empty live plans are not supported by this command` | `spec.rollout.groups` is empty. |
+| `rollout repin refused: empty live plans are not supported by this command` | `spec.rollout` is gone, or has no groups. To close the run instead, [set the annotation yourself](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#close-the-run). |
 | `rollout repin refused: controller plan evidence is missing, stale or inconsistent` | The run, READY or DRIFT doesn't show a pinned, drifted plan the CLI can check, or the live spec fails validation. |
 | `rollout repin refused: the current plan is already pinned` | DRIFT is `False/InSync`, or the live plan has the pinned digest. |
 | `rollout repin refused: live and pinned rollout topology differ` | The groups changed shape. |
