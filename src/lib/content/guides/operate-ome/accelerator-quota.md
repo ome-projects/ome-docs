@@ -644,13 +644,44 @@ clusterrole.rbac.authorization.k8s.io/accelerator-quota-admin created
 clusterrolebinding.rbac.authorization.k8s.io/accelerator-quota-admin created
 ```
 
+## Let cert-manager issue the webhook certificate
+
+By default, the quota manager manages the webhook's certificate itself: `quotaManager.webhook.internalCertManagement` is `true`, the chart creates the Secret `ome-quota-manager-webhook-cert` empty, and on startup the quota manager generates the CA and the serving certificate, keeps them rotated in the Secret, and injects the CA bundle into the ValidatingWebhookConfiguration `ome-quota-manager.ome.io`. The webhook needs no cert-manager in the cluster.
+
+The self-injection comes with RBAC: the chart grants the quota manager update on the ValidatingWebhookConfiguration, scoped to its own by name, with list and watch on the whole kind, which can't be scoped to one object, and a Role whose list and watch expose every Secret in `ome`, to keep the cert Secret rotated.
+
+To drop both grants, have cert-manager issue the certificate instead — [Install OME](../../getting-started/install.md#step-1-install-cert-manager) put it on the cluster. Set `internalCertManagement` to `false`, at the install in Step 1 or in an upgrade, keeping the other values in the file:
+
+```yaml title="quota-values.yaml"
+global:
+  hub: registry.example.com/ome
+quotaManager:
+  mode: workload
+  image:
+    tag: dev
+  materialize:
+    enrolledNamespaces:
+      - ml-serving
+  webhook:
+    internalCertManagement: false
+```
+
+```bash
+helm upgrade ome-quota-manager ./charts/ome-quota-manager \
+  --namespace ome -f quota-values.yaml
+```
+
+Helm reports the upgrade. In place of the empty Secret, the chart renders a self-signed Issuer, `ome-quota-manager-selfsigned`, and a Certificate, `ome-quota-manager-serving-cert`, which cert-manager issues into the same Secret, `ome-quota-manager-webhook-cert`, with the webhook Service's DNS names. The ValidatingWebhookConfiguration carries `cert-manager.io/inject-ca-from: ome/ome-quota-manager-serving-cert`, so cert-manager's cainjector keeps the CA bundle current. The quota manager's pods restart reading the mounted Secret and rotating nothing, and the release carries neither the webhook-configuration grants nor the Secrets Role.
+
+Who issues the certificate also decides how a broken cert heals: cert-manager recreates a deleted Secret on its own, where the default wedges the webhook, as [Troubleshooting](#kubectl-apply-fails-with-a-webhook-error) explains.
+
 ## Troubleshooting
 
 ### `kubectl apply` fails with a webhook error
 
 A denial names the node and the rule that the change breaks. A failure to call the webhook means that no quota manager pod is ready. The webhook fails closed, so every create, update and delete of an AcceleratorQuota fails until one is.
 
-`kubectl -n ome get pods` shows why the pods aren't ready. A cause outside the webhook, such as an image the nodes can't pull, you fix as usual, and admission returns with the first ready pod. But the webhook itself can be the cause: a pod reports ready only once its webhook serves, so when the webhook's certs are broken — the Secret `ome-quota-manager-webhook-cert` deleted, for example, which the quota manager updates but never creates — no pod can become ready, and the wedge doesn't clear on its own.
+`kubectl -n ome get pods` shows why the pods aren't ready. A cause outside the webhook, such as an image the nodes can't pull, you fix as usual, and admission returns with the first ready pod. But the webhook itself can be the cause: a pod reports ready only once its webhook serves, so when the webhook's certs are broken — the Secret `ome-quota-manager-webhook-cert` deleted, for example — no pod can become ready. Who [issues the certificate](#let-cert-manager-issue-the-webhook-certificate) decides whether that clears: cert-manager recreates a deleted Secret on its own, and the pods turn ready with it. By default, though, the quota manager updates the Secret and never creates it, so the wedge doesn't clear on its own.
 
 To recover, disable the webhook: set `quotaManager.webhook.enabled` to `false`, keeping the other values in the file, and upgrade the release. The webhook gates only AcceleratorQuotas, so the wedge doesn't block the upgrade itself:
 
@@ -678,7 +709,7 @@ Helm reports the upgrade. It removes the ValidatingWebhookConfiguration `ome-quo
 !!! warning "The tree is unguarded while the webhook is off"
     Nothing denies a write that breaks the tree's rules, and a server dry run no longer catches it either: the rules live in the webhook. A bad write is accepted, and the quota manager freezes the node and its descendants instead, as in [A node isn't Ready or Materialized](#conditions). Deleting a node that still has children orphans them, and each child reports `ParentMissing`. After every change, run [`kubectl ome quota validate`](../../reference/kubectl-ome/quota.md#validate), which prints the problems it finds, and re-enable the webhook as soon as the cause is fixed.
 
-Fix the cause, then set `enabled` back to `true`, or remove `webhook` from the file, and upgrade again. The upgrade restores the webhook's objects, and for broken certs it is the fix: the chart recreates the Secret empty when it's gone, and on startup the quota manager generates the serving certificate, injects the CA bundle into the new ValidatingWebhookConfiguration, and reports ready once the webhook serves. The restored webhook fails closed from the moment the upgrade creates it, so quota writes fail again until a pod is ready. Wait for the rollout:
+Fix the cause, then set `enabled` back to `true`, or remove `webhook` from the file, and upgrade again. The upgrade restores the webhook's objects, and for broken certs it is the fix. By default, the chart recreates the Secret empty when it's gone, and on startup the quota manager generates the serving certificate, injects the CA bundle into the new ValidatingWebhookConfiguration, and reports ready once the webhook serves. With [cert-manager issuing](#let-cert-manager-issue-the-webhook-certificate), the restored Certificate has cert-manager reissue into the Secret, and cainjector fills the new configuration's CA bundle. The restored webhook fails closed from the moment the upgrade creates it, so quota writes fail again until a pod is ready. Wait for the rollout:
 
 ```bash
 kubectl -n ome rollout status deployment/ome-quota-manager
@@ -778,7 +809,7 @@ Uninstall the chart:
 helm uninstall ome-quota-manager -n ome
 ```
 
-Helm reports that it kept the Secret `ome-quota-manager-webhook-cert`, and that the release is uninstalled.
+Helm reports that it kept the Secret `ome-quota-manager-webhook-cert`, and that the release is uninstalled. With [cert-manager issuing the certificate](#let-cert-manager-issue-the-webhook-certificate), Helm keeps nothing: there the Secret is cert-manager's, and deleting the Certificate with the release leaves it behind all the same.
 
 Four objects remain: `root`, the Kueue Cohort `root`, the webhook Secret and the ResourceFlavor. With the quota manager gone, clear the finalizer on `root` yourself, then delete all four:
 

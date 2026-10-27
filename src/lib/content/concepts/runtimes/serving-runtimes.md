@@ -183,7 +183,7 @@ Attach an [autoscaler policy](../serving/autoscaler-policy.md) and set `accelera
 OME sets two environment variables in the engine's and the decoder's runner:
 
 - `MODEL_PATH`, the path of the model's weights, when the InferenceService names a base model and the runner doesn't set it. Without a base model, a runner that passes `$(MODEL_PATH)`, as the catalog runtimes do, gets that text literally. Set `MODEL_PATH` in `env`, or load the weights another way; see [Reference a runtime explicitly](../../guides/deploy-models/reference-a-runtime-explicitly.md#step-2-name-the-runtime-in-the-inferenceservice).
-- `PARALLELISM_SIZE`, the GPUs in each pod times the pods in each replica, which is one plus `worker.size`. It replaces any value you set. OME leaves it unset for a runner without GPUs, or when `acceleratorConfig` sets `tensorParallelismOverride` for the chosen class.
+- `PARALLELISM_SIZE`, the GPUs in each pod times the pods in each replica, which is one plus `worker.size`. It replaces any value you set. OME leaves it unset for a runner without GPUs, or when `acceleratorConfig` sets `tensorParallelismOverride` for the chosen class. A runner is without GPUs when it requests none of the resource names on the operator's [`acceleratorResources` list](../../guides/operate-ome/configure-the-controller.md#recognize-other-accelerator-resources) — only `nvidia.com/gpu`, until the operator adds more — so a runner that requests `amd.com/gpu` or `google.com/tpu` counts as one until its resource is listed.
 
 ### Placeholders
 
