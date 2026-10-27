@@ -339,6 +339,39 @@ The two settings aren't in [the list that needs a restart](#tune-the-config-cach
 
 With a value empty, or the entry absent — the kustomize manifests don't write one — the manager has no fixed cadence and falls back to its rate-limited requeue: the canary still moves, but on no schedule you can tune. A value that isn't a positive duration, such as `"0s"` or `"3d"`, counts as empty the same way. Unlike a bad `lifecycle` value, it doesn't stop the manager, and nothing logs it — so when a canary re-checks slower than the cadence you set, check the rendered entry for a typo.
 
+## Recognize other accelerator resources
+
+The `acceleratorResources` entry of the `inferenceservice-config` ConfigMap lists the extended resource names that OME counts as accelerators when it reads a runner container's requests and limits. The count sets the `PARALLELISM_SIZE` environment variable in the engine's and the decoder's runner: the accelerators in each pod times the pods in each replica. The chart writes the entry from `ome.controller.acceleratorResources`, whose default lists only `nvidia.com/gpu`.
+
+A resource that the list leaves out counts as no accelerators: with the default list, a runner that requests only `amd.com/gpu` or `google.com/tpu` gets no `PARALLELISM_SIZE`, so an argument such as `--tp-size=$(PARALLELISM_SIZE)`, as in [Serve a multi-node model](../omenative/serve-a-multi-node-model.md), reaches the model server as that text, unexpanded. To serve on another vendor's accelerators, add their resource name — the exact name, no patterns:
+
+```yaml title="values.yaml"
+ome:
+  controller:
+    acceleratorResources:
+      - nvidia.com/gpu
+      - amd.com/gpu
+```
+
+!!! warning "Adding a name rolls the components that request it"
+    The list shapes pod templates, not only the controller. An engine or decoder whose runner requests a resource you add counted as having no accelerators, so its pod template carried no `PARALLELISM_SIZE`; once the name is on the list, OME renders the variable onto the template, and the changed template rolls the component: an [OMENative](../../concepts/omenative/overview.md) component mints a new revision and moves its Instances by its [update strategy](../../concepts/architecture/omenative-update-strategies.md), and in RawDeployment the Deployment replaces its pods. Removing a name rolls the components that gained the variable the same way. Schedule the change like a pod-template change, not like a config tweak.
+
+When a runner requests more than one listed resource, OME counts the first name in the list's order that the runner's resources carry, reading its limit before its request. The variable replaces any value you set in the runner, and [Serving runtimes](../../concepts/runtimes/serving-runtimes.md#the-engine-decoder-and-router) covers when OME leaves it unset. The manager itself has no default list: with the value empty, the chart leaves the entry out of the ConfigMap, and the manager falls back to recognizing only `nvidia.com/gpu` — an empty list doesn't turn recognition off, and a cluster whose values never set the list keeps NVIDIA-only recognition.
+
+Upgrade with your values file, as in [Step 1](#with-a-helm-value), and check the rendered entry:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.acceleratorResources}{"\n"}'
+```
+
+```output
+["nvidia.com/gpu","amd.com/gpu"]
+```
+
+The entry isn't in [the list that needs a restart](#tune-the-config-cache): the manager reads it through its config cache, so even a `kubectl` edit takes effect within the cache's TTL, and reaches each component when its InferenceService next reconciles. The upgrade's restart reconciles them all at once.
+
+Don't confuse the list with `ome.controller.quotaAcceleratorResources`, which sets the [`--accelerator-resources`](../../reference/operate-ome/controller-manager-flags.md#controllers) flag: that one scopes [quota admission](accelerator-quota.md#budget-other-accelerators), and a name added there changes no pod template.
+
 ## Add environment variables and files to the manager pod
 
 Three values under `ome.controller` add environment variables and files to the manager pod, such as proxy settings or a private CA bundle. All three default to empty lists, which leave the rendered Deployment unchanged:
