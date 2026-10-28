@@ -79,7 +79,9 @@ In a blue-green or rolling-update group, a failed Instance in any component mark
 
 ### Rolling update
 
-`maxSurge` and `maxUnavailable` set each component's own budget, as a count or a percentage, 25% by default. With the default `SurgeThenDrain` [update strategy](../architecture/omenative-update-strategies.md), a component starts a new Instance before it stops an old one, within `maxSurge`. With any other strategy, it moves within `maxUnavailable`. An edit that changes one component's pod settings, such as its runner image, must change the others' too, or the webhook rejects it (`RollingUpdateLockstepViolation`).
+`maxSurge` and `maxUnavailable` set each component's own budget, as a count or a percentage, 25% by default. With the default `SurgeThenDrain` [update strategy](../architecture/omenative-update-strategies.md), a component starts a new Instance before it stops an old one, within `maxSurge`. With any other strategy, it moves within `maxUnavailable`.
+
+An edit that changes some of the group's components and not others is admitted: the changed components roll out, and the rest keep their revision and roll nothing. The webhook warns, once per group, naming who moves and who stays: `spec.rollout.groups[0]: only the engine changes; the decoder keeps its revision and rolls nothing (RollingUpdatePartialChange)`. A component counts as changed when the edit re-renders its pod template — its image, but also an env, a command, a resource, a volume, a label or an annotation — while a change that re-renders no pods, such as its replica counts or its `lifecycle` block, draws no warning. The group rolls one member alone because any mix of its members' revisions is expected to serve together; when the engine-decoder wire protocol makes a mix unsafe, change it through [`pairingProtocol`](#change-the-engine-decoder-wire-protocol), which needs a blue-green or canary group.
 
 This group moves four engines and two decoders one Instance at a time, and keeps their 2:1 ratio:
 
@@ -238,9 +240,10 @@ When the webhook rejects a rollout, `kubectl` prints `admission webhook "inferen
 | `SoakNotHonored` | A `soak` outside a sequence. |
 | `OrderNotHonored` | A group sets `order`, which no progression applies. |
 | `InvalidRollingUpdateInteger`, `InvalidRollingUpdatePercent`, `ZeroBudgetPacingUnstartable` | A negative count, a string that isn't a percentage from `"0%"` to `"100%"`, or two budgets that resolve to zero. |
-| `RollingUpdateLockstepViolation` | An edit changes the pod settings of only some of a rolling-update group's components. |
 | `PairingProtocolChangeUncoordinated` | `pairingProtocol` changes tokens while the engine and the decoder roll out separately or by rolling update. |
 | `RolloutPolicyRefUnsupported` | A group sets `policyRef` while RolloutPolicy is off. |
+
+Not every reason in parentheses is a rejection: an edit that changes only some of a rolling-update group's components is admitted, with a `RollingUpdatePartialChange` warning. See [Rolling update](#rolling-update).
 
 [Canary progression](../../reference/rollouts/canary-progression.md#what-admission-rejects) lists the rules for canary groups.
 
