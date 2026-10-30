@@ -59,7 +59,7 @@ The `ome-control-plane` job reads the same port and path annotations, and adds t
 | [Alfred](../../concepts/scheduling/alfred.md) (alpha) | Its pods in `ome`. | Its ServiceMonitor: see [Alfred metrics and events](../../reference/scheduling/alfred-metrics-and-events.md). |
 | [OME scheduler](../../concepts/scheduling/ome-scheduler.md) (alpha) | Nothing: its metrics need HTTPS and authorization. | Its ServiceMonitor: see [Metrics](ome-scheduler.md#metrics). |
 
-[Servers and metrics](../../reference/operate-ome/controller-manager-flags.md#servers-and-metrics) describes the controller's metrics endpoint, and [Controller metrics](../../reference/rollouts/canary-analysis.md#controller-metrics) the canary metrics on it.
+[Servers and metrics](../../reference/operate-ome/controller-manager-flags.md#servers-and-metrics) describes the controller's metrics endpoint. [Controller metrics](../../reference/rollouts/canary-analysis.md#controller-metrics) covers the canary metrics on it, and [Watch deploys in the controller's metrics](#watch-deploys-in-the-controllers-metrics) its deploy-latency and status-write series.
 
 ## Step 1: Check the targets
 
@@ -260,6 +260,41 @@ kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.canaryA
 ```
 
 The upgrade also restarts the controller manager, which then uses the new addresses.
+
+## Watch deploys in the controller's metrics
+
+When Prometheus scrapes the controller manager — the bundled one does, and [Scrape OME's components](#scrape-omes-components) sets up your own — four series report how long your deploys take, where they spend the time, and whether the controller's status writes land. Only the leader records them, so filter by its `pod` label.
+
+| Metric | Labels | What it shows |
+| --- | --- | --- |
+| `ome_isvc_time_to_ready_seconds` | `namespace`, `isvc`, `deploy_kind` | A histogram of each deploy, end to end: the seconds from the InferenceService losing readiness — or from its creation, for a first deploy — to its Ready condition next turning True. |
+| `ome_omenative_pod_create_to_ready_seconds` | `namespace`, `isvc`, `component` | A histogram of each [Instance](../../concepts/omenative/instances.md) of an OMENative component turning Ready: the seconds from its earliest pod's creation to the promote. |
+| `ome_omenative_rollout_phase_duration_seconds` | `phase` | A histogram of how long a [rollout group](../../concepts/rollouts-and-traffic/rollout-groups.md) sat in a phase, recorded when the group leaves it. |
+| `ome_isvc_status_update_total` | `controller`, `result` | A counter of the controller's status flushes, by their terminal result. |
+
+The time to ready covers every InferenceService and spans the whole deploy — admission, runtime selection, model localization and pod start — because it's anchored on the service's own Ready condition, not on a pod that doesn't exist until those steps finish. It starts when the service last left Ready, at the prior Ready condition's `lastTransitionTime`, or at the service's creation when the condition has never been set, and it's recorded once per transition, after the status write that flips Ready commits. `deploy_kind` is read off the prior condition: `create` when it was `Unknown` or not yet set — a first deploy — and `update` when it was `False` — a rollout of a service that had been Ready. A first deploy that briefly reports `False` on its way up counts as `update`.
+
+The pod-create-to-ready histogram starts where the pods do, so the gap between the two histograms is the time a deploy spends before its pods exist. It covers a new Instance's own start — image pull, model localization, readiness — per component, such as `engine` or `decoder`.
+
+The phase histogram carries only the phase that the group leaves — a [`CoordinationPhase`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CoordinationPhase) value, such as `Waiting` or `Draining` — summed across InferenceServices, so its series count stays flat however many services roll. The dwell is measured from the group's `lastTransitionTime` in the service's `status.rolloutCoordination`. To single out the group behind a slow phase, read that status, or the counter `ome_omenative_rollout_group_transition_total`, whose labels name the InferenceService and the group: [Set up alerting](alerting.md#omemassrolloutfailure) queries it.
+
+The status-flush counter counts the writes of an InferenceService's status (`controller="isvc"`) and of an [InferenceReplica's](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica) (`controller="ir"`). A flush that retried past a 409 conflict and committed counts as `success`. `conflict` means the retries ran out and the next reconcile rewrites from fresh state: expect some under OMENative's status churn, but a climbing rate says writers are fighting over the object. `notfound` means the object was deleted mid-flush, and the write was dropped cleanly. `error` is any other failure.
+
+The histograms' buckets double from one second to about four and a half hours, so the quantiles stay usable from a warm pod restarting to a cold multi-hundred-gigabyte weight load. In queries, an InferenceService's namespace is in the label `exported_namespace`, because `namespace` holds the controller's. This one gives the deploys' 95th percentile over the last 30 minutes, first deploys and rollouts apart:
+
+```text
+histogram_quantile(0.95, sum by (le, deploy_kind) (rate(ome_isvc_time_to_ready_seconds_bucket[30m])))
+```
+
+And this one the share of status flushes that end in conflict:
+
+```text
+sum by (controller) (rate(ome_isvc_status_update_total{result="conflict"}[15m]))
+/
+sum by (controller) (rate(ome_isvc_status_update_total[15m]))
+```
+
+With the bundled Prometheus's 30-minute retention, the histograms hold only your newest deploys; for dashboards over days, [use your own](#use-your-own-prometheus). When an InferenceService is deleted, the manager removes its time-to-ready and pod-create-to-ready series; the phase histogram and the flush counter name no service, so they stay.
 
 ## Key values
 
