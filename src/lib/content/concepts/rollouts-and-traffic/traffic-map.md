@@ -25,9 +25,17 @@ ome:
 
 Routing then writes the maps. To publish them to your gateway, set the `endpoint` values in [Publish a global endpoint](../../guides/multi-cluster/publish-a-global-endpoint.md#step-1-configure-publishing). Until you do, `Published` is `False` with reason `Withdrawn`.
 
-OME writes a map, with the same name and namespace, for each InferenceService that sets `spec.placement`. The obsolete annotations `ome.io/accelerator-requirements` and `ome.io/cluster-selector` don't opt a service in: OME rejects them on write, and a stored InferenceService that still carries one gets no map, only a `validate placement intent:` error in the manager's log. See [When the map stops updating](#where-it-comes-from). To opt an InferenceService out, set `spec.routing.enabled: false`. Setting it to `true` doesn't turn routing on when the installation has it off.
+OME writes a map, with the same name and namespace, for each InferenceService that sets `spec.placement` — set at create and [fixed for the life of the service](#placement-is-fixed-at-create). The obsolete annotations `ome.io/accelerator-requirements` and `ome.io/cluster-selector` don't opt a service in: OME rejects them on write, and a stored InferenceService that still carries one gets no map, only a `validate placement intent:` error in the manager's log. See [When the map stops updating](#where-it-comes-from). To opt an InferenceService out, set `spec.routing.enabled: false`. Setting it to `true` doesn't turn routing on when the installation has it off.
 
 OME deletes the map when the InferenceService stops being routed, for example because you turn routing off. When you delete the InferenceService, the finalizer `ome.io/trafficmap-publisher` holds the map until the publisher has removed the route. Placement keeps the InferenceService's copies on the workload clusters until the map is gone.
+
+## Placement is fixed at create
+
+Choose a service's placement when you create it: `spec.placement.mode` is fixed for the life of the InferenceService. The InferenceService validator refuses an update that names another mode, adds a `spec.placement` block to a service created without one, or removes the block, with `spec.placement.mode is fixed for the life of the service and cannot change from Split to All; delete and recreate the service to place it another way`. The refusal names both modes, a missing block as `unset (no spec.placement block)` and a block without a mode as `unset` — the rule reads both as no mode. An update that keeps the mode isn't refused by this rule: the `clusterAffinity` terms and the `split` counts stay editable.
+
+The validator enforces the rule whether or not the installation is multi-cluster: adding `spec.placement` to a live service is refused on a single-cluster installation too. The one cluster without the validator is the control-plane cluster, where [the control-plane role turns it off](../../reference/operate-ome/controller-manager-flags.md#what-the-control-plane-role-turns-off): nothing refuses the edit there, and the mode is fixed all the same — delete and recreate the service there too.
+
+To move a running service onto multi-cluster placement, off it, or to another mode, delete the InferenceService and recreate it with the `spec.placement` you want. Placement reads only the control-plane cluster's InferenceServices, so a service that moves onto it from another cluster is recreated on the control-plane cluster, with the block.
 
 ## Read a TrafficMap
 
