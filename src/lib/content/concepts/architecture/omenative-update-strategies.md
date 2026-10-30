@@ -252,7 +252,7 @@ Each Instance runs the worker count that its own revision records, not the count
 
 Changing the pod template again while a [SurgeThenDrain](#surgethendrain) update is in flight records a newer revision and withdraws the one the update is moving to. OME doesn't keep driving a surge toward a withdrawn revision: a new pod built for it has nothing to promote to. Each single-pod surge OME ends this way records a Normal `SurgeAbandoned` event on the InferenceService, not a warning: the withdrawn revision never got the chance to fail.
 
-While a single-pod Instance's old pod still serves, OME abandons the surge at once, whether or not the new pod is ready:
+While a single-pod Instance's old pod still serves, OME abandons the surge at once, whether or not the new pod is ready, unless [the pairing drain gate keeps the new pod in rotation](#a-surge-kept-for-pairing):
 
 1. OME takes the new pod out of rotation if it's serving, then deletes it. A pod that never served is deleted with the chart's `ome.controller.lifecycle.abandonedReplacementGracePeriod`, 30 seconds, instead of its own `terminationGracePeriodSeconds`.
 2. Once the pod is gone, the Instance returns to `Ready` on the revision it runs. The old pod has kept serving throughout, so capacity never drops.
@@ -277,7 +277,25 @@ If the new pod is lost after that hand-over, OME doesn't rebuild it for the with
 - An old pod that isn't already terminating returns to rotation: OME lifts the hold that was draining it, and the Instance is `Ready` on the revision that pod runs. The message ends with `the replacement was lost after it took over serving and nothing is rebuilt at it; the source returns to rotation on revision …`.
 - With the old pod gone too, nothing is left to serve. The Instance re-enters `Failed` with no operation, and OME rebuilds it at the newest revision from scratch — a fresh start, not a repair. The message ends with `no source pod stands, so the Instance re-enters as a fresh start at revision …`.
 
-An update that already [failed](../omenative/instances.md#when-an-instance-fails) needs no abandoning: its next attempt commits to the newest revision. A multi-pod Instance follows the same rules with its whole replacement Instance, and its events use the reason `GangSurgeAbandoned` — a Normal event here, unlike the warning after a failed update. Only a withdrawn revision ends this way: a replacement gang that loses a member while its revision is still the roll's target is [rebuilt at once](#a-replacement-gang-lost-after-the-hand-over). A strategy change withdraws nothing: see [Changing the strategy mid-rollout](#changing-the-strategy-mid-rollout).
+An update that already [failed](../omenative/instances.md#when-an-instance-fails) needs no abandoning: its next attempt commits to the newest revision. A multi-pod Instance follows the same rules with its whole replacement Instance, and its abandonment events use the reason `GangSurgeAbandoned` — a Normal event here, unlike the warning after a failed update. Only a withdrawn revision ends this way: a replacement gang that loses a member while its revision is still the roll's target is [rebuilt at once](#a-replacement-gang-lost-after-the-hand-over). A strategy change withdraws nothing: see [Changing the strategy mid-rollout](#changing-the-strategy-mid-rollout).
+
+### A surge kept for pairing
+
+While a [wire protocol change](../rollouts-and-traffic/rollout-groups.md#change-the-engine-decoder-wire-protocol) rolls out, a serving new pod can be the only partner that the other component's serving pods have. The pairing drain gate then keeps the new pod in rotation, and OME finishes the surge instead of abandoning it: deleting the new pod would strand the pods that pair with it. The old pod drains, the Instance promotes on the withdrawn revision, and the Instance then starts a second update toward the newest one, as after any hand-over.
+
+As the old pod leaves rotation, OME records one Normal `SurgeKeptForPairing` event on the InferenceService, which names the withdrawn revision, the newest one and the gate's reason. For the engine of `mistral-pd` from that section — one engine, one decoder, moving to the token `kv-v2` — whose pod template changed again while the decoder already served on `kv-v2` and the engine's new pod served beside its old one:
+
+```bash
+kubectl get events -n mistral-demo --field-selector reason=SurgeKeptForPairing \
+  -o custom-columns=TYPE:.type,MESSAGE:.message
+```
+
+```output
+TYPE     MESSAGE
+Normal   OMENative component=engine instance=0 keeps its serving replacement on withdrawn revision mistral-pd-engine-5c21f3aa in rotation, promotes to that revision, and only then rolls toward mistral-pd-engine-8d47e2b1: pairing protocol transition to "kv-v2": draining the serving engine pods of cohort "kv-v2" would leave no pairable serving engine+decoder pair; holding the drain until cohort "kv-v2" serves on both Components
+```
+
+Only the `Pairing` gate keeps a surge this way, and only a new pod that's already serving: one that never entered rotation is nothing's partner, and OME abandons it as usual. The old pod's drain waits for its own gates as ever — under a pause, or while a gate holds that drain, both pods keep serving and the surge stays pinned. A multi-pod Instance's kept surge works the same with its whole replacement Instance, and uses the same `SurgeKeptForPairing` reason.
 
 ## Changing the strategy mid-rollout
 
