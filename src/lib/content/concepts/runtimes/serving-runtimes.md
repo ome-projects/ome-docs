@@ -183,7 +183,7 @@ Attach an [autoscaler policy](../serving/autoscaler-policy.md) and set `accelera
 OME sets two environment variables in the engine's and the decoder's runner:
 
 - `MODEL_PATH`, the path of the model's weights, when the InferenceService names a base model and the runner doesn't set it. Without a base model, a runner that passes `$(MODEL_PATH)`, as the catalog runtimes do, gets that text literally. Set `MODEL_PATH` in `env`, or load the weights another way; see [Reference a runtime explicitly](../../guides/deploy-models/reference-a-runtime-explicitly.md#step-2-name-the-runtime-in-the-inferenceservice).
-- `PARALLELISM_SIZE`, the GPUs in each pod times the pods in each replica, which is one plus `worker.size`. It replaces any value you set. OME leaves it unset for a runner without GPUs, or when `acceleratorConfig` sets `tensorParallelismOverride` for the chosen class. A runner is without GPUs when it requests none of the resource names on the operator's [`acceleratorResources` list](../../guides/operate-ome/configure-the-controller.md#recognize-other-accelerator-resources) — only `nvidia.com/gpu`, until the operator adds more — so a runner that requests `amd.com/gpu` or `google.com/tpu` counts as one until its resource is listed.
+- `PARALLELISM_SIZE`, the GPUs in each pod times the pods in each replica, which is one plus `worker.size`. It replaces any value you set. OME leaves it unset for a runner without GPUs, or when a [matched entry's](#per-accelerator-configuration) `acceleratorConfig` sets `tensorParallelismOverride` for the chosen class. A runner is without GPUs when it requests none of the resource names on the operator's [`acceleratorResources` list](../../guides/operate-ome/configure-the-controller.md#recognize-other-accelerator-resources) — only `nvidia.com/gpu`, until the operator adds more — so a runner that requests `amd.com/gpu` or `google.com/tpu` counts as one until its resource is listed.
 
 ### Placeholders
 
@@ -262,11 +262,11 @@ Since v1.3, `kubectl ome runtime explain --isvc llama-3-2-3b-instruct -n llama-d
 
 ### When you name a runtime
 
-OME uses the runtime that `spec.runtime.name` names even when it doesn't declare support for the model or list the InferenceService's accelerator class, so one runtime can serve many models. Since v1.3, the webhook admits such an InferenceService with a warning that begins `runtime "<runtime>" does not declare support for model "<model>"`. Unless the InferenceService is [pinned](runtime-revisions.md), OME also records a `RuntimeCompatibilityAdvisory` event.
+OME uses the runtime that `spec.runtime.name` names even when it doesn't declare support for the model or list the InferenceService's accelerator class, so one runtime can serve many models. Since v1.3, the webhook admits such an InferenceService with a warning that begins `runtime "<runtime>" does not declare support for model "<model>"`. Unless the InferenceService is [pinned](runtime-revisions.md), OME also records a `RuntimeCompatibilityAdvisory` event. The runtime's [per-accelerator settings](#per-accelerator-configuration) apply only through an entry that matches the model's format and framework, so a model that matches no entry gets the accelerator class without the tuning.
 
 The webhook still rejects an InferenceService whose runtime is disabled, or whose base model doesn't exist or is disabled. It checks that the runtime exists only when the InferenceService has a base model; without one, the InferenceService reports [`RuntimeNotFound`](#what-the-admission-webhook-checks) instead. [Reference a runtime explicitly](../../guides/deploy-models/reference-a-runtime-explicitly.md#troubleshooting) covers the webhook's messages, and [Troubleshoot an InferenceService](../../guides/troubleshoot/troubleshoot-an-inferenceservice.md#the-webhook-rejects-the-inferenceservice) covers the rest.
 
-Without `spec.model`, the runner loads the weights itself: OME skips all model work, including model volumes and `MODEL_PATH`; see [The runtime](../serving/inference-services.md#the-runtime).
+Without `spec.model`, the runner loads the weights itself: OME skips all model work, including model volumes and `MODEL_PATH`, and the runtime's [per-accelerator settings](#per-accelerator-configuration) don't apply, since there's no model to match an entry; see [The runtime](../serving/inference-services.md#the-runtime).
 
 !!! warning "Upgrading from v1.2.2"
     v1.2.2 ignores `kind` and looks in the InferenceService's namespace first. On v1.3, an InferenceService that names a ServingRuntime without `kind: ServingRuntime` switches to a ClusterServingRuntime of the same name, if one exists, and OME re-renders its pods unless it's [pinned](runtime-revisions.md). Before you upgrade, set `kind: ServingRuntime`, which v1.2.2 accepts.
@@ -434,6 +434,11 @@ The settings for a class can hold these fields:
 | `dataParallelSize`, `minMemoryPerBillionParams` | No effect. |
 
 OME applies these settings after it merges the runtime with the InferenceService, once it [picks a class](../../guides/deploy-models/select-accelerators.md#how-ome-picks-a-class) for the engine or the decoder, leaders and workers included. The router gets none. OME takes them from the entry that best matches the model's format and framework, counting only entries with `autoSelect: true` when OME chose the runtime.
+
+The settings exist only through that matched entry: without one, OME applies none of them, and nothing records the skip. The pods still get the class's [node selector, resources and node affinity](accelerator-classes.md#how-services-choose-a-class), but the runner keeps its own flags and environment, and OME sets `PARALLELISM_SIZE` as usual. That happens when:
+
+- The InferenceService has no `spec.model`: a [runtime-only InferenceService](../serving/inference-services.md#the-runtime) gets the class, but not the tuning.
+- No entry matches the model's format and framework, as when a [named runtime](#when-you-name-a-runtime) serves a model it doesn't declare. This match skips `modelArchitecture` and `quantization`, so a model that differs only there keeps the tuning.
 
 On a class that `acceleratorConfig` leaves out, like `nvidia-h100` here, the runner keeps its own flags. Spell each key exactly as the class's name: OME ignores a misspelled key without a warning. The [AcceleratorModelConfig](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorModelConfig) reference lists every field.
 
