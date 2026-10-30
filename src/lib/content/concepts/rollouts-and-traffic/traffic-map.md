@@ -208,6 +208,8 @@ The engine is the unit placement counts, so its shares are the split itself; a s
 - **The decoder follows the engine's shares.** Its count — `decoder.minReplicas`, or one decoder for each engine replica when it's unset — divides in proportion to the engine's shares when the decoder has no weights of its own, and also when its weights are proportional to the engine's: decoder weights `6` and `3` beside engine weights `2` and `1` still follow. Only weights in a different ratio split it independently.
 - **The router isn't divided at all** until a term sets `weights.router`. Without one, every cluster runs the service's full router policy, `router.minReplicas` to `router.maxReplicas` on each. When any term sets `weights.router`, placement divides `router.minReplicas` across the clusters by the router weights, so the validator requires a positive `router.minReplicas`.
 
+When `split.replicas` sets a count other than `engine.minReplicas`, a declared `decoder.minReplicas` and a divided `router.minReplicas` scale with it, in their declared ratio to `engine.minReplicas`, rounded up.
+
 A decoder split by its own weights gives the clusters different engine-to-decoder mixes. Each entry's `capacity.allocated` and `capacity.ready` then count what the cluster can serve in the service's own engine-to-decoder ratio: a cluster rich in engines but short of decoders counts fewer replicas than it has engines, and its weight drops with them.
 
 ### What the validator refuses
