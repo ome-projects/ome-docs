@@ -41,6 +41,8 @@ When only one class passes the constraints, every policy picks it, and the compa
 | `MostCapable` | The class with the most memory, memory bandwidth and TFLOPS, with memory counting most. |
 | `FirstAvailable` | The first class in the runtime's list that passes the constraints. |
 
+The `tier` fallback runs only when no passing class sets `spotPerHour`, `perHour` or `perMillionTokens`. `Cheapest` then picks the class with the lowest tier: `low` beats `medium`, which beats `high`, ignoring case. `tier` takes any text, and a value other than those three counts as `medium`, so `tier: premium` loses to `low`, beats `high` and ties `medium`. When two classes share the lowest tier, the one listed first in the runtime's `acceleratorClasses` wins.
+
 ## Step 1: Create the AcceleratorClasses
 
 OME doesn't install any AcceleratorClasses, so create one for each GPU type. If your cluster already has classes for your GPUs, skip this step, and use their names in place of `nvidia-h100` and `nvidia-h200`.
