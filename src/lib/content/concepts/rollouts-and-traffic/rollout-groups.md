@@ -114,6 +114,37 @@ Neither hold wedges the group below the replica counts it asks for. A component 
 
 The further-through hold yields to recovery only for a component that has lost capacity: one serving fewer pods than the Instances it has, not counting Instances a scale-up is still creating. Raising a component's replicas mid-rollout is not lost capacity. OME creates the extra Instances right away, outside these holds, but a component serving every Instance it had keeps the hold: when it's more than `tolerance` percent further through its rollout than the other, it waits at the `Ratio` gate until the other catches up, even though it now desires more. The serving-ratio band measures against the counts you ask for now, so the other component's updates can also wait at the same gate while the extra Instances come up; they go ahead once the new Instances serve.
 
+The webhook rejects a `maintainRatio` group whose drain-first member could never take its first step (`RatioDrainInfeasible`). A member drains first when it updates by `RecreatePod`, or by an in-place strategy on a multi-pod [Instance](../omenative/instances.md), which recreates the whole gang. The webhook projects its first drain — one Instance out of rotation — against each other member of the group, the router included, and rejects the spec when the drain would leave the member with nothing serving, or would move a pair's serving ratio more than twice the `tolerance` from the ratio the rollout starts at — the overshoot the serving-ratio band grants a single drain from a fully serving group. It sizes each member the way the rollout does — `minReplicas` when it's positive, else `maxReplicas`, else the [`defaultMinReplicas`](../../guides/operate-ome/set-replica-defaults.md) fill — and judges at the group's `tolerance`, or the default above when the group sets none.
+
+In this group, the decoder could never start its roll: one of its two pods out reads the serving ratio as 6:1, 100 points off the starting 6:2, and twice the tolerance of 20 caps a single drain at 40 points:
+
+```yaml
+spec:
+  engine:
+    minReplicas: 6
+    maxReplicas: 6
+    lifecycle:
+      updateStrategy:
+        type: InPlaceIfPossible
+  decoder:
+    minReplicas: 2
+    maxReplicas: 2
+    lifecycle:
+      updateStrategy:
+        type: RecreatePod
+  rollout:
+    groups:
+      - components: [engine, decoder]
+        rollingUpdate:
+          maxUnavailable: 1
+        maintainRatio:
+          tolerance: 20
+```
+
+The rejection names the ways out: `spec.rollout.groups[0]: the decoder rolls drain-first (RecreatePod) in a maintainRatio group, and its first step could never be admitted: with decoder 2 and engine 6, one decoder pod out reads decoder 1 : engine 6, 100 points off the starting ratio, and the ratio check lets a single drain go at most 40 points (twice the tolerance of 20), so the rollout would park for good; widen maintainRatio.tolerance to at least 50, give the decoder the SurgeThenDrain update strategy, add decoder replicas, or give the engine a SurgeThenDrain or RecreatePod update strategy, which hands the pacing to the batch step (RatioDrainInfeasible)`. The tolerance it suggests is the smallest that admits the drain. A drain-first member with a single replica is rejected at any tolerance — its only drain leaves it with nothing serving — with the same ways out except the tolerance.
+
+The webhook skips a group the [batches below](#batches-for-the-engine-and-the-decoder) pace: one that lists both the engine and the decoder, each with a declared strategy that counts its moves — `SurgeThenDrain`, `RecreatePod`, or an in-place strategy on multi-pod Instances. It reads only what the spec declares: a component with no `lifecycle.updateStrategy` surges by default at runtime but doesn't count here, and the webhook doesn't read the operator's `keepRatio` rule below either. So the last way out above is literal — declare `SurgeThenDrain` or `RecreatePod` on the engine or the decoder, and the batches pace the group instead. The rule runs on updates too: a scale-down or a strategy change that gives a group one of these shapes is refused the same way.
+
 ### Batches for the engine and the decoder
 
 OME paces a blue-green or rolling-update group that lists both the engine and the decoder in batches instead, whether or not it sets `maintainRatio`, when each of the two counts its moves in a step of its own:
@@ -240,6 +271,7 @@ When the webhook rejects a rollout, `kubectl` prints `admission webhook "inferen
 | `SoakNotHonored` | A `soak` outside a sequence. |
 | `OrderNotHonored` | A group sets `order`, which no progression applies. |
 | `InvalidRollingUpdateInteger`, `InvalidRollingUpdatePercent`, `ZeroBudgetPacingUnstartable` | A negative count, a string that isn't a percentage from `"0%"` to `"100%"`, or two budgets that resolve to zero. |
+| `RatioDrainInfeasible` | A `maintainRatio` group's drain-first member could never take its first drain: it would leave the member with nothing serving, or move a pair's serving ratio more than twice the `tolerance`. See [Rolling update](#rolling-update). |
 | `PairingProtocolChangeUncoordinated` | `pairingProtocol` changes tokens while the engine and the decoder roll out separately or by rolling update. |
 | `RolloutPolicyRefUnsupported` | A group sets `policyRef` while RolloutPolicy is off. |
 
