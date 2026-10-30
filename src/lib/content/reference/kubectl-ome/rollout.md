@@ -672,6 +672,8 @@ Besides the refusals [every action shares](guarded-actions.md#target-checks), `p
 - The controller recorded when the canary entered the step, and both sides of TRAFFIC match.
 - The controller finished the previous promote.
 
+A canary waiting in `Pending` for the step's new Instances is neither `Paused` nor `Promoting`, so `promote` refuses it in every dry-run mode: no flag skips the step's capacity wait. To advance the step without waiting for it, set the [`ome.io/rollout-promote-force`](../rollouts/canary-progression.md#force-a-step-past-its-capacity-wait) annotation by hand; no `kubectl ome` command sets it.
+
 It also refuses while the canary holds after a repin, which [`explain`](#explain) shows as HOLD `CanaryPreStep`. [Repin a drifted rollout plan](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#what-the-controller-does-next) shows how to release the hold.
 
 ### Examples {#promote-and-rollback-examples}

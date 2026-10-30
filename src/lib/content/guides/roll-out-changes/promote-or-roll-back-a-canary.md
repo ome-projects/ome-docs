@@ -16,7 +16,7 @@ since: v1.3
 
 ## How a canary step gates
 
-Each step moves `capacity`, a share of the component's Instances, to the new revision, and records `traffic`, a weight for it. The canary waits in the phase `Pending` until the step's new Instances are ready. Then the step's gate decides when it moves on:
+Each step moves `capacity`, a share of the component's Instances, to the new revision, and records `traffic`, a weight for it. The canary waits in the phase `Pending` until the step's new Instances are ready; `promote` can't end that wait, but [forcing the step](../../reference/rollouts/canary-progression.md#force-a-step-past-its-capacity-wait) can. Then the step's gate decides when it moves on:
 
 | Gate | The step sets | The step advances when | To move it on yourself |
 | --- | --- | --- | --- |
@@ -258,7 +258,7 @@ When `promote` or `rollback` refuses, it prints `error:` and the reason, changes
 `error: action refused: promote requires an active indefinite manual gate; analysis requires explicit override` means the canary isn't waiting at a gate that this `promote` can pass. Run `status` and check:
 
 - GATE: plain `promote` needs `Manual`, and `--override-analysis --yes` needs `Analysis`.
-- PHASE: the canary must be `Paused`, or `Promoting` at the last step. `Pending` means the step's new Instances are still starting. `Failed` means the ready timeout passed before they were ready, or while the step's analysis got only inconclusive results, or a canary pod kept dying after it served: see [When a step never becomes ready](#when-a-step-never-becomes-ready) and [When a canary pod keeps crashing](#when-a-canary-pod-keeps-crashing).
+- PHASE: the canary must be `Paused`, or `Promoting` at the last step. `Pending` means the step's new Instances are still starting. To advance the step without waiting for them, as when the cluster can't fit them, set the `ome.io/rollout-promote-force` annotation; no `promote` flag or other `kubectl ome` command does it, and it never moves a `Failed` canary. [Force a step past its capacity wait](../../reference/rollouts/canary-progression.md#force-a-step-past-its-capacity-wait) shows the command. `Failed` means the ready timeout passed before they were ready, or while the step's analysis got only inconclusive results, or a canary pod kept dying after it served: see [When a step never becomes ready](#when-a-step-never-becomes-ready) and [When a canary pod keeps crashing](#when-a-canary-pod-keeps-crashing).
 - An earlier `promote` that OME is still finishing: wait, and run `status` again.
 - HOLD `CanaryPreStep` in `explain`, after a repin: `promote` can't release this hold. Set the promote annotation by hand, as [Repin a drifted rollout plan](repin-a-drifted-rollout-plan.md#what-the-controller-does-next) shows.
 
