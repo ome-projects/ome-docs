@@ -25,7 +25,7 @@ A [TensorRT-LLM model](model-agent.md#tensorrt-llm-models) — `modelFormat.name
 
 Keep the `path` of shared models inside the models root, which is `modelAgent.hostPath` in the chart, `/mnt/data/models` by default. Models inside the root all use one copy on a node, and a ClusterBaseModel outside it fails. With the paths directly under the root, as in the steps, the copy is in `<models root>/_artifacts/<repository>/<commit>`.
 
-The agent checks the copy against the commit's list of files on Hugging Face after a download and after it restarts, and downloads damaged or missing files again. During a repair, the models that use the copy are `Failed` on the node, and the agent restores their state when it finishes. If Hugging Face stays unreachable for 30 minutes after an agent restart, the models that use the copy fail on that node, even with a pinned commit. Restart the agent pod on the node once Hugging Face is back.
+The agent checks the copy against the commit's list of files on Hugging Face after a download and after it restarts, and downloads damaged or missing files again, unless [a link it has no record of](#losing-the-nodes-records) still points to the copy. During a repair, the models that use the copy are `Failed` on the node, and the agent restores their state when it finishes. If Hugging Face stays unreachable for 30 minutes after an agent restart, the models that use the copy fail on that node, even with a pinned commit. Restart the agent pod on the node once Hugging Face is back.
 
 A download that stops partway, for example because the agent pod was replaced or evicted mid-download, doesn't fail the models that use the copy. Their state on the node stays `Updating`, and the next model task that needs the snapshot — usually as the new agent pod processes the node's models again — deletes the partial files and downloads the snapshot from the start. Only a download that ends in an error makes the models `Failed`, as in [Troubleshooting](#a-model-is-failed-on-a-node); an interruption never does, including [a delete that cancels the download](model-agent.md#how-a-delete-stops-a-download).
 
@@ -35,6 +35,14 @@ A partial copy whose download never finished goes the same way once no model wai
 
 !!! tip "Pin the commit"
     Nodes resolve `main` whenever they process a model, including after the agent restarts. Once `main` moves, models that a node processes again switch to the new commit, and the node downloads it. To keep your models on one snapshot, put the commit in the URI, as in `hf://Qwen/Qwen2.5-7B-Instruct@<commit>`.
+
+### Losing the node's records
+
+Which model uses which copy is part of the node's records: the agent keeps them in the node's ConfigMap from [Step 3 of Run the model agent](model-agent.md#step-3-check-where-a-model-is-ready), under keys that start with `artifact.huggingface.`. OME deletes that ConfigMap when the node is removed from the cluster. So a node that went away during maintenance and rejoined with its model disk intact still has its shared copies, but no records of them.
+
+The agent doesn't download those snapshots again. A model's task that finds the copy's directory, or the model's `path` still linked to it, checks the retained files against the commit's list. When they match, the agent adopts the copy as it is: it downloads no file, restores the copy and the model's link, and the node's other models come back the same way, each through its own task — the agent never guesses a model from a link's name. A model that was deleted while the records were gone isn't restored.
+
+When the check finds damaged or missing files instead, the agent refuses to replace them: the links that point at the copy are no longer in its records, and it won't overwrite files that users it doesn't know may read. The models fail on the node with `has unrecorded child symlinks; refusing to replace files`, and the files and the links all stay. The same protection holds during any repair when a link outside the records points at the copy, such as one made by hand. Restore the damaged files — the one case where you change `_artifacts` yourself, for example by copying the files from the copy on another node — and restart the agent pod: a check that passes restores the models, even when the unrecorded link remains.
 
 ## Step 1: Share a Hugging Face snapshot
 
@@ -185,6 +193,7 @@ The model's label on the node is `Failed`, and the agent's log has `task failed 
 | `shared Hugging Face artifact child path is required` | An OCI mirror has no `path`. |
 | `retry budget exhausted` | The model waited more than 30 minutes for the shared copy, for example while another model downloaded it or while Hugging Face was unreachable. |
 | `failed content validation` | The files downloaded for an `hf://` model don't match the commit's list of files. |
+| `shared Hugging Face parent <key> has unrecorded child symlinks; refusing to replace files` | The copy has damaged files, but links that aren't in [the node's records](#losing-the-nodes-records) still point to it, usually because the records were lost. The agent leaves the files and every link in place. |
 | `cannot replace child path <path> still used by another model` | You changed the model's source, commit or policy, and another model has the same `path`. Give this model its own `path`. |
 | `legacy HF artifact has descendants` | Other models on the node link to its files through v1.2.2's `ReuseIfExists`. Restart the agent pod once they have copies of their own, or give this model a new `path`. |
 
