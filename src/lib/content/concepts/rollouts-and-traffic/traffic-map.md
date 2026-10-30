@@ -52,7 +52,7 @@ NAME         MODE    PUBLISHED   ROUTABLE   OVERRIDE   REASON     AGE
 llama-chat   Split   True        True       False      Routable   3h
 ```
 
-`MODE` is the InferenceService's placement mode: `Single` runs it on one cluster, `All` on every cluster that admits it, and `Split` spreads its replicas across clusters. The other columns come from the map's [conditions](#conditions).
+`MODE` is the InferenceService's placement mode: `Single` runs it on one cluster, `All` on every cluster that admits it, and `Split` divides a fixed replica count across clusters, in the shares that [its placement weights set](#how-a-split-placement-divides-the-replicas). The other columns come from the map's [conditions](#conditions).
 
 [`kubectl ome get trafficmaps`](../../reference/kubectl-ome/get.md#trafficmaps-columns) lists the maps too, with their entry counts. `-o wide` adds the route and whether the publisher is current.
 
@@ -125,7 +125,7 @@ Treat the map as read-only: OME undoes a hand edit right away.
 
 OME works out an entry's weight in five steps:
 
-1. It counts the replicas that can serve: the lower of `capacity.allocated` and `capacity.ready`, times the cluster's capacity factor, which is 1 unless you set one. In [Reported mode](../../guides/multi-cluster/tune-routing-capacity-polling.md#reported-mode), a cluster with a `capacity.reportedWeight` uses it instead, as it is: no replica count caps it, and no factor scales it. For an InferenceService with an engine and a decoder, both counts are the lower of the two [components'](../serving/inference-services.md#components) counts.
+1. It counts the replicas that can serve: the lower of `capacity.allocated` and `capacity.ready`, times the cluster's capacity factor, which is 1 unless you set one. In [Reported mode](../../guides/multi-cluster/tune-routing-capacity-polling.md#reported-mode), a cluster with a `capacity.reportedWeight` uses it instead, as it is: no replica count caps it, and no factor scales it. For an InferenceService with an engine and a decoder, both counts are the lower of the two [components'](../serving/inference-services.md#components) counts; when [a Split's weights](#how-a-split-placement-divides-the-replicas) give the clusters different mixes, a decoder count is first scaled to its engine equivalent in the service's engine-to-decoder ratio, rounded down.
 2. An entry that a routing health probe gates gets 0, with one exception that [Routable](#routable) describes.
 3. It reduces the weights to their smallest whole-number ratio, so 4 and 2 become 2 and 1.
 4. An entry whose cluster placement is draining gets 0. See [A placement move drains a cluster first](#a-placement-move-drains-a-cluster-first).
@@ -133,14 +133,149 @@ OME works out an entry's weight in five steps:
 
 Divide a weight by the sum of the weights for its share: in the example, `cluster-a` gets two thirds of the requests.
 
-Four settings change the weights:
+Five settings change the weights:
 
 | Setting | What it does | How to use it |
 | --- | --- | --- |
+| Placement weights | In mode `Split`, set each cluster's share of the replicas — the counts the steps above start from. | [How a Split placement divides the replicas](#how-a-split-placement-divides-the-replicas) |
 | Capacity factor | Counts a cluster's replicas for more or less. | [Weight traffic for heterogeneous clusters](../../guides/multi-cluster/weight-traffic-for-heterogeneous-clusters.md) |
 | Capacity polling | Can lower a cluster's `capacity.allocated` to what the cluster reports — or, in Reported mode, replace its count with the report. | [Tune routing capacity polling](../../guides/multi-cluster/tune-routing-capacity-polling.md) |
 | Routing health probe | Holds a cluster at 0 after repeated failures. | [Configure routing health probes](../../guides/multi-cluster/routing-health-probes.md) |
 | Drain | Holds a cluster at 0, whatever its capacity. | [Drain a workload cluster](../../guides/multi-cluster/drain-a-workload-cluster.md) |
+
+## How a Split placement divides the replicas
+
+A `Split` placement runs a fixed number of replicas: [`split.replicas`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-SplitSpec), or the engine's `minReplicas` when `split.replicas` is unset. Placement divides that count across the matched clusters, and each cluster's share sets the replicas behind its entry's `capacity.allocated` and `capacity.ready` — the counts [the weights above follow](#how-ome-sets-the-weights). Every matched cluster gets an equal share until a [`clusterAffinity` term](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-ClusterAffinityTerm) sets [`weights`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-ClusterAffinityWeights). This service is split 2:1 and gets [the map above](#read-a-trafficmap), four replicas on `cluster-a` and two on `cluster-b`:
+
+```yaml title="llama-chat.yaml"
+apiVersion: ome.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama-chat
+  namespace: llama-demo
+spec:
+  model:
+    name: llama-3-1-8b-instruct
+  runtime:
+    name: srt-llama-3-1-8b-instruct
+  engine:
+    minReplicas: 6
+    maxReplicas: 6
+  placement:
+    policy: ClusterAffinity
+    mode: Split
+    clusterAffinity:
+      - matchFields:
+          - key: metadata.name
+            operator: In
+            values: [cluster-a]
+        weights:
+          default: 2
+      - matchFields:
+          - key: metadata.name
+            operator: In
+            values: [cluster-b]
+        weights:
+          default: 1
+```
+
+Weights are ratios, each 1 or more, with no upper bound: `4` and `2` divide the same way as `2` and `1`. A term weighs every cluster it matches, and once any term weighs a component, a cluster matched by several terms adds their weights — a matching term that gives the component none counts as 1. The shares come out in whole replicas: each cluster gets its share rounded down, and the replicas left over go to the largest remainders, ties to the first cluster by name. A share small enough to round to zero leaves the cluster with nothing, and its weights go unused — [the condition below](#the-placementcomponentshares-condition) names them. A share that `split.maxReplicasPerCluster` can't hold isn't trimmed to fit: placement refuses the whole plan.
+
+The accepted plan records the weights it divided by, so the shares don't follow a cluster relabeling that placement hasn't accepted: the engine's weight is in the cluster's [`allocation.weight`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CandidateAllocationStatus), and the other components' in `allocation.componentMatches`. To read the accepted weights and shares:
+
+```bash
+kubectl get inferenceservice llama-chat -n llama-demo \
+  -o jsonpath='{range .status.placement.candidates[*]}{.cluster} weight={.allocation.weight} replicas={.allocation.desiredReplicas}{"\n"}{end}'
+```
+
+```output
+cluster-a weight=2 replicas=4
+cluster-b weight=1 replicas=2
+```
+
+### Each component's share
+
+A `weights` block weighs each component by name, with `default` for every component the term doesn't name. For a component the block doesn't cover, a term falls back:
+
+| Component | A term's weight for it |
+| --- | --- |
+| Engine | `weights.engine`, then `weights.default`. |
+| Decoder | `weights.decoder`, then `weights.default`, then the engine's. |
+| Router | `weights.router`, then the engine's. |
+
+The engine is the unit placement counts, so its shares are the split itself; a service without an engine counts decoders instead. The other components divide their own counts over the clusters that hold engines, each of those clusters getting at least one — a count smaller than their number refuses the plan:
+
+- **The decoder follows the engine's shares.** Its count — `decoder.minReplicas`, or one decoder for each engine replica when it's unset — divides in proportion to the engine's shares when the decoder has no weights of its own, and also when its weights are proportional to the engine's: decoder weights `6` and `3` beside engine weights `2` and `1` still follow. Only weights in a different ratio split it independently.
+- **The router isn't divided at all** until a term sets `weights.router`. Without one, every cluster runs the service's full router policy, `router.minReplicas` to `router.maxReplicas` on each. When any term sets `weights.router`, placement divides `router.minReplicas` across the clusters by the router weights, so the validator requires a positive `router.minReplicas`.
+
+When `split.replicas` sets a count other than `engine.minReplicas`, a declared `decoder.minReplicas` and a divided `router.minReplicas` scale with it, in their declared ratio to `engine.minReplicas`, rounded up.
+
+A decoder split by its own weights gives the clusters different engine-to-decoder mixes. Each entry's `capacity.allocated` and `capacity.ready` then count what the cluster can serve in the service's own engine-to-decoder ratio: a cluster rich in engines but short of decoders counts fewer replicas than it has engines, and its weight drops with them.
+
+### What the validator refuses
+
+The InferenceService validator refuses a weights block that can't work. On the control-plane cluster, where [the control-plane role turns the validator off](../../reference/operate-ome/controller-manager-flags.md#what-the-control-plane-role-turns-off), the same checks run in placement instead: the service's `PlacementInputValid` condition turns `False` with reason `InvalidPlacementIntent` and the same message, and placement accepts no new plan.
+
+| The spec | The refusal |
+| --- | --- |
+| `weights` on a term in any mode but `Split`, `SplitByCapacity` included | `spec.placement.clusterAffinity[0]: weights is permitted only in Split mode` |
+| A weight for a component the service doesn't declare | `spec.placement.clusterAffinity[0].weights.decoder names a component the service does not declare` |
+| `weights.router` without a positive `router.minReplicas` | `spec.placement.clusterAffinity weights.router divides router.minReplicas across clusters; set a positive router.minReplicas` |
+| A `spec.placement.policy` other than `ClusterAffinity` | `spec.placement.policy must be ClusterAffinity; the ComponentAffinity policy was removed, set each component's weight in the weights block of each clusterAffinity term` |
+
+A term can also carry the deprecated scalar `weight`, which means `weights.default`. It's the one weight a manager without weights support reads, so a rollback to such a manager keeps the engine shares set there. Outside mode `Split` it's refused like the block, with `weight is permitted only in Split mode`. The API server itself rejects an empty `weights` block, a weight below 1, and the scalar next to the fields it duplicates, with `weight means weights.default; it may sit beside weights.decoder and weights.router, but not beside weights.default or weights.engine`.
+
+### The PlacementComponentShares condition
+
+On a `Split` InferenceService whose terms set `weights`, placement writes the condition `PlacementComponentShares` into the service's `status.conditions` whenever it has something to report: a decoder or a divided router, or a weight that goes unused. It's advisory — it never gates placement — and its status is `True`:
+
+| Reason | What it means |
+| --- | --- |
+| `FollowEngineShares` | Every divided component follows the engine's shares. |
+| `OwnWeights` | At least one component is split by its own weights. |
+
+The message names each component's rule, such as `decoder follows the engine shares` or `router is split by its own weights`, and ends with the weights that do nothing because their cluster got no engines, such as `unused because the cluster holds no engine: router weight on cluster-b`. OME removes the condition from a service whose terms set no weights, and from an engine-only service whose every weight is in use.
+
+For example, the same split for a service with a decoder that follows the engines and one router per cluster:
+
+```yaml
+spec:
+  decoder:
+    minReplicas: 6
+    maxReplicas: 6
+  router:
+    minReplicas: 2
+    maxReplicas: 2
+  placement:
+    policy: ClusterAffinity
+    mode: Split
+    clusterAffinity:
+      - matchFields:
+          - key: metadata.name
+            operator: In
+            values: [cluster-a]
+        weights:
+          default: 2
+          router: 1
+      - matchFields:
+          - key: metadata.name
+            operator: In
+            values: [cluster-b]
+        weights:
+          default: 1
+          router: 1
+```
+
+`default` covers the decoder, so it follows the engines: four decoders on `cluster-a`, two on `cluster-b`. The router weights divide `router.minReplicas` evenly, one router on each. The condition reports both rules:
+
+```bash
+kubectl get inferenceservice llama-chat -n llama-demo \
+  -o jsonpath='{range .status.conditions[?(@.type=="PlacementComponentShares")]}{.reason}: {.message}{"\n"}{end}'
+```
+
+```output
+OwnWeights: decoder follows the engine shares; router is split by its own weights
+```
 
 ## A placement move drains a cluster first
 
