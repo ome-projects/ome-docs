@@ -156,7 +156,7 @@ You hold and steer a rollout with the same fields the InferenceService controlle
 
 - `spec.paused: true` stops updates, new Instances and migrations; `spec.pauseMode: Freeze` also stops Instance repair. In-flight operations resume on unpause.
 - `spec.pacing.partition` keeps that many of the lowest-indexed Instances on their current revision; it must not exceed `spec.replicas`.
-- `spec.pacing.rollbackToRevision` rolls every Instance back to a named ControllerRevision of this replica.
+- `spec.pacing.rollbackToRevision` rolls every Instance back to a named ControllerRevision of this replica. A revision the replica doesn't control, or one that no longer exists, doesn't hold the rollout: the Instances roll to the current spec instead. See [A RollbackRevisionForeign warning](#a-rollbackrevisionforeign-warning).
 - `spec.minReadySeconds` makes a newly `Ready` pod wait before it counts as `Available`, which [paces drains and promotions](../roll-out-changes/pace-rollouts-with-min-ready-seconds.md). On a replica it's this top-level field: the webhook rejects the nested `spec.lifecycle.minReadySeconds`, which nothing reads here.
 
 Failed Instances work as on any OMENative component: set the `ome.io/reset-instances` annotation on the replica to [rebuild them](reset-failed-instances.md) once you've fixed the cause. Manual [Instance migration](../../concepts/omenative/migration-and-transient-scale.md) isn't available: it surges through a per-revision Service that only an InferenceService creates, so the webhook rejects a migration request on a standalone replica.
@@ -205,6 +205,15 @@ OME leaves the replica's existing pods as they are, and watches the referenced m
 ### A RuntimeCompatibilityAdvisory warning
 
 When `spec.runtimeRef` names a runtime that doesn't declare support for the model in `spec.modelRef`, the replica still renders, and OME records a Warning event that starts with `Runtime <runtime> does not declare support for model <model>` and ends with `proceeding because the runtime was named explicitly`. Serving may still fail at load time: check the runtime's `supportedModelFormats` against the model, or drop `spec.runtimeRef` and let OME select a supporting runtime.
+
+### A RollbackRevisionForeign warning
+
+When `spec.pacing.rollbackToRevision` names a ControllerRevision the replica can't roll back to, OME doesn't hold or fail the rollout: the replica rolls every Instance to the current spec, as if the field were unset. Two names are refused this way:
+
+- A revision this replica doesn't control: another workload's revision, or one with no controller owner reference. OME records a Warning event on the replica whose reason is `RollbackRevisionForeign` and whose message ends with `is not controlled by this replica; rolling to the spec instead`. The guard means a pacing block can never render another workload's pod templates.
+- A name that matches no ControllerRevision in the replica's namespace, such as a revision already deleted. This refusal is silent: the replica rolls to the spec with no event.
+
+The webhook doesn't check the name, so the refusal surfaces only in the event: read it with `kubectl describe inferencereplica llama-pool -n llama-demo`. To roll back, name one of the replica's own revisions — a ControllerRevision whose controller owner reference is the replica.
 
 ## Clean up
 
