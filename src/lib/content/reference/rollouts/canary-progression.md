@@ -182,7 +182,7 @@ The canary's phase is in `status.components.<component>.rolloutPhase` of the gro
 | `Canarying` | The step's new Instances are ready, and OME checks its gate. |
 | `Paused` | The canary waits at a gate before the last step, or holds after a [repin](../kubectl-ome/rollout.md#repin). |
 | `Promoting` | The last step's new Instances are ready, and the canary waits for its gate and for [`scaleDownDelaySeconds`](#fields). |
-| `Stable` | The canary completed. |
+| `Stable` | The canary completed, or ended with nothing to roll after [a revert](#while-a-canary-runs). |
 | `Failed` | A step ran past its [ready timeout](#readytimeout), a canary pod kept dying after it served (see [Crash-looping canary pods](#crash-looping-canary-pods)), or an analysis rollback found a [stable revision with no live Instance](canary-analysis.md#when-the-stable-revision-runs-no-instance). Whatever the reason, the park holds every member's roll where it stands: see [What a `Failed` canary holds](#what-a-failed-canary-holds). |
 | `RollingBack` | A rollback is moving Instances back to the stable revision. |
 | `RolledBack` | Every Instance is back on the stable revision. |
@@ -192,6 +192,7 @@ The canary's phase is in `status.components.<component>.rolloutPhase` of the gro
 | When | The canary |
 | --- | --- |
 | A change gives the group a newer revision | Starts again at step 1 with the newest revision, and keeps the same stable revision. A `Failed` canary starts again too, when the newest revision is neither its own nor the stable one: see [`readyTimeout`](#readytimeout). |
+| You push the old spec back before any Instance moved | Ends, and doesn't roll back: nothing moved, so there is nothing to return. When the spec goes back to the revision every member already runs — each component's full capacity ready on it, and no ready pod on another revision — OME removes the canary from the primary component's status, the phase reads `Stable`, a [weight](#traffic-split) a step had written moves onto that revision, and the Normal event `CanaryTargetReverted` says so: `engine canary toward revision bbbbbbbb ended: the spec returned to revision aaaaaaaa and every Instance already runs it, so nothing is left to roll`. Nothing is held: pushing the same change again starts a fresh canary toward it. The same revert ends a `Failed` park. One that lands after Instances have moved starts again at step 1 toward the restored revision instead, moving them back. |
 | You pause the rollout | Holds its step, but its clocks keep running, so it can advance or fail as soon as you resume. See [Pause and resume a rollout](../../guides/roll-out-changes/pause-and-resume-a-rollout.md). |
 | You set [`ome.io/rollout-promote-force`](#force-a-step-past-its-capacity-wait) to its revision hash | Stops waiting for the step's new Instances, opens the step's gate and moves one step, while capacity converges behind the advance. Paused, `Failed`, rolling back or rolled back, it doesn't move: OME removes the annotation and records a `CanaryForceIgnored` warning event instead. |
 | You run the alpha `kubectl ome rollout rollback`, or [its analysis](canary-analysis.md#how-a-sample-is-judged) rolls it back | Records 0% for the new revision at once, and moves every Instance back to the stable revision. The component stays on the stable revision until a change produces a revision other than those two. See [Roll back the canary](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary). |
@@ -273,6 +274,8 @@ The hold ends the three ways the message names:
 - A [rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) — `ome.io/rollout-rollback`, or the alpha `kubectl ome rollout rollback` — proceeds from the park and returns every Instance to the stable revision. The one park it can't lift is a canary parked because no ControllerRevision is retained for its stable revision: there OME removes the request and records a `CanaryRollbackIgnored` warning event, as [Rollout actions](../api/labels-and-annotations.md#rollout-actions) describes.
 - A resume — the `ome.io/rollout-resume` annotation set to the parked canary's revision hash; no `kubectl ome` command sets it — re-enters the canary at step 1 toward the same revision, with every gate running again. [The service has no recognized pause](../../guides/roll-out-changes/pause-and-resume-a-rollout.md#the-service-has-no-recognized-pause) shows it.
 - A change that gives the group a revision other than the parked canary's and the stable one starts a fresh canary at step 1 toward it.
+
+A revert is a fourth end: when the spec goes back to the stable revision and no Instance ever moved, the park holds a roll that no longer exists, so the record ends the way a live canary's does — the Normal event `CanaryTargetReverted`, and the phase reads `Stable`. See [While a canary runs](#while-a-canary-runs).
 
 A pause doesn't end the hold — a `Failed` canary stays parked through a pause and resume — `promote` refuses while it stands, and a [force](#force-a-step-past-its-capacity-wait) is removed without effect, with a `CanaryForceIgnored` warning event.
 
