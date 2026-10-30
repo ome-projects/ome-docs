@@ -199,7 +199,7 @@ The next change that gives the engine a new revision, such as a new image, rolls
 
 A rollout starts when a change gives a component in a group a new revision. OME then pins the plan into the InferenceService's `status.rollout.activeRun`. The rollout keeps that plan until it completes or rolls back. OME pins inline progressions the same way, even with the feature off. Edits to the policy, or to the group in `spec.rollout`, apply to the next rollout. When you edit a policy in use, the webhook warns you of this.
 
-While a rollout runs on an older plan, the InferenceService's `RolloutPlanDrift` condition is `True`, with the reason `PolicyNewerThanRun`, or `SpecNewerThanRun` after an edit to the group. To apply the edit now and keep the rollout's progress, [repin the plan](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md) with the alpha `kubectl ome rollout repin`.
+While a rollout runs on an older plan, the InferenceService's `RolloutPlanDrift` condition is `True`, with the reason `PolicyNewerThanRun`, or `SpecNewerThanRun` after an edit to the group, and the gauge [`ome_rollout_plan_drift`](#metrics) is `1`. To apply the edit now and keep the rollout's progress, [repin the plan](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md) with the alpha `kubectl ome rollout repin`.
 
 If another change gives a component a newer revision during a rollout, OME closes the rollout as `Superseded` and, while the group is still in `spec.rollout`, starts a new one with the current policy. Run [`kubectl ome rollout explain`](../../reference/kubectl-ome/rollout.md#explain-output-fields) to see the policy and generation that a rollout follows.
 
@@ -235,7 +235,7 @@ If OME can't resolve a group's plan when a rollout would start, it parks the rol
 | `ProviderUnbound` | A canary's `providerRef`, inline or from a policy, names a provider that isn't bound in `ome.metricProviders`. |
 | `PlanInvalid` | The progression that the group would run fails validation. |
 
-The InferenceService's `RolloutPlanReady` condition is then `False` with the reason, and OME records a `RolloutPlanParked` warning event. Fix the cause, or [give the group an inline progression](#inline-settings-win), and OME starts the rollout on its own.
+The InferenceService's `RolloutPlanReady` condition is then `False` with the reason, OME records a `RolloutPlanParked` warning event, and the park counts in [`ome_rollout_run_parked_total`](#metrics). Fix the cause, or [give the group an inline progression](#inline-settings-win), and OME starts the rollout on its own.
 
 ## Conditions and status
 
@@ -271,6 +271,19 @@ The InferenceService reports two conditions for its rollout plan:
 | `RolloutPlanDrift` | `True` with `PolicyNewerThanRun` or `SpecNewerThanRun` while the plan that a rollout would pin now differs from the pinned plan. `False` with `InSync` otherwise. |
 
 With `-o wide`, `kubectl get inferenceservice` adds PLAN-SOURCE, the pinned source of the first group, and PLAN-DRIFT, the status of `RolloutPlanDrift`.
+
+## Metrics
+
+Conditions answer for one InferenceService; to watch a fleet, the controller exports four series for pinned runs on its metrics endpoint, which the bundled Prometheus scrapes: see [Collect metrics](../../guides/operate-ome/metrics.md#omes-components). Inline progressions pin runs too, so the series appear while the feature is off.
+
+| Metric | Labels | What it measures |
+| --- | --- | --- |
+| `ome_rollout_run_opened_total` | `namespace`, `source` | Runs opened. `source` is `policy` when any group's pinned progression comes from a RolloutPolicy, and `inline` when none does. The suffix `-adopted`, as in `inline-adopted`, means OME found a rollout already in flight with no pinned run and adopted it in place: the plan pins at the current step, with no restart and no traffic movement. |
+| `ome_rollout_run_closed_total` | `namespace`, `outcome` | Runs closed, by `outcome`: `Completed`, `RolledBack` or `Superseded`. |
+| `ome_rollout_run_parked_total` | `namespace`, `reason` | Parks, with the reasons of [When a rollout parks](#fail-closed-parking). It counts transitions into the parked state, not the reconciles while parked. |
+| `ome_rollout_plan_drift` | `namespace`, `isvc` | `1` while the plan that a rollout would pin now differs from the pinned plan, so [an edit waits](#when-the-reference-is-resolved). OME deletes the series when the drift clears, so an absent series means in sync. |
+
+Alert on `ome_rollout_run_parked_total` to catch a new revision that parking holds, and on `ome_rollout_plan_drift` to catch an edit that sits inert until the next run or a [repin](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md). Repins have their own counter, `ome_rollout_repin_total`, which [Step 3: Check the result](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#step-3-check-the-result) of the repin guide describes. To see how runs end across the fleet, sum `ome_rollout_run_closed_total` by `outcome`.
 
 ## Delete a policy
 
