@@ -248,19 +248,46 @@ Once a node has the weights, the agent reads the model's `config.json`, or `mode
 | `modelFramework` | `transformers` with the config's `transformers_version`, or `diffusers`. |
 | `modelParameterSize` | The number of parameters, such as `3.21B`. |
 | `maxTokens` | The context length. |
-| `modelCapabilities` | What the model does, such as `TEXT_TO_TEXT`, `IMAGE_TEXT_TO_TEXT`, `EMBEDDING` or `TEXT_TO_IMAGE`. Some models get several. |
+| `modelCapabilities` | What the model does, such as `TEXT_TO_TEXT` or `AUDIO_TO_TEXT`. Some models get several. See [Model capabilities](#model-capabilities). |
 | `quantization` | `fp8`, `fbgemm_fp8`, `int4`, `nvfp4`, `mxfp4` or `compressed-tensors`. 4-bit GPTQ and AWQ models get `int4`. Other methods and unquantized models leave it empty. |
 | `modelConfiguration` | A summary of the config, with keys such as `context_length` and `torch_dtype`. |
 | `diffusionPipeline` | The pipeline's components, from `model_index.json`. |
 
 OME fills in only empty fields, so a value that you set always wins. For `pvc://` models, a metadata Job fills in the same fields, except `modelConfiguration` and `diffusionPipeline`.
 
+### Model capabilities
+
+OME detects `modelCapabilities` with an ordered list of rules over the model's files. The first rule that recognizes the model writes its whole list of values, so a multimodal model gets several at once, and the rules after it don't run. The agent and the `pvc://` metadata Job run the same rules.
+
+The rules read the pipeline class — `_class_name` in `model_index.json`, such as `FluxPipeline` — and, from `config.json`, the `model_type` and the first entry of `architectures`, the architecture below. `model_type` matches ignore case; the others are case-sensitive. The first matching row fills the field:
+
+| The model's files | `modelCapabilities` |
+| --- | --- |
+| A pipeline class that contains `ImageEdit`, `Pix2Pix`, `Img2Img` or `Inpaint` | `IMAGE_TEXT_TO_IMAGE` |
+| A pipeline class that contains `TextToVideo` or `T2V` | `TEXT_TO_VIDEO` |
+| Any other pipeline class that contains `Video` | `IMAGE_TEXT_TO_VIDEO` |
+| A pipeline class that contains `Image`, `Pix`, `StableDiffusion` or `Flux` | `TEXT_TO_IMAGE` |
+| Any other `model_index.json` | The empty entry |
+| A `model_type` that contains `nemotronh_nano` | `IMAGE_TEXT_TO_TEXT` and `TEXT_TO_TEXT`, plus `AUDIO_TEXT_TO_TEXT` and `VIDEO_TEXT_TO_TEXT` when it contains `nemotronh_nano_omni` |
+| The architecture `NemotronH_Omni_Reasoning_V3` with a vision key and `"sound_config": null` | `TEXT_TO_TEXT`, `IMAGE_TEXT_TO_TEXT` and `VIDEO_TEXT_TO_TEXT` |
+| An architecture with the word `Omni` | `TEXT_TO_AUDIO`, `IMAGE_TEXT_TO_AUDIO`, `VIDEO_TEXT_TO_AUDIO`, `AUDIO_TO_TEXT` and `AUDIO_TO_AUDIO` |
+| A `model_type` that contains `inkling_mm_model` | `TEXT_TO_TEXT` and `AUDIO_TEXT_TO_TEXT` |
+| A vision key in `config.json`: `vision_config`, `mm_vision_tower`, `image_token_id`, `image_token_index` or `img_processor` | `IMAGE_TEXT_TO_TEXT` |
+| An architecture that ends in `ForCTC` or `ForSpeechToText`, or is `WhisperForConditionalGeneration` | `AUDIO_TO_TEXT` |
+| An architecture with the word `Bert`, `Embedding` or `Sentence`, or the architecture `MistralModel` with `model_type` `mistral` | `EMBEDDING` |
+| An architecture that ends in `ForCausalLM`, `ForConditionalGeneration` or `LMHeadModel` | `TEXT_TO_TEXT` |
+| None of the above | The empty entry |
+
+An architecture has a word when it appears as a CamelCase or underscore-separated segment: `Qwen3Omni` has the word `Omni`, and `Demonic` doesn't. The order carries intent: a vision model whose architecture ends in `ForConditionalGeneration` gets `IMAGE_TEXT_TO_TEXT` from the vision-key row, not the fallback `TEXT_TO_TEXT`, and `NemotronH_Omni_Reasoning_V3` without `"sound_config": null` falls through to the `Omni` row's audio values.
+
+When no row matches, OME writes the empty entry — `modelCapabilities: [""]` — and you [set the field yourself](#set-the-metadata-yourself). The field is a list of plain strings, which OME doesn't validate, so prefer the values in the table; the API also names `RERANK` and `AUDIO_TRANSLATION`, which no rule writes, and lists the older task names `TEXT_GENERATION`, `TEXT_SUMMARIZATION`, `TEXT_EMBEDDINGS`, `TEXT_RERANK`, `CHAT` and `VISION` as deprecated.
+
 ### Set the metadata yourself
 
 Set these fields yourself:
 
 - `modelFormat` and `modelFramework`, for `vendor://` models and models with unreadable files, such as a directory without `config.json`. These models still become `Ready`, but OME needs both fields to choose a runtime.
-- `modelCapabilities`, when OME doesn't recognize the architecture and leaves an empty entry.
+- `modelCapabilities`, when [no capability rule matches the model](#model-capabilities) and OME leaves an empty entry.
 - `displayName`, `version`, `vendor` and `apiCapabilities`, which OME never fills in.
 
 To skip reading a model's files, add the annotation `ome.oracle.com/skip-config-parsing: "true"`. OME then keeps only the metadata you set. For a `pvc://` model, the metadata Job ignores the annotation and fills in the fields you left empty. This BaseModel sets the metadata that the runtime `srt-llama-3-2-3b-instruct` supports:
