@@ -260,9 +260,29 @@ The manager reads the entry once, when it starts, and the upgrade's restart appl
 kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep 'OMENative scale-down wave'
 ```
 
-The lines give the configured and the resolved budget (`configuredPodBudget` and `podBudget`), the component's footprint (`podFootprint`), and the Instances the wave drives (`activeInstances`) and holds back (`deferredInstances`).
+The lines give the configured and the resolved budget (`configuredPodBudget` and `podBudget`), the component's footprint (`podFootprint`), and the Instances the wave drives (`activeInstances`) and holds back (`deferredInstances`). The manager also publishes these signals as metrics: see [Watch a scale-down in the metrics](#watch-a-scale-down-in-the-metrics).
 
 Both batch sizes must be at least 1. The percentage form is digits and a `%`, from `"1%"` to `"100%"`: no sign, no spaces, no decimals — and a quoted `"100"` fails where a plain `100` works, since the manager reads every string as a percentage. The interval must be a positive duration such as `"5s"`. On any other value, the manager exits at startup with `Failed to initialize lifecycle scale configuration`, whose error names the value and the rule, such as `validate lifecycle.scaleDownPodBatchSize: invalid lifecycle.scaleDownPodBatchSize "101%" must be between 1% and 100%`, and the rollout doesn't finish: see [Troubleshooting](#the-manager-rollout-doesnt-finish). To remove a bound instead, set its field to `null`, and the chart leaves it out of the entry: without a batch size, one pass creates or deletes everything at once, and without the interval, the manager doesn't poll deletes in flight — watch events, and the exact deadlines of the [force-delete escalation and the teardown deadline](../omenative/recover-stuck-deletions.md), still wake it.
+
+### Watch a scale-down in the metrics
+
+If Prometheus scrapes the manager, as [Collect metrics](metrics.md) sets up, five series report the same scale-down signals, with history the log lines don't keep. Only the leader records them, so filter by its `pod` label. Cost counts as above: an Instance's remaining pods, or `1` when only its cleanup still runs.
+
+| Metric | Labels | What it shows |
+| --- | --- | --- |
+| `ome_omenative_scale_down_active_pods` | `namespace`, `isvc`, `component` | A gauge: the summed cost of the batch's Instances — the delete work the current batch drives. |
+| `ome_omenative_scale_down_deferred_instances` | `namespace`, `isvc`, `component` | A gauge: the eligible Instances outside the batch, waiting for the passes that follow. |
+| `ome_omenative_scale_down_batch_pods` | `component` | A histogram of each batch's cost, recorded once, when the batch is admitted. |
+| `ome_omenative_scale_down_instance_duration_seconds` | `component` | A histogram of each Instance's removal: the seconds from its batch admitting the delete to the Instance leaving the component's status, its pods gone and its cleanup done. Time spent deferred doesn't count. |
+| `ome_omenative_scale_down_oversized_batch_total` | `component` | A counter of the batches that admit one Instance larger than the resolved budget — the first-Instance exception above. |
+
+The two gauges name the InferenceService in `isvc`, so they locate the component whose Instances wait. Both return to `0` when the component has no scale-down in flight, and the manager removes their series when the component is deleted. The histograms and the counter carry only the component type — `engine`, `decoder` or `router` — summed across InferenceServices, so to single out one service, read the gauges, or the log line above.
+
+When a scale-down is slower than you expect, the series say which lever to pull:
+
+- `ome_omenative_scale_down_active_pods` sits at the resolved budget while `ome_omenative_scale_down_deferred_instances` stays above `0`: the budget is the pace. Raise `scaleDownPodBatchSize`.
+- `ome_omenative_scale_down_oversized_batch_total` rises: an Instance cost more than the whole budget, so its batch was that one Instance, alone. The component scales down an Instance at a time however you set the budget — raise it to hold whole Instances, or use the percentage form, which grows with the component.
+- `ome_omenative_scale_down_instance_duration_seconds` runs long: the batching isn't the brake — each Instance's own removal is slow, with pods stuck `Terminating` or a drain that doesn't end. See [Recover stuck deletions](../omenative/recover-stuck-deletions.md).
 
 ## Pace a prefill-decode roll
 
