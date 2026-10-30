@@ -122,7 +122,7 @@ Set the agent's values under `modelAgent` in your values file, and upgrade the r
 | `health.port` | `8080` | The probes' port. Leave it at `8080`, the port the agent listens on. |
 
 !!! warning "A change to the agent's pod restarts every agent"
-    The DaemonSet replaces the agent pods one node at a time. Each new agent checks its models again. Until it's done, their labels are `Updating`, and OME places no new serving pods for them on that node. Pods that already run there keep running.
+    The DaemonSet replaces the agent pods one node at a time. Each new agent checks its models again. Until it's done, their labels are `Updating`, and OME places no new serving pods for them on that node. Pods that already run there keep running. An `hf://` download that the replacement interrupts isn't lost: the new agent re-fetches only what's missing, as [What an interrupted `hf://` download keeps](#interrupted-hf-downloads) describes.
 
 ### Environment variables
 
@@ -157,6 +157,16 @@ The agent doesn't retry a failed model by itself. It tries again when [its pod r
 When two `oci://` models name the same files, one downloads them, and the other reuses them once they're ready, or downloads them itself after 30 minutes. The waiting model re-checks every 30 seconds on the high-priority worker, so the reuse waits only for the other model's download, not for a free download worker.
 
 With `storage.downloadPolicy: ReuseIfExists`, models that use the same Hugging Face files share one copy on each node: see [Share Hugging Face artifacts](shared-hf-artifacts.md).
+
+### What an interrupted `hf://` download keeps {#interrupted-hf-downloads}
+
+With the default `downloadPolicy`, `AlwaysDownload`, an interrupted `hf://` download keeps the files that finished. When the node's agent pod is replaced or evicted mid-download, they stay in the model's `path`, the model's label on the node stays `Updating`, and nothing marks the model `Failed` or deletes the partial download.
+
+The next pass re-fetches only what's missing. The new agent pod checks the node's models again, the download queues up again, and it skips every file that's already in the `path` at its full size, without reading it again. The files that were mid-transfer — up to [`MAX_CONCURRENT_DOWNLOADS`](#environment-variables) of them — start over from their first byte: the agent can't resume partway through a file. So losing an agent pod near the end of a long download costs those files, not the finished ones.
+
+That holds as long as the retry downloads the same commit. A node [resolves an unpinned revision again](../../concepts/models/base-models.md#pin-the-hf-revision) every time it processes the model, so once `main` moves, the retry downloads the newly resolved commit instead. To keep every pass on one snapshot, pin the commit in the URI, as in `hf://Qwen/Qwen2.5-7B-Instruct@<commit>`.
+
+This is the contract of the default policy, where each model's copy is its own. For the shared copy that `ReuseIfExists` models use, see [Share Hugging Face artifacts](shared-hf-artifacts.md#how-sharing-works).
 
 ### How a delete stops a download
 
@@ -264,7 +274,7 @@ When the model is `Failed`, read the log of the agent on a node where its label 
 | A `modelpack://` model can't be pulled: no `llmman serve` daemon answers at `LLMMAN_HOST`, or the `llmman` binary is missing. See [ModelPack models](#modelpack-models). | `Failed to pull ModelPack artifact for model` |
 | Hugging Face answered with an error or a rate limit. | The error |
 
-After you fix the cause, restart the agent pod on the node, as in [A model stays `Updating`](#a-model-stays-updating). For an `oci://` model, the new agent downloads only the mismatched files.
+After you fix the cause, restart the agent pod on the node, as in [A model stays `Updating`](#a-model-stays-updating). For an `oci://` model, the new agent downloads only the mismatched files. For an `hf://` model, it skips the files already in the `path` at their full size and downloads the rest: see [What an interrupted `hf://` download keeps](#interrupted-hf-downloads).
 
 ### A model stays `Updating`
 
