@@ -21,6 +21,8 @@ The default policy, `AlwaysDownload`, puts a copy of the files in each model's `
 
 A snapshot is a Hugging Face repository at one commit. A node resolves the revision after `@` in an `hf://` URI, `main` by default, to its commit. Models that resolve to the same repository and commit share a copy, and so can [OCI mirrors](#share-oci-mirrors-of-hugging-face-snapshots) of that snapshot. Models with other sources ignore `downloadPolicy`.
 
+A [TensorRT-LLM model](model-agent.md#tensorrt-llm-models) — `modelFormat.name: tensorrtllm` — doesn't share, whatever its `downloadPolicy`. The agent gives it a copy of its own at its `path`: an `hf://` model downloads the whole snapshot, and an OCI mirror downloads only the objects built for its node's GPU. The model becomes `Ready` all the same, so only the missing link at its `path` shows that it isn't sharing. Only a serving model is excluded: a model's type is `Serving` unless `additionalMetadata.type` in its spec sets another value, and a TensorRT-LLM model with another type shares like any other model.
+
 Keep the `path` of shared models inside the models root, which is `modelAgent.hostPath` in the chart, `/mnt/data/models` by default. Models inside the root all use one copy on a node, and a ClusterBaseModel outside it fails. With the paths directly under the root, as in the steps, the copy is in `<models root>/_artifacts/<repository>/<commit>`.
 
 The agent checks the copy against the commit's list of files on Hugging Face after a download and after it restarts, and downloads damaged or missing files again. During a repair, the models that use the copy are `Failed` on the node, and the agent restores their state when it finishes. If Hugging Face stays unreachable for 30 minutes after an agent restart, the models that use the copy fail on that node, even with a pinned commit. Restart the agent pod on the node once Hugging Face is back.
@@ -153,6 +155,8 @@ spec:
 
 The agent trusts the annotations, and checks the files against object storage, not Hugging Face. So name the snapshot that the objects came from, and keep the objects of a mirrored commit unchanged. [Credentials](../../concepts/models/base-models.md#credentials) covers how the agent authenticates to OCI.
 
+The annotations don't make a TensorRT-LLM mirror share: a model with `modelFormat.name: tensorrtllm` [doesn't share](#how-sharing-works), and downloads [the objects for its node's GPU](model-agent.md#tensorrt-llm-models) into its own `path`.
+
 Changing only `downloadPolicy` doesn't make the nodes process an existing `oci://` model again. Set the policy and the annotations when you create the model, or [move the model](#move-an-existing-model-onto-the-shared-copy) to a new `path` in the same edit.
 
 ## Troubleshooting
@@ -165,8 +169,9 @@ The `readlink` command from [Step 2](#step-2-check-the-shared-copy-on-the-node) 
 - The model's `path`, or another shared model's `path`, is outside the models root.
 - An OCI mirror's annotations are missing or invalid, or its object path doesn't end with them.
 - The node couldn't resolve the revision to a commit, for example because Hugging Face was unreachable. The [agent's log](model-agent.md#troubleshooting) has `Cannot resolve HF revision for`, with the model and the error.
+- The model is a [TensorRT-LLM model](model-agent.md#tensorrt-llm-models), with `modelFormat.name: tensorrtllm`. It [doesn't share](#how-sharing-works), whatever its `downloadPolicy`.
 
-Fix the cause, then [move the model](#move-an-existing-model-onto-the-shared-copy) to a new `path`: the files already in its `path` stay its own.
+Fix the cause, then [move the model](#move-an-existing-model-onto-the-shared-copy) to a new `path`: the files already in its `path` stay its own. A TensorRT-LLM model is the exception: its copy is how it works, and a new `path` gets another copy, so leave it.
 
 ### A model is `Failed` on a node
 
