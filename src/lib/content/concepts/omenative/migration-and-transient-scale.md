@@ -107,7 +107,7 @@ spec:
 
 ## Deadline and caps {#deadline}
 
-Each request has a deadline: the time OME accepts it, plus the component's `lifecycle.instanceReadyTimeout`, or OME's cluster-wide `instanceReadyTimeout` when the component sets none. The clock runs while a request waits. A paused rollout holds every migration until you resume it, and a request whose deadline passes during the pause fails when you do.
+Each request has a deadline: the time OME accepts it, plus the component's `lifecycle.instanceReadyTimeout`, or OME's cluster-wide `instanceReadyTimeout` when the component sets none. The clock runs while a request waits. A [paused rollout](../../guides/roll-out-changes/pause-and-resume-a-rollout.md) holds every migration until you resume it, and stops the clock: OME clears the deadline of every open request while the component is paused, so none passes during the pause, and when you resume, each request gets a fresh deadline, a full timeout from that point.
 
 A request that misses its deadline fails with a `MigrationExpired` event. OME removes the surge, if there is one, and the source goes back to `Ready`, or to `Failed` if its pods aren't ready. A [parked](#parked-migrations) migration is the exception: with no `forceDelete` policy, it outlives its deadline.
 
