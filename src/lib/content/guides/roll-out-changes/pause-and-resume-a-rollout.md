@@ -33,7 +33,7 @@ A pause holds the rollout of an [InferenceService](../../concepts/serving/infere
 | Repairs | At `true`, repairs go on as the [restart policy](../../concepts/omenative/instance-restart-policy.md) sets them. At `freeze`, no repair starts, and one under way finishes. The kubelet still restarts containers at either depth. |
 | Scale-down and deletion | Go ahead. |
 
-An Instance's [readiness deadline](../omenative/set-instance-readiness-deadlines.md) stops during the pause, and restarts in full when you resume. Other clocks keep running and act as soon as you resume. A canary whose timed gate ran out advances, and a canary step still waiting for its new Instances fails if its ready timeout passed. A migration past its deadline fails, and so does an attempt whose pod stayed unschedulable or stuck past its grace period.
+An Instance's [readiness deadline](../omenative/set-instance-readiness-deadlines.md) stops during the pause, and restarts in full when you resume, and a migration request's [deadline](../../concepts/omenative/migration-and-transient-scale.md#deadline) stops and restarts the same way. Other clocks keep running and act as soon as you resume. A canary whose timed gate ran out advances, and a canary step still waiting for its new Instances fails if its ready timeout passed. An attempt whose pod stayed unschedulable or stuck past its grace period fails too.
 
 !!! warning "Deleted pods wait for the resume"
     Under the restart policy `None`, the default for single-pod Instances, a pod that's deleted during a pause, for example by a node drain, isn't replaced until you resume. Until then, a single-pod Instance that lost its pod shows `Pending`.

@@ -205,7 +205,7 @@ The `op hold` row's `waiting=` shows only a token the CLI recognizes: `QuotaExce
 
 The default table cuts long values, so the `op timing`, `failure`, `migration` and `pod` rows often lose their last fields. `-o wide` prints every field in full, one to a row. In a `pod` row, `ready` is the pod's Kubernetes Ready condition, and `serving` is the `ome.io/serving` readiness gate that OME sets. `deleting` is `true` when the pod has a deletion timestamp: [Recover stuck deletions](../../guides/omenative/recover-stuck-deletions.md) covers pods that stay that way. Text that looks like a credential shows as `[REDACTED]`.
 
-A migration request can wait in the `Accepted` phase, and its [deadline](../../concepts/omenative/migration-and-transient-scale.md#deadline) keeps running while it waits, even while the rollout is paused. [`kubectl ome migration`](migration.md) inspects and requests migrations.
+A migration request can wait in the `Accepted` phase, and its [deadline](../../concepts/omenative/migration-and-transient-scale.md#deadline) keeps running while it waits. A paused rollout is the exception: OME clears the deadline while the pause lasts, and sets a fresh one, a full timeout, when you resume. [`kubectl ome migration`](migration.md) inspects and requests migrations.
 
 ### Examples {#status-examples}
 

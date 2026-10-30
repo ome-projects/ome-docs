@@ -285,7 +285,7 @@ The parenthesis is the failure that parked the Instance, and the end of the mess
 
 The same request proceeds once the Instance is `Ready` again, but its deadline keeps running while it waits, so a repair that outlasts it still fails the request.
 
-Without one of those messages, the request is waiting its turn, for one of the causes in [When a request waits or fails](../../concepts/omenative/migration-and-transient-scale.md#what-refuses-a-migration-request). Pausing the service holds its migrations, but their deadlines keep running, so one whose deadline passes fails when you resume.
+Without one of those messages, the request is waiting its turn, for one of the causes in [When a request waits or fails](../../concepts/omenative/migration-and-transient-scale.md#what-refuses-a-migration-request). Pausing the service holds its migrations and stops their deadlines: OME clears each open request's deadline while the pause lasts, and when you resume, sets a fresh one, a full timeout from that point.
 
 ### The migration stays Draining
 
