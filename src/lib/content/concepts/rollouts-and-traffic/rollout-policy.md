@@ -201,9 +201,23 @@ A rollout starts when a change gives a component in a group a new revision. OME 
 
 While a rollout runs on an older plan, the InferenceService's `RolloutPlanDrift` condition is `True`, with the reason `PolicyNewerThanRun`, or `SpecNewerThanRun` after an edit to the group. To apply the edit now and keep the rollout's progress, [repin the plan](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md) with the alpha `kubectl ome rollout repin`.
 
-If another change gives a component a newer revision during a rollout, OME closes the rollout as `Superseded` and starts a new one with the current policy. Run [`kubectl ome rollout explain`](../../reference/kubectl-ome/rollout.md#explain-output-fields) to see the policy and generation that a rollout follows.
+If another change gives a component a newer revision during a rollout, OME closes the rollout as `Superseded` and, while the group is still in `spec.rollout`, starts a new one with the current policy. Run [`kubectl ome rollout explain`](../../reference/kubectl-ome/rollout.md#explain-output-fields) to see the policy and generation that a rollout follows.
 
 You can't change the kind of a policy in use, such as from `canary` to `rollingUpdate`. Create a new policy, and move the references to it.
+
+### Removing the group mid-run
+
+Removing the group, every group or the whole `spec.rollout` block doesn't abort a run in progress either. The run keeps executing the plan it recorded: `RolloutPlanReady` stays `True` with `Pinned`. `RolloutPlanDrift` turns `True` with `SpecNewerThanRun`, and its message says what ends the run: `spec.rollout removed mid-run; the run continues on its recorded plan and closes when that plan finishes or rolls back — end it sooner with ome.io/rollout-rollback, or close it at once with ome.io/rollout-repin`. OME also records a `RolloutGroupRemovedMidRun` warning event on the InferenceService.
+
+With no group left in the spec, three things close the run:
+
+- Its recorded plan completes or rolls back, like any run's.
+- Yet another change gives a component a newer revision. The run closes as `Superseded`, and no new run opens toward the new target: each component [rolls out on its own](rollout-groups.md). The `RolloutRunClosed` event ends in `spec.rollout is gone, so no run opens`.
+- You end it yourself: with no group left to pin, a [repin](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md) closes the run at once instead of moving it to a new plan, and [rolling a canary back](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) ends its run with the stable revision serving.
+
+Once the run closes, `RolloutPlanReady` reports `NoActiveRun`, and `RolloutPlanDrift` returns to `False` with `InSync`.
+
+Removing only the canary group, while other groups stay in the spec, keeps the pinned canary running the same way, with the same `RolloutGroupRemovedMidRun` event: `deleting the group does not abort a pinned run — use ome.io/rollout-rollback or ome.io/rollout-repin`.
 
 ## Inline settings win
 
