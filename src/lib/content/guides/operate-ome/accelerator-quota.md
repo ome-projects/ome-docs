@@ -36,7 +36,7 @@ A budget in `spec.budgets` counts one resource on one Kueue ResourceFlavor, such
 
 A team's `priorityTier` has no effect in this release.
 
-The quota manager writes a Cohort node to Kueue as a Cohort, and a team as a ClusterQueue with a LocalQueue in each enrolled namespace. These objects take their node's name and carry the label `ome.io/quota-managed-by: ome-quota-manager`.
+The quota manager writes a Cohort node to Kueue as a Cohort, and a team as a ClusterQueue with a LocalQueue in each enrolled namespace. Every team's ClusterQueue selects exactly the enrolled namespaces, so the enrollment is a boundary that Kueue enforces: a workload anywhere else is never admitted, whatever queue name it carries. These objects take their node's name and carry the label `ome.io/quota-managed-by: ome-quota-manager`.
 
 The webhook denies a change that breaks a rule the tree doesn't already break. It judges a write by what it adds, not by the state it inherits, so the repair of a broken tree passes — and concurrent writes can jointly break a rule with no denial anywhere: [Change the tree](#change-the-tree) draws the boundary. A node can also break a rule later, when a budget is more than the peak capacity that the quota manager measures. Whatever the break, the quota manager freezes the node and its descendants: their Kueue objects stay as they were, so admitted workloads keep running. Each budget is checked against capacity on its own, so to cap the total, give `root` a budget.
 
@@ -64,7 +64,7 @@ docker push registry.example.com/ome/ome-quota-manager:dev
 
 `docker push` uploads the image, tagged `dev` like the images from Install from source. For Arm nodes, set `GOARCH=arm64` and `--platform linux/arm64`. The chart sets `runAsNonRoot` without a user ID, so the image needs its numeric `USER`.
 
-Write the values. `mode` picks one of the two modes from [How quotas work](#how-quotas-work), here `workload`. It has no default: the chart fails to render without it, with an error that ends in `quotaManager.mode must be "workload" or "management", got ""`. `enrolledNamespaces` lists the namespaces that the quotas govern. While it's empty, as it is by default, the quota manager writes nothing to Kueue:
+Write the values. `mode` picks one of the two modes from [How quotas work](#how-quotas-work), here `workload`. It has no default: the chart fails to render without it, with an error that ends in `quotaManager.mode must be "workload" or "management", got ""`. `enrolledNamespaces` lists the namespaces that the quotas govern; [Remove a namespace from enrollment](#remove-a-namespace-from-enrollment) covers taking one out later. While it's empty, as it is by default, the quota manager writes nothing to Kueue:
 
 ```yaml title="quota-values.yaml"
 global:
@@ -390,6 +390,60 @@ team-beta    ml-platform
 Its pods keep running and keep charging `team-beta`, whose usage now sums onto `ml-platform` instead of `ml-research`, as in [Read usage up the tree](#read-usage-up-the-tree). The webhook judges a move by what it alone breaks: the new parent must exist and be a Cohort, since a team takes no children; the node can't become its own ancestor or go past the depth bound; and its budgets must fit the new parent's — a team too big for its new Cohort fails with the same `children total` error as above, against the new parent's budget. Removing the team from `ml-research` can't break a rule: its children then total less. A Cohort moves the same way, and its subtree comes along unchanged, because children name their parent, not their path.
 
 To change a node's role, on the other hand, delete the node and create it again: changing `spec.role` in place leaves the old Kueue object behind.
+
+## Remove a namespace from enrollment
+
+To stop serving budgeted workloads from a namespace, remove it from `enrolledNamespaces` and upgrade the release. The list is one boundary for the whole install, as [How quotas work](#how-quotas-work) says, so the removal cuts every team off from the namespace at once. Say `ml-batch` had been enrolled alongside `ml-serving`, and its teams have moved out. Drop it from the list, keeping the other values in the file:
+
+```yaml title="quota-values.yaml"
+global:
+  hub: registry.example.com/ome
+quotaManager:
+  mode: workload
+  image:
+    tag: dev
+  materialize:
+    enrolledNamespaces:
+      - ml-serving
+```
+
+```bash
+helm upgrade ome-quota-manager ./charts/ome-quota-manager \
+  --namespace ome -f quota-values.yaml
+```
+
+Helm reports the upgrade, and the quota manager's pods restart with the new list: the chart passes it to the quota manager as its `--enrolled-namespaces` flag. On the first pass after the restart, the quota manager rewrites every team's ClusterQueue to select only the namespaces that remain. The selector names them by `kubernetes.io/metadata.name`:
+
+```bash
+kubectl get clusterqueues.kueue.x-k8s.io -l ome.io/quota-managed-by=ome-quota-manager \
+  -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.namespaceSelector.matchExpressions[0].values}{"\n"}{end}'
+```
+
+```output
+team-alpha ["ml-serving"]
+team-beta ["ml-serving"]
+```
+
+Kueue enforces the selector, so from that pass on no team admits workloads from `ml-batch`. The one exception is a [frozen](#conditions) node: its queue keeps its last-good selector, the removed namespace included, until the node is repaired. What the namespace already holds doesn't vanish with the enrollment:
+
+- Admitted pods keep running and keep charging their team: the queues don't preempt, and serving pods run until you delete them, as the borrowing warning in [Step 2](#step-2-create-the-quota-tree) says. Deleting them is what frees the budget.
+- The pods of new labeled workloads, and the ones that were still waiting, stay `SchedulingGated` for good. OME leaves `kueue.x-k8s.io/queue-name` off a pod only by its [resource requests](#budget-other-accelerators), never by its namespace, so Kueue keeps gating the pods, and no queue admits them. Stop labeling the workloads there, or delete them.
+
+The teams' LocalQueues in `ml-batch` are also left behind. The sweep deletes an object only when its node is gone from the tree — it keeps everything whose `ome.io/accelerator-quota` label names a node that still exists, in any namespace — and a namespace off the list is simply no longer rendered, so the LocalQueues are neither swept nor written again. They're orphans that make the namespace look enrolled. Delete them:
+
+```bash
+kubectl delete localqueues.kueue.x-k8s.io -n ml-batch -l ome.io/quota-managed-by=ome-quota-manager
+```
+
+```output
+localqueue.kueue.x-k8s.io "team-alpha" deleted
+localqueue.kueue.x-k8s.io "team-beta" deleted
+```
+
+The quota manager doesn't recreate them, and the Workload of a labeled pod in `ml-batch` then reports `LocalQueue team-beta doesn't exist`, the clear symptom from [Pods stay SchedulingGated](#pods-stay-schedulinggated), instead of resolving a queue that never admits it. Enrolling the namespace again brings the LocalQueues back with the same upgrade; left in place, they're deleted only when their teams are.
+
+!!! warning "Emptying the list doesn't stop admission"
+    Removing the last namespace doesn't close the boundary — it turns materialization off, as in [Step 1](#step-1-install-the-quota-manager). The chart drops the quota manager's materialization flags and its Kueue write RBAC, and the quota manager stops writing, sweeping and reading Kueue objects: every queue stays exactly as it was, selectors included, so Kueue keeps admitting workloads from the namespaces the queues last selected, while `status.budgets` and the `Materialized` conditions stand still. Deleting a node doesn't reap its Kueue objects then, either: the sweep is off with the rest. To stop admitting everywhere, delete the teams while their namespaces are still enrolled, as in [Clean up](#clean-up).
 
 ## Lower the high-water mark
 
@@ -746,6 +800,7 @@ acceleratorquota.ome.io/team-beta unchanged (server dry run)
 
 - The team's quota is in use, by its own pods or by a team that borrowed it.
 - The Workload reports `LocalQueue team-beta doesn't exist`. Add the namespace to `enrolledNamespaces`.
+- The namespace has been [removed from `enrolledNamespaces`](#remove-a-namespace-from-enrollment). A left-behind LocalQueue still resolves, so the Workload finds its queue, but no ClusterQueue selects the namespace any more, and nothing admits the pod. Enroll the namespace again, or stop labeling workloads there.
 - The pod requests a resource missing from its ClusterQueue, such as an RDMA device.
 
 A ClusterQueue lists its team's accelerators, plus CPU, memory and ephemeral storage with ceilings too high to limit anyone. To admit another resource, give it a ceiling in `coverResources`, and upgrade the release as in [Budget other accelerators](#budget-other-accelerators). Helm merges the map, so the defaults stay:
