@@ -203,7 +203,7 @@ OME then changes the component's pods, including leader and worker pods:
 | Node selector | Adds `discovery.nodeSelector`, except for [merged fine-tuned weights](../models/fine-tuned-weights.md#what-the-pods-get). It wins over the runtime's node selectors, and the component's `nodeSelector` wins over it. |
 | Resources | Sets each resource in `resources` as the runner's request and limit, overriding the runtime's. To keep your own, set `resources` in the component's `runner`, plus `leader.runner` and `worker.runner` if multi-node. |
 | Node affinity | Since v1.3, adds `discovery.affinity.nodeAffinity`. The component's `affinity`, or the runtime's node affinity, takes its place. On v1.2.2, `discovery.affinity` replaces the pod's whole affinity when the component sets none. |
-| Runtime settings | Applies the runtime's `acceleratorConfig` entry for the class; see [Per-accelerator configuration](serving-runtimes.md#per-accelerator-configuration). |
+| Runtime settings | Applies the runtime's `acceleratorConfig` entry for the class, when an entry in its `supportedModelFormats` matches the model's format and framework. An InferenceService without a model, or whose model matches no entry, gets the three rows above but not this one; see [Per-accelerator configuration](serving-runtimes.md#per-accelerator-configuration). |
 
 The InferenceService's status doesn't record the class. To see which class a component got, check its pods' node selector, as [Step 4 of Select accelerators](../../guides/deploy-models/select-accelerators.md#step-4-check-the-selected-class) shows.
 
