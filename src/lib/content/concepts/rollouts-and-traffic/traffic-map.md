@@ -103,7 +103,7 @@ Each entry is a home of the InferenceService: a workload cluster that has admitt
 | --- | --- |
 | `cluster` | The WorkloadCluster's name. |
 | `endpoint` | The URL of the InferenceService's copy on that cluster. |
-| `weight` | The cluster's share of the requests, relative to the other entries. |
+| `weight` | The cluster's share of the requests, relative to the other entries, from 0 through 1,000,000. |
 | `healthy` | `true` when the cluster can serve and no probe gates it: a ready replica or, when `reportedWeight` is set, a positive `reportedWeight` in place of the ready-replica test. A healthy entry can still have weight 0. |
 | `capacity.allocated` | The replicas that placement admitted on the cluster, lowered to `capacity.reported` when that's lower. When `reportedWeight` is set, it's diagnostic only. |
 | `capacity.ready` | The ready replicas. They cap the weight unless `reportedWeight` is set. |
@@ -127,7 +127,7 @@ OME works out an entry's weight in five steps:
 
 1. It counts the replicas that can serve: the lower of `capacity.allocated` and `capacity.ready`, times the cluster's capacity factor, which is 1 unless you set one. In [Reported mode](../../guides/multi-cluster/tune-routing-capacity-polling.md#reported-mode), a cluster with a `capacity.reportedWeight` uses it instead, as it is: no replica count caps it, and no factor scales it. For an InferenceService with an engine and a decoder, both counts are the lower of the two [components'](../serving/inference-services.md#components) counts; when [a Split's weights](#how-a-split-placement-divides-the-replicas) give the clusters different mixes, a decoder count is first scaled to its engine equivalent in the service's engine-to-decoder ratio, rounded down.
 2. An entry that a routing health probe gates gets 0, with one exception that [Routable](#routable) describes.
-3. It reduces the weights to their smallest whole-number ratio, so 4 and 2 become 2 and 1.
+3. It reduces the weights to their smallest whole-number ratio, so 4 and 2 become 2 and 1. A weight can't go above 1,000,000: the bound on [the entry's `weight` field](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-TrafficMapEntry), which matches the largest weight a Gateway API backend takes, so [the publisher](#published) applies the weights verbatim. When the reduced ratio's largest weight is above the bound, OME scales every weight down so the largest is exactly 1,000,000 and rounds the other positive weights up: no positive weight scales to 0, and a weight of 0 stays 0. A ratio of 3,000,000,000 to 1 publishes as 1,000,000 and 1 — the clusters keep their order, and the small cluster keeps at least weight 1, above its exact share.
 4. An entry whose cluster placement is draining gets 0. See [A placement move drains a cluster first](#a-placement-move-drains-a-cluster-first).
 5. An entry that a drain holds gets 0. The other weights stay as they are.
 
