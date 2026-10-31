@@ -237,6 +237,23 @@ If OME can't resolve a group's plan when a rollout would start, it parks the rol
 
 The InferenceService's `RolloutPlanReady` condition is then `False` with the reason, OME records a `RolloutPlanParked` warning event, and the park counts in [`ome_rollout_run_parked_total`](#metrics). Fix the cause, or [give the group an inline progression](#inline-settings-win), and OME starts the rollout on its own.
 
+### A canary with no pinned run: `CanaryRunLost`
+
+A canary steps only under the run that [pins its plan](#when-the-reference-is-resolved) in `status.rollout.activeRun`. OME can find a canary mid-step with no pinned run, such as after a controller upgrade or a recovery from a lost status write, even when every pod has converged: the traffic split outlives pod convergence. The canary then holds where it stands — the split stays as its current step set it, and no Instance moves to the new revision — and OME records a `CanaryRunLost` warning event on the InferenceService that names the component and the step it holds at, counted from 0.
+
+On its next pass, OME either adopts the canary or parks. When the group's plan resolves, OME adopts the canary into a new run: the plan pins at the current step, with no restart and no traffic movement, the Normal event `RolloutPlanRepinned` records the adoption, the run counts in [`ome_rollout_run_opened_total`](#metrics) with the `-adopted` suffix, and the canary advances by its steps again. When the plan fails to resolve, with a reason from the table above, the rollout parks and the canary keeps holding; the `CanaryRunLost` event then also carries the park's reason and message — here, after the `cluster-prometheus` binding was removed:
+
+```bash
+kubectl get events -n llama-demo --field-selector reason=CanaryRunLost -o custom-columns=TYPE:.type,OBJECT:.involvedObject.name,MESSAGE:.message
+```
+
+```output
+TYPE      OBJECT       MESSAGE
+Warning   llama-chat   engine canary has no pinned rollout run; holding at step 0 until the run layer reopens or adopts it; the run layer cannot take it over because the rollout plan does not compose (ProviderUnbound: groups[0]: metric provider "cluster-prometheus" is not bound in this cluster's metricProviders configuration): fix the plan, or undo the plan edit, and the canary continues; a rollback request (ome.io/rollout-rollback) still applies under this hold, while a promote waits until the plan composes again
+```
+
+The hold ends with the plan, not with a promote: [`ome.io/rollout-promote`](../../reference/api/labels-and-annotations.md#rollout-actions) opens a step's gate, and a canary with no pinned run reaches no gate, so a promote waits until the plan resolves and a run adopts the canary. A [rollback request](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) still applies under the hold. Fix the reason the table lists — here, bind the provider again — and the canary continues from the step it held at.
+
 ## Conditions and status
 
 A RolloutPolicy reports two conditions:
