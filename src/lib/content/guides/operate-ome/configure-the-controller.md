@@ -359,6 +359,45 @@ The two settings aren't in [the list that needs a restart](#tune-the-config-cach
 
 With a value empty, or the entry absent — the kustomize manifests don't write one — the manager has no fixed cadence and falls back to its rate-limited requeue: the canary still moves, but on no schedule you can tune. A value that isn't a positive duration, such as `"0s"` or `"3d"`, counts as empty the same way. Unlike a bad `lifecycle` value, it doesn't stop the manager, and nothing logs it — so when a canary re-checks slower than the cadence you set, check the rendered entry for a typo.
 
+## Damp per-revision traffic churn in status
+
+For each [OMENative](../../concepts/omenative/overview.md) component that no canary step drives, OME writes the component's live traffic split into `status.components.<component>.traffic`: the revisions' shares of the component's serving pods, as percents that sum to 100. The weights follow the raw pod counts, so on a large component one pod that blips out of readiness between reconciles — momentarily Pending, or draining — shifts the computed percents, and every shift is another status write for the API server and every watcher of the InferenceService to process. The weights report the split, they don't route it: requests reach every ready Instance either way, so only the report churns.
+
+The setting `ome.controller.coordination.trafficWeightDeadbandPercent`, which the chart writes to the `coordination` entry of the `inferenceservice-config` ConfigMap, puts a per-revision band on that writer. With a band above 0, OME skips the write when the recomputed weights name the same revisions as status and every revision's percent moves by less than the band from the value already written: the move counts as pod-count jitter. The chart's default is `0`: the band is off, and every meaningful change is written. A negative value also turns the band off, and the manager itself has no built-in band — an absent entry reads as 0.
+
+The band never suppresses:
+
+- A revision's entry appearing, disappearing or changing name: a changed revision set is a real topology change, so the weights are always written.
+- A `latestRevision` flip on any entry, which marks the revision the component converges toward.
+- A `pairingProtocol` change on any entry, which routing consumers pair engine and decoder targets on.
+- An entry arriving at exactly `0` or `100` from another value: the end of a roll is never jitter, so a band larger than a roll's last step can't hold the written split at 95/5.
+- A move of the band or more on any entry.
+
+Any one of these writes the whole weight set. The band compares each recomputed percent with the one written in status, not with the last one computed, so a roll that keeps moving pods drifts further from the written weights on every pass, crosses the band and is written: a ratio change bigger than the band always lands in status. What you accept is a lagging report — the written weights can sit up to a point under the band away from the live split for as long as the pods hold that split — so keep the band below any difference your dashboards or alerts must see. A suppressed write holds back only the weights: the component's `latestReadyRevision` and `latestRolledoutRevision` fields update independently.
+
+This example treats per-revision swings of up to 4 points as jitter:
+
+```yaml title="values.yaml"
+ome:
+  controller:
+    coordination:
+      trafficWeightDeadbandPercent: 5
+```
+
+Upgrade with your values file, as in [Step 1](#with-a-helm-value), and check the rendered entry — with `jq`, since the entry also holds `defaultRatioTolerancePercent`, the ratio-tolerance default that [Pace a prefill-decode roll](#pace-a-prefill-decode-roll) describes:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.coordination}' | jq '{trafficWeightDeadbandPercent}'
+```
+
+```output
+{
+  "trafficWeightDeadbandPercent": 5
+}
+```
+
+The entry isn't in [the list that needs a restart](#tune-the-config-cache): the manager reads it through its config cache on every pass, so even a `kubectl` edit takes effect within the cache's TTL. The band gates only this pod-proportional writer. A component that a canary group drives gets its weights from the canary's recorded step, as [Traffic weight in status](../../reference/rollouts/canary-progression.md#traffic-split) describes, and the band never holds those back.
+
 ## Recognize other accelerator resources
 
 The `acceleratorResources` entry of the `inferenceservice-config` ConfigMap lists the extended resource names that OME counts as accelerators when it reads a runner container's requests and limits. The count sets the `PARALLELISM_SIZE` environment variable in the engine's and the decoder's runner: the accelerators in each pod times the pods in each replica. The chart writes the entry from `ome.controller.acceleratorResources`, whose default lists only `nvidia.com/gpu`.
