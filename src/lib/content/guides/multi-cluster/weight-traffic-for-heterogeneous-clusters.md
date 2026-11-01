@@ -20,7 +20,7 @@ Multi-cluster routing is alpha, still in development, and off by default. Its AP
 
 ## How factors change the weights
 
-OME counts the replicas that can serve on a cluster: the lower of its admitted and its ready replicas. It multiplies the count by the cluster's factor, 1 unless you set one, and reduces the results across clusters to their smallest whole-number ratio.
+OME counts the replicas that can serve on a cluster: the lower of its admitted and its ready replicas. It multiplies the count by the cluster's factor, 1 unless you set one, and reduces the results across clusters to their smallest whole-number ratio. An entry's weight can't go above 1,000,000, so when the reduced ratio's largest weight is over that bound, OME scales every weight down so the largest is exactly 1,000,000 and rounds the other positive weights up: a factor can widen the ratio, but it never scales a serving cluster's weight to 0. See [How OME sets the weights](../../concepts/rollouts-and-traffic/traffic-map.md#how-ome-sets-the-weights).
 
 For example, `chat` has four replicas on `worker-a` and two on `worker-b`, whose replicas each serve three times as many requests:
 
