@@ -134,7 +134,7 @@ OMENative also moves Instances on its own. When a new Instance, or an update of 
 - the mode is `Auto` or `Surge`;
 - the Instance has relocations left in `autoMigrate.maxAttempts`.
 
-The rebuilt Instance also avoids nodes that earlier relocations left. Each relocation adds a `Relocated` record to `status.migrations` and records an `AutoMigrationTriggered` event. After the last one allowed, which also records `AutoMigrationCapReached`, OME stops relocating the Instance until it's next `Ready`. [What OME does with a failed Instance](instances.md#what-ome-does-with-a-failed-instance) has the full rules.
+The rebuilt Instance also avoids nodes that earlier relocations left. Each relocation adds a `Relocated` record to `status.migrations`, records an `AutoMigrationTriggered` event and adds one to the counter [`ome_omenative_auto_migrations_total`](#count-automatic-relocations). After the last one allowed, which also records `AutoMigrationCapReached`, OME stops relocating the Instance until it's next `Ready`. [What OME does with a failed Instance](instances.md#what-ome-does-with-a-failed-instance) has the full rules.
 
 The avoidance lasts only while another node has room. When the scheduler can't place a rebuild anywhere for longer than [`unschedulableGracePeriod`](instances.md#when-an-instance-fails), OME prefers a rebuild that may land on a blamed node to one that can't run at all: it releases the nodes the Instance avoids for the revision it's building, and records one Normal `NodeExclusionReleased` event naming them, ending with `no other node had room for the rebuild; it may land on gpu-node-a again`. The rebuild that found no room fails with the scheduler's verdict, as the No room row of [When an Instance fails](instances.md#when-an-instance-fails) describes, and the next one can land on a node an earlier relocation left. The release returns no relocation attempts: the ones spent stay counted against `autoMigrate.maxAttempts` until the Instance is next `Ready`, which resets the count and the avoided nodes together. An Instance that avoids no node gets no release and no event.
 
@@ -211,6 +211,25 @@ InferenceService   qwen3-0-6b   OMENative migration uuid=3f9c2a1e-7b4d-4c8e-9a6f
 | `AutoMigrationTriggered` | Normal | OME relocated an Instance. |
 | `AutoMigrationCapReached` | Warning | An Instance used its last relocation. |
 | `NodeExclusionReleased` | Normal | No node had room for a rebuild that avoided the nodes earlier [relocations](#automatic-relocation) left, so the next rebuild may land on them again. |
+
+### Count automatic relocations
+
+The `AutoMigrationTriggered` events can undercount relocations: the manager's [per-object event budget](../../guides/operate-ome/configure-the-controller.md#tune-the-per-object-event-budget) silently drops events about a busy InferenceService, and a run of relocations is just such a period. OME also counts each [relocation](#automatic-relocation) it records on the counter `ome_omenative_auto_migrations_total` — one increment per relocation, the occurrence the `Relocated` record and the event mark. The controller manager serves it on its metrics endpoint, which the bundled Prometheus scrapes by default: see [OME's components](../../guides/operate-ome/metrics.md#omes-components). A migration you request doesn't touch the counter; follow those through the records and events above.
+
+| Label | Value |
+| --- | --- |
+| `namespace` | The InferenceService's namespace. |
+| `isvc` | The InferenceService's name. |
+| `component` | The relocated Instance's component, such as `engine`. |
+| `reason` | Always `AutoRecover`, the marker OME puts on a relocation's row in the [audit ConfigMap](../../reference/kubectl-ome/migration.md#history). |
+
+This query sums each InferenceService's relocations over the last day:
+
+```text
+sum by (exported_namespace, isvc) (increase(ome_omenative_auto_migrations_total[24h]))
+```
+
+In queries, an InferenceService's namespace is in the label `exported_namespace`, because `namespace` holds the controller's. When you delete an InferenceService, OME drops its series from the counter, so sums don't keep counting a service that's gone.
 
 ## Transient scale
 
