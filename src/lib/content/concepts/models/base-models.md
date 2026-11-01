@@ -222,6 +222,27 @@ A model is `Ready` as soon as one node has it, so some serving pods can stay `Pe
 
 Create an InferenceService once its model is `Ready`. OME needs the model's format, which it reads from the model's files, to choose or check a runtime. Without it, the admission webhook rejects the InferenceService with a message that ends in `model format name is required`.
 
+### Status freshness
+
+Two more status fields say when OME last wrote the model's status: `observedGeneration` is the `metadata.generation` it had just reconciled, and `lastReconcileTime` is the time of the write. OME stamps them only when it writes the status, and for every model but a `pvc://` one, it writes the status only when `nodesReady`, `nodesFailed` or `status.state` changes. So the two fields track status changes, not the controller's health:
+
+- An edit that [the nodes don't react to](#choose-the-nodes), such as a `displayName` change, raises `metadata.generation` without changing the status. `observedGeneration` stays behind until the node lists or the state next change, which can be never.
+- On a `Ready` model that nothing changes, `lastReconcileTime` keeps the time of the last status change. An hours-old value on a healthy model is normal, and doesn't mean the controller is stuck.
+
+This model got a `displayName` edit after its last status change, and both it and the controller are fine:
+
+```bash
+kubectl get clusterbasemodel qwen2-5-7b-instruct \
+  -o 'custom-columns=GENERATION:.metadata.generation,OBSERVED:.status.observedGeneration,LAST_WRITE:.status.lastReconcileTime'
+```
+
+```output
+GENERATION   OBSERVED   LAST_WRITE
+2            1          2026-10-29T08:11:42Z
+```
+
+A `pvc://` model's fields do stay fresh. OME rewrites its whole status, and stamps both fields, each time it checks the claim and reads the metadata Job's outcome, and those checks recur because [OME runs the Job again](../../guides/deploy-models/serve-models-from-pvc.md#troubleshooting) each time Kubernetes deletes the finished one. So its fields keep advancing while the controller runs, and a spec edit catches `observedGeneration` up at the next check.
+
 ### Disable a model
 
 To stop new use of a model, set `disabled: true` in its spec. The admission webhook then rejects new and changed InferenceServices that use it, with `model qwen2-5-7b-instruct is disabled`. OME also stops creating or updating their serving workloads, and records a `ModelReconcileError` event with `specified base model qwen2-5-7b-instruct is disabled`. Running pods keep running, and the weights stay on the nodes.
