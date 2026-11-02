@@ -52,7 +52,7 @@ When the pods of a component with PodGroups use the default scheduler, OME recor
 
 ## One PodGroup per multi-pod Instance
 
-OME creates an Instance's PodGroup before its pods, and names it `<isvc>-<component>-<index>`. Its `minMember` is the Instance's pod count: the leader plus `worker.size` workers. Its `scheduleTimeoutSeconds` comes from the [gang schedule timeout](#bound-the-gang-schedule-timeout). When the component sets `topologyKey`, the PodGroup carries it in the `ome.io/topology-key` annotation. OME labels the Instance's pods with `scheduling.x-k8s.io/pod-group`, set to the PodGroup's name, which gang-aware schedulers read.
+OME creates an Instance's PodGroup before its pods, and names it `<isvc>-<component>-<index>`. Its `minMember` is the Instance's pod count: the leader plus `worker.size` workers. Its `scheduleTimeoutSeconds` comes from the [gang schedule timeout](#bound-the-gang-schedule-timeout). When the component sets `topologyKey`, the PodGroup carries it in the `ome.io/topology-key` annotation. Once the Instance has pods, the annotation [follows them](#the-topology-annotation-follows-the-instances-pods), not the spec. OME labels the Instance's pods with `scheduling.x-k8s.io/pod-group`, set to the PodGroup's name, which gang-aware schedulers read.
 
 For example, the InferenceService in [Serve a multi-node model](../../guides/omenative/serve-a-multi-node-model.md) runs one engine Instance of a leader and one worker, so OME creates the PodGroup `qwen3-multi-node-engine-0`. Without its owner reference and status, it looks like this:
 
@@ -95,6 +95,18 @@ pod/qwen3-multi-node-engine-0-leader-0
 pod/qwen3-multi-node-engine-0-worker-0
 ```
 
+### The topology annotation follows the Instance's pods
+
+While an Instance's pods exist, its PodGroup's `ome.io/topology-key` annotation describes those pods, not the newest spec. A pod's affinity is immutable: each worker carries a required affinity that keeps it in its leader's domain under the key the pods were created with. The annotation is the gang's contract with the scheduler, and the [OME scheduler](../scheduling/ome-scheduler.md) releases a gang's domain to pick again when it changes, which its [metrics](../../reference/scheduling/ome-scheduler-configuration.md#metrics) count as a `topology_replan`. Retargeting a live gang's annotation would have the scheduler place replacement pods by the new key while the gang's other pods stay pinned to the old one: a split gang.
+
+So a `topologyKey` edit never retargets a live gang. OME records a new revision, and the new key lands as the [rollout](../architecture/omenative-update-strategies.md) replaces each Instance's pods:
+
+- Under `SurgeThenDrain`, the default, the replacement gang is a new Instance with its own PodGroup, which carries the new key from creation. The old Instance's PodGroup keeps the old key until the Instance drains, and is deleted with it.
+- Under a strategy that recreates the pods, the Instance's PodGroup advances to the new key once its pods are gone, before OME creates the replacements.
+- A repair stays put: OME refills a lost pod of a live gang with the key the gang runs, so the new pod can land with its peers.
+
+OME proves a live gang's key from the worker-to-leader affinity it generated on the gang's pods, and otherwise keeps the annotation the PodGroup already carries. Affinity you wrote yourself never sets the annotation, since it can express an unrelated relationship. When the component sets `topologyKey` but neither source proves the key of a gang that still has pods, say because the annotation was removed by hand while only the leader runs, OME fails the component's reconcile rather than guess, with an error in the controller's log that says `cannot prove active topology`. It reconciles again when the annotation is restored, or the gang's pods are gone.
+
 ## Bound the gang schedule timeout
 
 A gang-aware scheduler holds a gang's placed pods until the whole gang fits, for up to the PodGroup's `scheduleTimeoutSeconds`. At the timeout, it frees their resources for other pods and tries the gang again later.
@@ -123,7 +135,7 @@ With these values, the 30-minute ready timeout becomes 600 seconds, as in the Po
 
 The scheduler's default is `defaultPermitTimeoutSeconds` for the OME scheduler, 600 in its chart, or `permitWaitingTimeSeconds` for Coscheduling. `gangScheduleTimeout` needs both `min` and `max`, positive, with `min` no larger than `max`. OME treats an invalid one as unset.
 
-[Change the cluster defaults](../../guides/omenative/set-instance-readiness-deadlines.md#change-the-cluster-defaults) shows how to change these settings. OME updates existing PodGroups to the new timeout.
+[Change the cluster defaults](../../guides/omenative/set-instance-readiness-deadlines.md#change-the-cluster-defaults) shows how to change these settings. OME updates existing PodGroups to the new timeout in place, unlike [the topology annotation](#the-topology-annotation-follows-the-instances-pods), which a live gang's pods hold.
 
 ## What you see
 
