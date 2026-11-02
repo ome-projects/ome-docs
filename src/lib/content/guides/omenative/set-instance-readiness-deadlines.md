@@ -28,7 +28,7 @@ The `ome-resources` chart sets all three limits by default. You'll give one comp
 
 A component's value in the InferenceService wins over the runtime's, and either wins over the cluster's. The same timeout sets the deadline of an [Instance migration](../../concepts/omenative/migration-and-transient-scale.md#deadline), and a [drain](recover-stuck-deletions.md) that runs past it raises `DrainOverdue`. OME also derives a multi-pod Instance's [gang schedule timeout](../../concepts/serving/gang-scheduling.md#bound-the-gang-schedule-timeout) from it.
 
-The clock stops while an attempt waits on something outside the Instance: a scheduling gate, a quota refusal, an unschedulable pod, an unreachable node or a [paused rollout](../roll-out-changes/pause-and-resume-a-rollout.md#what-a-pause-holds). When the wait ends, the attempt gets a full timeout again. A changed timeout applies to new attempts, and to running ones that have no deadline yet. A changed grace period applies at once. [Operations](../../concepts/omenative/instances.md#operations) has the details.
+The clock stops while an attempt waits on something outside the Instance: a scheduling gate, a quota refusal, an admission webhook the API server can't reach, an unschedulable pod, an unreachable node or a [paused rollout](../roll-out-changes/pause-and-resume-a-rollout.md#what-a-pause-holds). When the wait ends, the attempt gets a full timeout again. A changed timeout applies to new attempts, and to running ones that have no deadline yet. A changed grace period applies at once. [Operations](../../concepts/omenative/instances.md#operations) has the details.
 
 ## Step 1: Give a component more time
 

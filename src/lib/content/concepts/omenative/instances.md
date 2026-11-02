@@ -133,11 +133,14 @@ While something outside the Instance holds an operation, such as a scheduling ga
 | `waiting` | What holds the operation |
 | --- | --- |
 | `QuotaExceeded` | The API server refused the pods for lack of ResourceQuota. |
+| `AdmissionUnavailable` | The API server couldn't reach an admission webhook when OME created or patched the pods. |
 | `Unschedulable` | The scheduler can't place a pod. |
 | `PodGroupTerminating` | The Instance's PodGroup from an earlier attempt is still being deleted. |
 | `NodeUnknown` | A pod that OME must replace is on a node that stopped reporting. |
 | `Paused` | The rollout is [paused](../../guides/roll-out-changes/pause-and-resume-a-rollout.md). |
 | `SourceUnrouted` | Nothing: during a surge, the old Instance left rotation before OME drained it. The clock keeps running. |
+
+An `AdmissionUnavailable` hold isn't a failure: the attempt keeps its phase and its operation, and OME keeps retrying the write until one goes through admission again, which ends the hold. OME records the wait in the Instance's `lastFailure` under the same `AdmissionUnavailable` reason, with the refused pod and the API server's own message, which names the webhook it couldn't reach, and one `InstanceAdmissionUnavailable` warning event per episode carries that message. The wait blames no revision — no revision can reach a webhook the API server can't — so it never counts toward a [revision hold](#what-ome-does-with-a-failed-instance).
 
 ## When an Instance fails
 
