@@ -398,6 +398,51 @@ kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.coordin
 
 The entry isn't in [the list that needs a restart](#tune-the-config-cache): the manager reads it through its config cache on every pass, so even a `kubectl` edit takes effect within the cache's TTL. The band gates only this pod-proportional writer. A component that a canary group drives gets its weights from the canary's recorded step, as [Traffic weight in status](../../reference/rollouts/canary-progression.md#traffic-split) describes, and the band never holds those back.
 
+## Retry a failed member read within a placement pass
+
+When your InferenceServices set [`spec.placement`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-PlacementSpec), the control-plane cluster's manager reads back the service's derived copy on each candidate cluster on every placement pass. Multi-cluster placement is alpha, still in development and off by default: [Controller manager flags](../../reference/operate-ome/controller-manager-flags.md#multi-cluster) lists the values that turn it on. By default, a failed read isn't repeated within the pass: the candidate's observation turns unknown until a later pass reads it again — `ome_isvc_placement_candidate_observation_known` drops to `0`, as [Watch placement in the controller's metrics](metrics.md#watch-placement-in-the-controllers-metrics) describes — so a brief API server blip on one workload cluster costs that candidate a pass of freshness.
+
+Three settings under `ome.multicluster.config.placement.memberReadRetry`, which the chart writes into the `placement` block of the `multicluster` entry of the `inferenceservice-config` ConfigMap, let the pass retry the read instead:
+
+| Setting | Chart default | What it does |
+| --- | --- | --- |
+| `maxAttempts` | `0` | The attempts one read of a member gets within a pass, the first included: `0` or `1` reads once, with no retry, and `3` re-reads a transient failure up to twice. A negative value is refused. |
+| `initialBackoff` | `""` | The wait before the first re-read, such as `"500ms"`; it doubles with each further re-read. Required once `maxAttempts` exceeds 1, and refused otherwise. |
+| `maxBackoff` | `""` | The cap on that wait. Required once `maxAttempts` exceeds 1 and refused otherwise, and it must not be shorter than `initialBackoff`. |
+
+Only a failure that repeating may fix is read again: a timeout, a dropped, refused or reset connection, throttling (a 429), any server-side error (a 5xx), a member whose cached view on the control plane isn't available, and a first connection that the manager is still making after its start. Any other result returns at once: a derived copy that doesn't exist, or one that fails the identity and ownership checks, is a conclusive answer, not a blip. A canceled reconcile also ends the retries at once, even during a backoff wait.
+
+Every attempt gets its own deadline — the per-cluster read deadline that `ome.multicluster.config.placement.fanoutTimeout` sets, 10 seconds when it's empty — so an attempt that times out doesn't spend the next attempt's budget. A pass can therefore spend up to `maxAttempts` times that deadline on one member, plus the backoff waits between attempts. Keep `maxAttempts` small: a pass reads every candidate cluster, each with this budget.
+
+This example reads each member up to three times, waiting 500 milliseconds before the second attempt and 1 second before the third:
+
+```yaml title="values.yaml"
+ome:
+  multicluster:
+    config:
+      placement:
+        memberReadRetry:
+          maxAttempts: 3
+          initialBackoff: "500ms"
+          maxBackoff: "2s"
+```
+
+Upgrade with your values file, as in [Step 1](#with-a-helm-value), and check the rendered block:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.multicluster}' | jq '.placement.memberReadRetry'
+```
+
+```output
+{
+  "maxAttempts": 3,
+  "initialBackoff": "500ms",
+  "maxBackoff": "2s"
+}
+```
+
+The `multicluster` entry is in [the list that needs a restart](#tune-the-config-cache): the manager reads it once, when it starts, so the upgrade's restart applies the change, and a `kubectl` edit to the ConfigMap needs one. At startup, a manager with multi-cluster on checks the block against the rules in the table, and a break stops it with `invalid multi-cluster configuration` — for example, `invalid multi-cluster configuration: placement.memberReadRetry.maxAttempts: must exceed 1 when backoffs are set` for backoffs set while `maxAttempts` keeps the default `0`: see [Troubleshooting](#the-manager-rollout-doesnt-finish). While a retry runs, the leader logs `member read failed; retrying`, with the cluster, the attempt and the wait, at verbosity 1 only.
+
 ## Recognize other accelerator resources
 
 The `acceleratorResources` entry of the `inferenceservice-config` ConfigMap lists the extended resource names that OME counts as accelerators when it reads a runner container's requests and limits. The count sets the `PARALLELISM_SIZE` environment variable in the engine's and the decoder's runner: the accelerators in each pod times the pods in each replica. The chart writes the entry from `ome.controller.acceleratorResources`, whose default lists only `nvidia.com/gpu`.
@@ -526,7 +571,7 @@ Both features are off by default. To turn one on, set `ome.rolloutPolicy.enabled
 
 ```bash
 kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E \
-  -e 'Invalid leader election timing|invalid --multicluster-role' \
+  -e 'Invalid leader election timing|invalid --multicluster-role|invalid multi-cluster configuration' \
   -e 'flag provided but not defined|invalid (boolean )?value ".*" for (flag )?-' \
   -e 'Failed to initialize [a-zA-Z -]+ configuration'
 ```
@@ -535,6 +580,7 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E 
 | --- | --- |
 | `Invalid leader election timing` | The lease values break a rule in [Lease timing](#lease-timing). The error gives the values and the rule. |
 | `invalid --multicluster-role` | Set `ome.multicluster.role` to `control-plane`, or leave it empty. |
+| `invalid multi-cluster configuration` | The `multicluster` entry of the `inferenceservice-config` ConfigMap breaks a rule, and the rest of the line says which. For `placement.memberReadRetry`, see [Retry a failed member read within a placement pass](#retry-a-failed-member-read-within-a-placement-pass). |
 | `flag provided but not defined`, `invalid value` or `invalid boolean value` | A patched argument is misspelled, isn't in your OME version, or has a bad value, such as `3d` for a duration. |
 | `Failed to initialize deployment configuration`, or the same for another entry | That entry of the `inferenceservice-config` ConfigMap is invalid, and the rest of the line says why. For `replicas` in the `deploy` entry, see [Set replica defaults](set-replica-defaults.md). For `Failed to initialize event recorder configuration`, the `eventRecorder` entry breaks a rule in [Tune the per-object event budget](#tune-the-per-object-event-budget). For `Failed to initialize lifecycle scale configuration`, a scale setting in the `lifecycle` entry breaks a rule in [Pace OMENative scale-ups and scale-downs](#pace-omenative-scale-ups-and-scale-downs). |
 
