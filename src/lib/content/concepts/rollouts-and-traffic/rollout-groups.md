@@ -6,7 +6,7 @@ since: v1.3
 
 A rollout group rolls a change out to components of an [InferenceService](../serving/inference-services.md) as a unit. Put the engine and the decoder in one group, and prefill and decode move to each new revision together, by blue-green, rolling update or canary. A canary moves capacity in steps, and a step can wait for a timer, for you, or for Prometheus analysis that advances the canary or rolls it back.
 
-You declare up to three groups in `spec.rollout.groups`. A component can be in only one group, and a component in no group rolls out on its own.
+You declare up to four groups in `spec.rollout.groups`. A component can be in only one group, and a component in no group rolls out on its own.
 
 Groups need [OMENative](../omenative/overview.md) declared on the InferenceService, with `spec.deploymentMode: OMENative` or the component's `ome.io/deploymentMode` annotation. A component that's OMENative only because of its `leader` and `worker`, or its runtime, doesn't count, as [Opt in to OMENative](../architecture/deployment-modes.md#opt-in-to-omenative) explains. A single-node component runs as RawDeployment by default, where a change is a plain Deployment update, with no group.
 
@@ -59,7 +59,7 @@ Each group can set:
 
 | Field | Description |
 | --- | --- |
-| `components` | Required. One to three of `router`, `engine` and `decoder`. |
+| `components` | Required. One to four of `router`, `engine`, `decoder` and `encoder`. |
 | `canary`, `blueGreen` or `rollingUpdate` | The progression. Set at most one. See [Choose a progression](#choose-a-progression). |
 | `policyRef` | Alpha, and off by default. A [RolloutPolicy](rollout-policy.md) that supplies the progression when the group sets none. |
 | `soak` | In a [sequence](#roll-components-one-at-a-time), how long to wait between components. |
@@ -182,7 +182,7 @@ The re-plan reaches the batch that's open as well: resize the engine while its f
 
 ### Canary
 
-A canary group moves all its components through one canary's steps. Each step's `capacity` applies to each component: at `"25%"`, a quarter of the engine's replicas and a quarter of the decoder's, rounded up, run the new revision. The step waits until both are ready. When the InferenceService declares both, the engine and the decoder are one canary unit, so a canary group that names one must name both. The router is a unit of its own, and one canary group can hold both units.
+A canary group moves all its components through one canary's steps. Each step's `capacity` applies to each component: at `"25%"`, a quarter of the engine's replicas and a quarter of the decoder's, rounded up, run the new revision. The step waits until both are ready. The components that pair — the engine, the decoder and the encoder — are one canary unit: when the InferenceService declares two or more of them, a canary group that names one must name every one the service declares. The router is a unit of its own, and one canary group can hold both units.
 
 ```yaml
 spec:
@@ -282,7 +282,7 @@ When the webhook rejects a rollout, `kubectl` prints `admission webhook "inferen
 | Reason | Cause |
 | --- | --- |
 | `CoordinationRequiresOMENative` | A grouped component doesn't declare OMENative on the InferenceService. A canary group gets `CanaryRequiresOMENative`. |
-| `InvalidComponentInCoordinationGroup`, `OrphanCoordinationGroup` | A group names a component other than `router`, `engine` or `decoder`, or one that the InferenceService doesn't declare. |
+| `InvalidComponentInCoordinationGroup`, `OrphanCoordinationGroup` | A group names a component other than `router`, `engine`, `decoder` or `encoder`, or one that the InferenceService doesn't declare. |
 | `DuplicateComponentInCoordinationGroups` | A component is in two groups. |
 | `GroupOrderingNotHonored` | Under `Sequential`, two or more groups other than a sequence alone. |
 | `SoakNotHonored` | A `soak` outside a sequence. |
