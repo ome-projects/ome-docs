@@ -121,8 +121,13 @@ prometheus:
       action: keep
 ```
 
-!!! warning "The upgrade restarts Prometheus"
-    The upgrade replaces the Prometheus pod, and stops the old pod first. Until the new pod is ready, canary samples are inconclusive and KEDA can't read its triggers. With the default `emptyDir`, the new pod starts with no data.
+What the upgrade does to the pod depends on where the changed values land:
+
+- A change that only edits the scrape configuration — `scrapeInterval`, `scrapeNamespaces`, `requireScrapeAnnotation`, `metricRelabelConfigs`, `scrapeLimits`, `extraScrapeConfigs` and `selfScrape.enabled` — applies in place by default: Prometheus re-reads `prometheus.yml` instead of the pod being replaced, so the pod keeps its data (`prometheus.configReload`, which needs the image's Prometheus v3.0 or later). The kubelet takes up to about a minute to write the new ConfigMap content into the pod, and Prometheus applies it at its next check, every 30 seconds (`prometheus.configReload.interval`). If the change doesn't show, see [A configuration change doesn't apply](#a-configuration-change-doesnt-apply).
+- A change to a value that lands in the pod — `retention`, `retentionSize`, `persistence`, `resources`, `goMemLimit`, `storage.sizeLimit`, the image, where the pod runs, or `configReload.enabled` itself — replaces the pod.
+
+!!! warning "A pod change restarts Prometheus"
+    The first example changes `retention`, `retentionSize` and `persistence`, so its upgrade replaces the Prometheus pod, and stops the old pod first. Until the new pod is ready, canary samples are inconclusive and KEDA can't read its triggers. With the default `emptyDir`, the new pod starts with no data.
 
 Add these values to your values file: `helm upgrade` resets any value that's missing from it. Upgrade with your current chart version, from the `CHART` column of `helm list -n ome`:
 
@@ -157,9 +162,13 @@ With the values above and other values at their defaults, the output is:
 --storage.tsdb.path=/prometheus
 --storage.tsdb.retention.time=2h
 --storage.tsdb.retention.size=12GB
+--enable-feature=auto-reload-config
+--config.auto-reload-interval=30s
 --web.enable-lifecycle
 --web.listen-address=:9090
 ```
+
+The two `auto-reload` flags are the in-place reload, `prometheus.configReload`.
 
 Restart the port-forward, which stopped with the old pod, and rerun the labels command from Step 1. Its first column now reads `llama-demo`.
 
@@ -373,6 +382,8 @@ The `prometheus` values configure the bundled Prometheus:
 | Value | Default | What it sets |
 | --- | --- | --- |
 | `prometheus.enabled` | `true` | Deploys Prometheus. |
+| `prometheus.configReload.enabled` | `true` | Reloads a changed `prometheus.yml` in place, instead of replacing the pod: see [Step 2](#step-2-tune-retention-storage-and-scope). Needs Prometheus v3.0 or later. Changing this value replaces the pod once. |
+| `prometheus.configReload.interval` | `30s` | How often Prometheus checks `prometheus.yml` for a change. Empty keeps Prometheus's own default. |
 | `prometheus.retention` | `30m` | How long to keep data. |
 | `prometheus.retentionSize` | `6GB` | The size at which the oldest data goes. Empty turns the limit off. |
 | `prometheus.scrapeInterval` | `15s` | How often to scrape. |
@@ -419,6 +430,28 @@ curl -s localhost:9090/api/v1/targets | jq -r '.data.activeTargets[] | select(.h
 Compare a target's port and path with its pod's annotations, and with the port that the pod serves metrics on.
 
 A port of `9091` or `9088`, where no OME container serves metrics, comes from the annotation `ome.io/enable-prometheus-scraping: "true"`, or from the chart value `ome.metricsaggregator.enablePrometheusScraping: "true"`. Remove the annotation, or set the value back to `"false"`, its default. Then opt the pod in with `prometheus.io/scrape: "true"`.
+
+### A configuration change doesn't apply
+
+An upgrade that only changes the scrape configuration doesn't replace the Prometheus pod: Prometheus reloads `prometheus.yml` in place, as [Step 2](#step-2-tune-retention-storage-and-scope) describes. The change takes up to about a minute and a half: up to about a minute for the kubelet to write the new ConfigMap content into the pod, and up to `prometheus.configReload.interval`, 30 seconds by default, for Prometheus's next check. Then rerun the commands from [Step 1](#step-1-check-the-targets) to see the new scope.
+
+If the change still doesn't show, check whether Prometheus refused the file: an invalid file leaves the running configuration in place, and Prometheus retries it at every check. The pod stays running and ready, so nothing restarts or flags it. With the port-forward from Step 1, read the reload metric:
+
+```bash
+curl -s localhost:9090/metrics | grep '^prometheus_config_last_reload_successful'
+```
+
+```output
+prometheus_config_last_reload_successful 1
+```
+
+`1` says Prometheus loaded the last file it checked. `0` says it refused the file and kept the previous configuration; its logs say why, in an `Error reloading config` line:
+
+```bash
+kubectl logs -n ome deployment/ome-prometheus | grep 'Error reloading config'
+```
+
+Fix the value and upgrade again. On a `prometheus.image` older than v3.0, which lacks in-place reload, set `prometheus.configReload.enabled: false`: every configuration change then replaces the pod.
 
 ### Prometheus keeps restarting
 
