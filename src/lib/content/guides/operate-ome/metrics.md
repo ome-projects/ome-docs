@@ -59,7 +59,7 @@ The `ome-control-plane` job reads the same port and path annotations, and adds t
 | [Alfred](../../concepts/scheduling/alfred.md) (alpha) | Its pods in `ome`. | Its ServiceMonitor: see [Alfred metrics and events](../../reference/scheduling/alfred-metrics-and-events.md). |
 | [OME scheduler](../../concepts/scheduling/ome-scheduler.md) (alpha) | Nothing: its metrics need HTTPS and authorization. | Its ServiceMonitor: see [Metrics](ome-scheduler.md#metrics). |
 
-[Servers and metrics](../../reference/operate-ome/controller-manager-flags.md#servers-and-metrics) describes the controller's metrics endpoint. [Controller metrics](../../reference/rollouts/canary-analysis.md#controller-metrics) covers the canary metrics on it, [Watch deploys in the controller's metrics](#watch-deploys-in-the-controllers-metrics) its deploy-latency and status-write series, and [Watch placement in the controller's metrics](#watch-placement-in-the-controllers-metrics) its multi-cluster placement series.
+[Servers and metrics](../../reference/operate-ome/controller-manager-flags.md#servers-and-metrics) describes the controller's metrics endpoint. [Controller metrics](../../reference/rollouts/canary-analysis.md#controller-metrics) covers the canary metrics on it, [Watch deploys in the controller's metrics](#watch-deploys-in-the-controllers-metrics) its deploy-latency and status-write series, [Watch rollout groups in the controller's metrics](#watch-rollout-groups-in-the-controllers-metrics) its rollout-group series, and [Watch placement in the controller's metrics](#watch-placement-in-the-controllers-metrics) its multi-cluster placement series.
 
 ## Step 1: Check the targets
 
@@ -276,7 +276,7 @@ The time to ready covers every InferenceService and spans the whole deploy — a
 
 The pod-create-to-ready histogram starts where the pods do, so the gap between the two histograms is the time a deploy spends before its pods exist. It covers a new Instance's own start — image pull, model localization, readiness — per component, such as `engine` or `decoder`.
 
-The phase histogram carries only the phase that the group leaves — a [`CoordinationPhase`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CoordinationPhase) value, such as `Waiting` or `Draining` — summed across InferenceServices, so its series count stays flat however many services roll. The dwell is measured from the group's `lastTransitionTime` in the service's `status.rolloutCoordination`. To single out the group behind a slow phase, read that status, or the counter `ome_omenative_rollout_group_transition_total`, whose labels name the InferenceService and the group: [Set up alerting](alerting.md#omemassrolloutfailure) queries it.
+The phase histogram carries only the phase that the group leaves — a [`CoordinationPhase`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CoordinationPhase) value, such as `Waiting` or `Draining` — summed across InferenceServices, so its series count stays flat however many services roll. The dwell is measured from the group's `lastTransitionTime` in the service's `status.rolloutCoordination`. To single out the group behind a slow phase, read that status, or the per-group counters in [Watch rollout groups in the controller's metrics](#watch-rollout-groups-in-the-controllers-metrics), whose labels name the InferenceService and the group.
 
 The status-flush counter counts the writes of an InferenceService's status (`controller="isvc"`) and of an [InferenceReplica's](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica) (`controller="ir"`). A flush that retried past a 409 conflict and committed counts as `success`. `conflict` means the retries ran out and the next reconcile rewrites from fresh state: expect some under OMENative's status churn, but a climbing rate says writers are fighting over the object. `notfound` means the object was deleted mid-flush, and the write was dropped cleanly. `error` is any other failure.
 
@@ -295,6 +295,46 @@ sum by (controller) (rate(ome_isvc_status_update_total[15m]))
 ```
 
 With the bundled Prometheus's 30-minute retention, the histograms hold only your newest deploys; for dashboards over days, [use your own](#use-your-own-prometheus). When an InferenceService is deleted, the manager removes its time-to-ready and pod-create-to-ready series; the phase histogram and the flush counter name no service, so they stay.
+
+## Watch rollout groups in the controller's metrics
+
+Seven series on the same endpoint follow the [rollout groups](../../concepts/rollouts-and-traffic/rollout-groups.md) of OMENative components fleet-wide: where each group stands, which groups failed and why, the surges `maintainRatio` refused, the groups serving a mix of revisions, and the revisions each component serves. They cover blue-green and rolling-update groups and the [sequences](../../concepts/rollouts-and-traffic/rollout-groups.md#roll-components-one-at-a-time) they form; a canary group records none of the series that name a service — [Controller metrics](../../reference/rollouts/canary-analysis.md#controller-metrics) covers the canary series. As above, only the leader records them, so filter by its `pod` label.
+
+| Metric | Labels | What it shows |
+| --- | --- | --- |
+| `ome_omenative_rollout_group_phase_total` | `namespace`, `isvc`, `group`, `phase` | A counter of the group's reconciles, labeled with the phase each one computed: a [`CoordinationPhase`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CoordinationPhase) value, `Idle` for a group at rest. |
+| `ome_omenative_rollout_group_transition_total` | `namespace`, `isvc`, `group`, `from`, `to` | A counter of the group's phase changes. Its `to="Failed"` increases are the entries into Failed: [Set up alerting](alerting.md#omemassrolloutfailure) queries them. |
+| `ome_omenative_rollout_group_failure_total` | `namespace`, `isvc`, `group`, `reason` | A counter of the reconciles that find the group Failed, with the phase's message as the `reason`. |
+| `ome_omenative_ratio_skew_total` | `namespace`, `isvc`, `group` | A counter of the reconciles on which [`maintainRatio`](../../concepts/rollouts-and-traffic/rollout-groups.md#rolling-update) refused every surge of at least one component, to keep the group's serving ratio in its band. |
+| `ome_omenative_mixed_pairing_total` | `namespace`, `isvc`, `group` | A counter of the reconciles that saw a rolling-update group's live pods span more than one revision. |
+| `ome_omenative_per_revision_service_total` | `namespace`, `isvc`, `component` | A gauge, despite its name: the component's revisions with live pods — the revisions OME keeps per-revision Services for. |
+| `ome_omenative_ratio_gate_bypassed_total` | `component`, `strategy` | A counter of the same-pod in-place starts admitted with the serving-capacity band waived: the Normal `RatioGateBypassed` events, fleet-wide. |
+
+The `group` label is the group's position in `spec.rollout.groups`, as a string: `group="0"` is the first group, and a sequence collapses into one group, `0`. The phase counter is the per-group companion of the phase histogram [above](#watch-deploys-in-the-controllers-metrics): the histogram stays flat at fleet scale by carrying only the phase, and these counters name the InferenceService and group behind it. The counters move only when the InferenceService reconciles, so a quiet series says the controller has no work on the service, not that its group left a phase.
+
+A group goes Failed when an [Instance](../../concepts/omenative/instances.md) of any component in it fails — the rollup behind the `CoordinationGroupFailed` Warning event that [rollout groups](../../concepts/rollouts-and-traffic/rollout-groups.md#choose-a-progression) describes. The event fires once, on the transition; the failure counter counts every reconcile that finds the group Failed, so it keeps climbing while the group sits there, until a change — a fixed image, or [resetting the Instances](../omenative/reset-failed-instances.md) — makes the failed component healthy. For when a group first failed, read the transition counter instead. `reason` is the group's status message, one fixed sentence per progression, such as `one or more Components in the RollingUpdate group failed`; a sequence's names the component that blocks it, as in `Sequential group blocked by Failed Component: engine`.
+
+The skew counter moves only for a group with `maintainRatio`, on a reconcile that computes `Surging` or `Waiting`: when even one surge of some component would leave the serving-ratio band, OME zeroes that component's surge budget for the pass, counts the reconcile once, and records a Normal `RatioSkewRejected` event on the InferenceService. It counts held passes, not held pods: a steady rate is a component waiting at the hold that [Rolling update](../../concepts/rollouts-and-traffic/rollout-groups.md#rolling-update) describes, and the series stops once its peer catches up and the surge fits.
+
+The mixed-pairing counter follows a rolling-update group of two or more components. Each reconcile that sees the group's live pods on more than one revision — one component's pods on two revisions, or two components on different ones — counts once, with a Normal `MixedPairingObserved` event. A rolling update moves through such a mix by design, so expect it to climb while the group rolls; one still climbing long after the roll says the group never converged.
+
+The per-revision Service gauge is written for every OMENative component that no canary group drives, in a group or not: how many distinct revisions have a live pod, each backed by the per-revision Services that feed the component's [traffic status](configure-the-controller.md#damp-per-revision-traffic-churn-in-status). A component serving one revision reads 1; the gauge rises while a rollout keeps two revisions' pods, and falls back when the old revision's pods go. It counts revisions with any live pod, ready or not, so it can name a revision before the ready-pod split in status does. Despite the `_total` suffix, read it as a value, not through `rate()`.
+
+The bypass counter tallies the Normal `RatioGateBypassed` events fleet-wide: a same-pod in-place start — `strategy` is `InPlaceIfPossible` or `InPlaceOnly` — admitted with the serving-capacity band waived, because the drained pod returns 1:1, as [Rolling update](../../concepts/rollouts-and-traffic/rollout-groups.md#rolling-update) explains. The waiver is structural, so it also counts in-place starts outside any `maintainRatio` group — a component in no group, or one a canary group drives — where there was no band to consult; a start the engine-decoder [batches](../../concepts/rollouts-and-traffic/rollout-groups.md#batches-for-the-engine-and-the-decoder) pace doesn't count, since the batch step replaces the band there.
+
+As with the deploy series, an InferenceService's namespace is in the label `exported_namespace` in queries. This one lists the groups the band held in the last 15 minutes:
+
+```text
+sum by (exported_namespace, isvc, group) (increase(ome_omenative_ratio_skew_total[15m])) > 0
+```
+
+And this one the components serving more than one revision right now:
+
+```text
+ome_omenative_per_revision_service_total > 1
+```
+
+When an InferenceService is deleted, the manager drops its series from all of these; only the bypass counter, which names no service, stays. The relocation counter on the same endpoint, `ome_omenative_auto_migrations_total`, is covered in [Count automatic relocations](../../concepts/omenative/migration-and-transient-scale.md#count-automatic-relocations). To look into one group the series flag, read the service's `status.rolloutCoordination`, or run [`kubectl ome rollout`](../../reference/kubectl-ome/rollout.md).
 
 ## Watch placement in the controller's metrics
 
