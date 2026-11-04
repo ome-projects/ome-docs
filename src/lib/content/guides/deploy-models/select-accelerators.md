@@ -255,7 +255,7 @@ Constraints limit the classes that a policy picks from. Set them in `spec.accele
 | `architectureFamilies` | The list has its `family`, or its vendor and family joined by a hyphen: `hopper` or `nvidia-hopper`. |
 | `minMemory`, `maxMemory` | Its `capabilities.memoryGB`, rounded down to whole GiB, is in the range. Write `memoryGB` in `Gi`: `80G` counts as 74. |
 | `requiredFeatures` | Its `capabilities.features` has every entry. |
-| `minArchitectureVersion` | Its `capabilities.computeCapability` is at least this version. The two compare as text, so `"10.0"` is lower than `"9.0"`. |
+| `minArchitectureVersion` | Its `capabilities.computeCapability` is at least this version. The two compare as numbers, major then minor, so `"10.0"` is above `"9.0"`. When either isn't a dotted number, such as `"sm_90"`, they compare as text. |
 | `minComputePerformanceTFLOPS` | Always. `BestFit` scores the classes below it lower. |
 | `preferredPrecisions` | Always. `BestFit` and `MostCapable` read the TFLOPS of the first listed precision that a class has. `fp8` and `int8` read `int8Tops`. |
 

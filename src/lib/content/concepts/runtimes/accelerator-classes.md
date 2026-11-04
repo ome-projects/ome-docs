@@ -105,7 +105,7 @@ Only `discovery` and `capabilities` are required, and both can be `{}`, but a cl
 | `discovery.nodeSelector` | Finding matching nodes, and the pods' node selector. |
 | `discovery.affinity` | The pods' node affinity. Node matching ignores it. |
 | `capabilities.memoryGB` | The MEMORY column, the `minMemory` and `maxMemory` constraints, and the BestFit and MostCapable policies. |
-| `capabilities.computeCapability` | The `minArchitectureVersion` constraint. Versions compare as text, so `10.0` is lower than `9.0`. |
+| `capabilities.computeCapability` | The `minArchitectureVersion` constraint. Versions compare as numbers, major then minor, so `10.0` is above `9.0`. When either value isn't a dotted number, such as `sm_90`, the two compare as text. |
 | `capabilities.memoryBandwidthGBps` | The MostCapable policy. |
 | `capabilities.features` | The `requiredFeatures` constraint, ignoring case. |
 | `capabilities.performance` | The compute scores of the BestFit and MostCapable policies. |
