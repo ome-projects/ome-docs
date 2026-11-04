@@ -125,7 +125,7 @@ OME copies the `keda` fields into the ScaledObject as they are:
 | `triggers` | Required. The KEDA triggers to scale on. |
 | `pollingInterval`, `cooldownPeriod`, `fallback` | The ScaledObject settings of the same names. |
 | `idleReplicaCount` | The replica count while no trigger is active. It must be lower than `minReplicas`. |
-| `advanced` | The ScaledObject's `advanced` settings. A `horizontalPodAutoscalerConfig.name` you set takes effect once KEDA controls the HorizontalPodAutoscaler: during [a switch from HPA](#switch-between-hpa-and-keda), OME names the handed-over HorizontalPodAutoscaler first. |
+| `advanced` | The ScaledObject's `advanced` settings. A `horizontalPodAutoscalerConfig.name` you set must be a DNS label, 63 characters at most, or [admission rejects it](#what-admission-rejects). It takes effect once KEDA controls the HorizontalPodAutoscaler: during [a switch from HPA](#switch-between-hpa-and-keda), OME names the handed-over HorizontalPodAutoscaler first. When nothing names the HorizontalPodAutoscaler, KEDA calls it `keda-hpa-` plus the ScaledObject's name; when that doesn't fit in 63 characters, OME sets a shortened name on the ScaledObject instead — a hash of the full name, then its tail, the same every time — so a long InferenceService name doesn't fail KEDA's admission. |
 
 ### Switch between HPA and KEDA
 
@@ -338,6 +338,7 @@ The InferenceService webhook rejects the following, with the component and the r
 | `KedaTriggersRequired` | `class: KEDA` without a `keda` block. |
 | `HPAMetricMalformed` | An `hpa.metrics` entry that lacks a `type`, or the field for its `type`, as in `pods` for `type: Pods`. |
 | `KedaIdleBelowMin` | A `keda.idleReplicaCount` at or above the `minReplicas` set in the InferenceService. |
+| `KedaHPANameInvalid` | A `keda.advanced.horizontalPodAutoscalerConfig.name` that isn't a DNS label: lowercase letters, digits and hyphens, starting and ending with a letter or digit, 63 characters at most. KEDA's own admission would reject the ScaledObject at reconcile time; OME rejects the spec when you apply it instead. |
 | `InvalidScaleToZero` | `minReplicas: 0` without a `class: KEDA` block in the InferenceService itself. |
 | `must be <= maxReplicas` | A `minReplicas` above `maxReplicas`, both set in the InferenceService. |
 | `AutoscalerAnnotationConflict` | An `ome.io/autoscalerClass` annotation on the InferenceService while a component sets an `autoscaler` block. |
