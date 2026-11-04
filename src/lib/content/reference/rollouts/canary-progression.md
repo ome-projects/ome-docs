@@ -133,7 +133,7 @@ A step starts by moving its capacity to the new revision, and waits in `Pending`
 | Manual | `pause: {}` | You promote it with `kubectl ome rollout promote`. |
 | Analysis | `analysis` | Its metric checks pass, after the optional `initialDelay` and no sooner than the step's `pause.duration`. See [Canary metric analysis](canary-analysis.md). |
 
-GATE in `kubectl ome rollout status` shows these names. If a step's ready Instances drop below its count, the step goes back to `Pending`, and its clock starts again once its new Instances are ready. The one capacity loss a step doesn't wait out is a [crash-looping canary pod](#crash-looping-canary-pods): it parks the canary at `Failed` before OME checks any gate. To end a step's wait yourself, [force the step](#force-a-step-past-its-capacity-wait). At the last step, the gate holds the canary in `Promoting` until it passes.
+GATE in `kubectl ome rollout status` shows these names. If a step's ready Instances drop below its count, the step goes back to `Pending`, and its clock starts again once its new Instances are ready. The one capacity loss a step doesn't wait out is a [crash-looping canary pod](#crash-looping-canary-pods): it parks the canary at `Failed` before OME checks any gate. To end a step's wait yourself, [force the step](#force-a-step-past-its-capacity-wait). At the last step, the gate holds the canary in `Promoting` until it passes. A Normal event marks each advance, and another the completion: see [Events of a healthy canary](#events-of-a-healthy-canary).
 
 ## Force a step past its capacity wait
 
@@ -186,6 +186,31 @@ The canary's phase is in `status.components.<component>.rolloutPhase` of the gro
 | `Failed` | A step ran past its [ready timeout](#readytimeout), a canary pod kept dying after it served (see [Crash-looping canary pods](#crash-looping-canary-pods)), an analysis rollback found a [stable revision with no live Instance](canary-analysis.md#when-the-stable-revision-runs-no-instance), or a rollback found [no ControllerRevision retained for the stable revision](#while-a-canary-runs). Whatever the reason, the park holds every member's roll where it stands: see [What a `Failed` canary holds](#what-a-failed-canary-holds). |
 | `RollingBack` | A rollback is moving Instances back to the stable revision. |
 | `RolledBack` | Every Instance is back on the stable revision. |
+
+## Events of a healthy canary
+
+Two Normal events on the InferenceService mark a canary's progress, so `kubectl describe` or an event watch shows an advance without polling status:
+
+| Event | When | Message |
+| --- | --- | --- |
+| `CanaryStepAdvanced` | A step's gate opened and the canary moved to the next step. | `canary advanced to step 1`: the new step's index, counted from 0. |
+| `CanaryCompleted` | The canary completed, and the phase turned `Stable`. | `canary rollout completed; engine is now stable at 100%`, naming the group's [primary component](#phases). |
+
+OME emits each event once, on the pass that makes the move — the same edge that counts in `ome_canary_step_total` and `ome_canary_complete_total`: see [Controller metrics](canary-analysis.md#controller-metrics). A [forced step](#force-a-step-past-its-capacity-wait) advances with the same `CanaryStepAdvanced`, after its `CanaryStepForced` warning. The move off the last step is the completion, not an advance, so the three steps of the [example](#example) record two advances, then the completion:
+
+```bash
+kubectl get events -n prod --field-selector reason=CanaryStepAdvanced -o custom-columns=TYPE:.type,OBJECT:.involvedObject.name,MESSAGE:.message
+```
+
+```output
+TYPE     OBJECT   MESSAGE
+Normal   chat     canary advanced to step 1
+Normal   chat     canary advanced to step 2
+```
+
+The advance event names its new step and no weight, because the [weight in status](#traffic-split) still reads the step the canary left: the new step waits in `Pending` for its capacity, and OME records its `traffic` once its new Instances are ready. So `canary advanced to step 1` — onto the example's step 2, since the event counts from 0 — arrives while status still records 10% for the new revision, and the new step's 50 follows when its second Instance is ready. Pairing the new step with the weight still programmed would mislead, so the event doesn't.
+
+`CanaryCompleted` comes only when the canary completes onto the new revision: after the last step's gate and [`scaleDownDelaySeconds`](#fields), once every Instance serves it. A rollback never records it — a finished rollback closes its run with `RolloutRunClosed` instead, as [Controller metrics](canary-analysis.md#controller-metrics) shows.
 
 ## While a canary runs
 
