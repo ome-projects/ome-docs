@@ -27,7 +27,7 @@ A pause holds the rollout of an [InferenceService](../../concepts/serving/infere
 | Updates | No Instance starts an update. A [`SurgeThenDrain`](../../concepts/architecture/omenative-update-strategies.md#surgethendrain) update under way stops before its old pods start draining, so old and new pods run side by side until you resume. On a multi-pod Instance it stops on its current step, even mid-drain with old pods out of service. Other updates under way finish. |
 | New Instances | None start, whether you raise the replicas or an autoscaler does. One already being created can finish. |
 | Migrations | None start or advance. |
-| Canaries | Stay on their step, and a revision that appears during the pause starts no canary. A promote or rollback request waits until the pause ends. |
+| Canaries | Stay on their step, and a revision that appears during the pause starts no canary. A promote or rollback request waits until the pause ends, and so does an [`ome.io/rollout-resume` request](#the-resume-annotation-disappears-and-nothing-resumes). |
 | [Rollout groups](../../concepts/rollouts-and-traffic/rollout-groups.md) | Blue-green, rolling-update and sequential groups stop in the phase `Paused`. |
 | Spec changes | Roll out when you resume. Setting or removing the annotation starts no rollout of its own. |
 | Repairs | At `true`, repairs go on as the [restart policy](../../concepts/omenative/instance-restart-policy.md) sets them. At `freeze`, no repair starts, and one under way finishes. The kubelet still restarts containers at either depth. |
@@ -223,7 +223,44 @@ kubectl annotate inferenceservice chat -n prod ome.io/rollout-resume=bbbbbbbb
 inferenceservice.ome.io/chat annotated
 ```
 
+A bare hash re-enters whichever canary carries it. When more than one canary is parked, scope the value to one [canary unit](../../concepts/rollouts-and-traffic/rollout-groups.md#canary) as `<component>=<hash>`, with `engine`, `decoder` or `router`. An engine and a decoder roll as one unit, so `decoder=<hash>` and `engine=<hash>` name the same canary. kubectl reads the key up to the first `=`, so the value's own `=` needs no escaping:
+
+```bash
+kubectl annotate inferenceservice chat -n prod ome.io/rollout-resume=engine=bbbbbbbb
+```
+
+```output
+inferenceservice.ome.io/chat annotated
+```
+
 OME clears the phase, restarts the canary at its first step toward that revision, and removes the annotation once it acts. The restart waives nothing: every gate runs again, so a revision that failed fails again unless you fixed the cause. A `Failed` canary can be [rolled back](promote-or-roll-back-a-canary.md#roll-back-the-canary) instead, and a fix that produces a new revision starts a fresh canary either way.
+
+The admission webhook checks the value when you set it: the hash, bare or scoped, is lowercase letters and digits, at least 6 of them, and the scope is one of the three components above. It rejects anything else, such as `true` or `engine=`, with a message that ends in `(InvalidRolloutResumeTarget)`.
+
+### The resume annotation disappears and nothing resumes
+
+OME acts on an `ome.io/rollout-resume` request once and removes the annotation, whether or not it resumed anything, so the annotation vanishing on its own tells you nothing. The events on the InferenceService do: a resume that applied records the Normal event `RolloutResumed`, such as `resumed engine from Failed: re-entering the canary ladder at step 0 on revision bbbbbbbb; every gate re-runs`, and one that couldn't apply records the Warning event `RolloutResumeRejected` with the reason:
+
+```bash
+kubectl get events -n prod --field-selector reason=RolloutResumeRejected \
+  -o custom-columns=TYPE:.type,OBJECT:.involvedObject.name,MESSAGE:.message
+```
+
+```output
+TYPE      OBJECT   MESSAGE
+Warning   chat     resume rejected for engine: no member of the unit targets revision "bbbbbbbb" any more (engine targets aaaaaaaa); the request is removed
+```
+
+The rejection is one of four:
+
+- **The value addresses no canary, parked or in flight**: no canary carries the bare hash, or no canary group covers the scope's unit. OME removes the request at once, so it can't fire later on a canary that happens to get the same hash.
+- **The hash isn't the parked canary revision**: the value is stale, such as a hash kept from an earlier canary. The message names the parked revision; set the annotation again with it.
+- **No member of the unit targets the revision any more**, as in the output above: the spec went back to the stable revision after the park, so nothing is left to roll, and a re-entry would have nothing to move. The message lists what each member targets.
+- **No rollout run is pinned, so there is no plan to re-enter**: a `Failed` hold normally keeps its rollout run open, and this one has none, so there are no steps to re-enter.
+
+Two more cases leave no event. A value that addresses a canary that isn't parked is removed with no effect: the canary is still in flight, the scoped unit has none, or an earlier pass already applied the resume. And while the service is [paused](#what-a-pause-holds), OME doesn't act on the request at all: the annotation stays until the pause ends.
+
+A resume that applies also removes a live `ome.io/rollout-rollback` annotation, which left in place would roll the resumed canary straight back.
 
 ### A promote or rollback request is present {#discard-pending-actions-on-resume}
 
