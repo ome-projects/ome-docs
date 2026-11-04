@@ -160,7 +160,7 @@ The two Instances run in different zones, so losing one zone leaves one Instance
 
 Add the fields to the engine or decoder of an InferenceService that runs on OMENative, and apply it. Running Instances stay where they are. New pods get the constraint: those of a scale-up, a repair, a migration or a rollout. To move a running Instance now, [request an Instance migration](../scale-and-migrate/request-an-instance-migration.md).
 
-Changing `topologyKey` on a component with workers is different: OME rolls the component onto a new revision.
+Changing `topologyKey` on a component with workers is different: OME rolls the component onto a new revision, and the new key lands as that rollout replaces each Instance's pods. A running Instance's gang keeps the old key meanwhile, in its pods' affinity and in its PodGroup's `ome.io/topology-key` annotation, and a repair refills a lost pod with the key the gang runs. See [The topology annotation follows the Instance's pods](../../concepts/serving/gang-scheduling.md#the-topology-annotation-follows-the-instances-pods).
 
 ## Spread under the OME scheduler {#preferred-under-the-ome-scheduler}
 
