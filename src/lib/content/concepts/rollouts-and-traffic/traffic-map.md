@@ -106,7 +106,7 @@ Each entry is a home of the InferenceService: a workload cluster that has admitt
 | `weight` | The cluster's share of the requests, relative to the other entries, from 0 through 1,000,000. |
 | `healthy` | `true` when the cluster can serve and no probe gates it: a ready replica or, when `reportedWeight` is set, a positive `reportedWeight` in place of the ready-replica test. A healthy entry can still have weight 0. |
 | `capacity.allocated` | The replicas that placement admitted on the cluster, lowered to `capacity.reported` when that's lower. When `reportedWeight` is set, it's diagnostic only. |
-| `capacity.ready` | The ready replicas. They cap the weight unless `reportedWeight` is set. |
+| `capacity.ready` | The ready replicas, from the control plane's reads of the cluster: [a cluster it can't read](#a-cluster-the-control-plane-cant-read) keeps its last count only for the observation grace. They cap the weight unless `reportedWeight` is set. |
 | `capacity.factor` | The capacity factor, present only when you set one and no `reportedWeight` replaces it: a reported weight already includes the hardware. |
 | `capacity.source` | `Endpoint` when a capacity report lowered `allocated` or `reportedWeight` is set, otherwise `ControlPlane`. |
 | `capacity.reported` | While capacity polling is on in `Ceiling` mode: the ceiling that the cluster reports, kept even when it's too high to lower `allocated`. See [Watch the capacity state](../../guides/multi-cluster/tune-routing-capacity-polling.md#step-3-watch-the-capacity-state). |
@@ -341,12 +341,35 @@ Compare the entry with these rows, and take the first that matches:
 | `drainRefs` lists an ID | A drain holds the cluster at 0, whatever its capacity. Remove the drain by its ID, as [Drain a workload cluster](../../guides/multi-cluster/drain-a-workload-cluster.md) shows. |
 | No `drainRefs`, `healthy: true`, and `capacity.allocated` and `capacity.ready` above 0 | Placement is draining the cluster: [a placement move removes the cluster's copy only after this zero is in the map](#a-placement-move-drains-a-cluster-first), so the entry keeps its counts until then. The cluster's entry in `status.placement.candidates` shows `allocation.drainRequested: true`, and there's no drain to remove. |
 | `capacity.reportedWeight: "0"` | The cluster reports that it can serve nothing. In [Reported mode](../../guides/multi-cluster/tune-routing-capacity-polling.md#reported-mode) the report is the cluster's capacity, so its ready replicas can't restore the weight; a positive report does. |
-| No `capacity.ready`, and `healthy: false` | The cluster has no ready replica, or the InferenceService's copy there isn't `IngressReady` yet. |
+| No `capacity.ready`, and `healthy: false` | The cluster has no ready replica, the InferenceService's copy there isn't `IngressReady` yet — or the replicas are serving and the control plane can't read the cluster. [The candidate's `observationFailingSince` says which](#a-cluster-the-control-plane-cant-read). |
 | No `capacity.allocated`, `capacity.source: Endpoint` and `capacity.reported: 0` | The cluster reports that it can serve nothing, although its replicas are ready. |
 | No `capacity.allocated`, and `capacity.source: ControlPlane` | Placement admitted no replicas on the cluster. |
 | `probe.gated: true`, and `healthy: false` | The probe gated the cluster after repeated failures. `probe.message` holds the last one. |
 
 If every entry has weight 0, or the table is empty, the [Routable](#routable) condition names the cause for the whole map.
+
+### A cluster the control plane can't read
+
+An entry's counts are the control plane's view: each pass, placement reads the InferenceService's copy on the workload cluster, and `capacity.ready` is the ready count of the last read that succeeded. When the reads fail — the cluster's API server unreachable, its connection down — the replicas there can stay Ready and serving while the entry loses `capacity.ready` and `healthy: true`, and its weight goes to 0: a ready count the control plane can't observe is withdrawn, not trusted. The entry keeps its endpoint and `capacity.allocated`.
+
+Two fields on the cluster's candidate in the InferenceService's [`status.placement.candidates`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CandidatePlacement) tell this apart from replicas that really aren't ready:
+
+```bash
+kubectl get inferenceservice llama-chat -n llama-demo \
+  -o jsonpath='{range .status.placement.candidates[*]}{.cluster} observationKnown={.observationKnown} observationFailingSince={.observationFailingSince}{"\n"}{end}'
+```
+
+```output
+cluster-a observationKnown=true observationFailingSince=
+cluster-b observationKnown= observationFailingSince=2026-11-04T08:57:12Z
+```
+
+- `observationKnown: true` means the pass read the cluster, so the candidate's counts are current: a missing `capacity.ready` really is no ready replica, or a copy that isn't `IngressReady` yet.
+- `observationFailingSince` is set while the reads fail, and `observationKnown` is left out, which reads as `false`. It records the first failed read, and the candidate's fields are retained evidence from the last successful read — the ready count only through the grace below. Here `cluster-b`'s replicas may well be serving — the control plane just can't see them.
+
+How long a retained ready count lasts is the observation grace: `ome.multicluster.config.placement.observationGrace` in the control-plane cluster's `ome-resources` values, a duration such as `2m`. While it lasts, counted from `observationFailingSince`, the candidate keeps the ready count of the last successful read, so the entry keeps its weight and a blip in the control plane's view doesn't move traffic. Once it passes with the reads still failing, the ready count drops to 0 and the entry takes the shape above: no `capacity.ready`, `healthy: false`, weight 0. The start is stored in status, so a controller restart neither restarts nor ends the grace. A pass that reads the cluster again clears both fields, and the counts are current again.
+
+The chart ships `observationGrace` empty, which is no grace: on a default installation, a cluster's ready count is withdrawn at the first failed read — and a pass reads each cluster once, unless [`memberReadRetry`](../../guides/operate-ome/configure-the-controller.md#retry-a-failed-member-read-within-a-placement-pass) lets it retry a transient failure. A grace keeps traffic flowing through blips the retries can't cover, at the cost of keeping weight that long on a cluster whose real state the control plane can't see. To alert on failing reads, the controller reports both fields [as gauges](../../guides/operate-ome/metrics.md#watch-placement-in-the-controllers-metrics).
 
 ## Conditions
 
@@ -425,6 +448,7 @@ Before you rely on a map, check that it's current:
 | `status.observedTrafficMapGeneration` | The map's `metadata.generation` | The publisher hasn't published the latest table. After a failure, it still holds the generation of the last success. |
 | Each condition's `observedGeneration` | The map's `metadata.generation` | The condition describes an older table. |
 | `status.sourceUID` | The InferenceService's `metadata.uid` | The map is left from an earlier InferenceService with the same name. |
+| Each candidate's `observationKnown` in the InferenceService's `status.placement.candidates` | `true` | The control plane can't read that cluster: its entry's counts are retained from the last successful read, and [the observation grace](#a-cluster-the-control-plane-cant-read) bounds how long they keep the weight. |
 | `probe.lastProbeTime` | The current time | A time much older than the probe's `period` means that the prober has stopped. |
 
 To compare the map's generation with the one that the publisher last published:
