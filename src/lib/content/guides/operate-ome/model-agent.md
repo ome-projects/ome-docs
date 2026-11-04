@@ -83,7 +83,7 @@ gpu-node-3   Updating
 
 The model is ready on `gpu-node-1` and `gpu-node-2`. On `gpu-node-3`, the agent is still downloading or checking the files, and the label turns `Ready`, or `Failed`, when it's done. Nodes outside the model's selector show `<none>`. For a BaseModel, the label key is `models.ome.io/{namespace}.basemodel.{name}`. Long names are shortened with a hash, as [Node labels and status](../../concepts/models/base-models.md#node-labels-and-status) describes.
 
-The agent also records each model in a ConfigMap named after the node, in `ome`, under the key `clusterbasemodel.{name}` or `{namespace}.basemodel.{name}`. In the JSON entry, `status` matches the label, `config` holds the model's details once it's ready, and `progress` shows how far a Hugging Face download has got. Show the name and state from the entry on `gpu-node-1`:
+The agent also records each model in a ConfigMap named after the node, in `ome`, under the key `clusterbasemodel.{name}` or `{namespace}.basemodel.{name}`. In the JSON entry, `status` matches the label, `config` holds the model's details once it's ready, and `progress` shows how far a Hugging Face download has got: see [Watch a Hugging Face download](#watch-a-hugging-face-download). Show the name and state from the entry on `gpu-node-1`:
 
 ```bash
 kubectl get configmap gpu-node-1 -n ome \
@@ -166,6 +166,43 @@ The agent doesn't retry a failed model by itself. It tries again when [its pod r
 When two `oci://` models name the same files, one downloads them, and the other reuses them once they're ready, or downloads them itself after 30 minutes. The waiting model re-checks every 30 seconds on the high-priority worker, so the reuse waits only for the other model's download, not for a free download worker.
 
 With `storage.downloadPolicy: ReuseIfExists`, models that use the same Hugging Face files share one copy on each node: see [Share Hugging Face artifacts](shared-hf-artifacts.md).
+
+### Watch a Hugging Face download
+
+While an `hf://` model downloads, its entry in the node's ConfigMap from [Step 3](#step-3-check-where-a-model-is-ready) carries `progress`, the download's latest report: the agent writes the newest report there every 30 seconds, and once more when the download stops. Read it on `gpu-node-3`, where the model is still `Updating`:
+
+```bash
+kubectl get configmap gpu-node-3 -n ome \
+  -o jsonpath='{.data.clusterbasemodel\.qwen2-5-7b-instruct}' | jq .progress
+```
+
+```output
+{
+  "phase": "downloading",
+  "totalBytes": 16331279104,
+  "completedBytes": 7349075712,
+  "totalFiles": 14,
+  "completedFiles": 9,
+  "speedBytesPerSec": 193257683.2,
+  "lastUpdated": "2026-11-04T09:21:37Z"
+}
+```
+
+`completedBytes` over `totalBytes` is the download's percentage — 45% here.
+
+| Field | What it holds |
+| --- | --- |
+| `phase` | `scanning` while the download lists the snapshot's files — the totals can still be `0` — then `downloading`, and `finalizing` once every file is done. |
+| `totalBytes`, `totalFiles` | The bytes and files of the whole snapshot, files already on the node included, not just what's left to download. |
+| `completedBytes`, `completedFiles` | How much of that is done. A file that's already in the `path` at its full size counts as soon as the download reaches it, so [a retry](#interrupted-hf-downloads) jumps ahead by the files it kept. |
+| `speedBytesPerSec` | Bytes per second between the last two reports: the speed over roughly the last 30 seconds, not over the whole download. `0` when no bytes arrived between them. |
+| `lastUpdated` | When the download last reported, as an RFC3339 timestamp. |
+
+The download reports only when it moves — bytes arrive, a file finishes, or the phase changes — and a 30-second pass that finds no new report writes nothing. So while the transfer is healthy, `lastUpdated` stays under about a minute old, and a `lastUpdated` several minutes old on a model that's still `Updating` means the download is moving no bytes or files: read the agent's log on the node, as [Troubleshooting](#troubleshooting) shows.
+
+Only `hf://` downloads write `progress`: a model downloading its own copy under the default `AlwaysDownload` policy, and the one model downloading the copy that [`ReuseIfExists` models share](shared-hf-artifacts.md#how-sharing-works) — the models waiting on that copy show none. `oci://` and `modelpack://` downloads never write it.
+
+When the download ends and the model's `status` on the node turns `Ready` or `Failed`, the same write clears `progress`, and the command above prints `null`. A vanished `progress` marks the end of the download, not a lost record.
 
 ### What an interrupted `hf://` download keeps {#interrupted-hf-downloads}
 
@@ -290,7 +327,7 @@ After you fix the cause, restart the agent pod on the node, as in [A model stays
 A model's label can stay `Updating` because:
 
 - The agent restarted: see the warning in [Configure the agent](#step-2-change-a-setting).
-- The model is waiting its turn, or still downloading. For a Hugging Face model, `progress` in the node's ConfigMap shows how far it has got: see [Step 3](#step-3-check-where-a-model-is-ready).
+- The model is waiting its turn, or still downloading. For a Hugging Face model, `progress` in the node's ConfigMap shows how far it has got, and a `lastUpdated` several minutes old there means the download has stalled: see [Watch a Hugging Face download](#watch-a-hugging-face-download).
 - Another `oci://` model is downloading the same files. The log has a `Waiting for artifact operation` line every 30 seconds: see [How downloads run](#workers-and-queues).
 - The agent has no downloader for the model's scheme, `s3://`, `az://`, `gs://` or `github://`, and logs `unknown storage type`. See [Where the weights come from](../../concepts/models/base-models.md#where-the-weights-come-from).
 - The agent can't parse the `oci://` URI, and logs `Failed to get target directory path for model` with the reason. Use the form from the same section.
