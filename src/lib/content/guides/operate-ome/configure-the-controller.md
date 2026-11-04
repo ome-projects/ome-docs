@@ -443,6 +443,57 @@ kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.multicl
 
 The `multicluster` entry is in [the list that needs a restart](#tune-the-config-cache): the manager reads it once, when it starts, so the upgrade's restart applies the change, and a `kubectl` edit to the ConfigMap needs one. At startup, a manager with multi-cluster on checks the block against the rules in the table, and a break stops it with `invalid multi-cluster configuration` — for example, `invalid multi-cluster configuration: placement.memberReadRetry.maxAttempts: must exceed 1 when backoffs are set` for backoffs set while `maxAttempts` keeps the default `0`: see [Troubleshooting](#the-manager-rollout-doesnt-finish). While a retry runs, the leader logs `member read failed; retrying`, with the cluster, the attempt and the wait, at verbosity 1 only.
 
+## Pace a placed service's status refresh
+
+The control-plane cluster's manager mirrors what it last read from each candidate cluster into a placed InferenceService's `status.placement`, and [the placement gauges](metrics.md#watch-placement-in-the-controllers-metrics) follow that status. Multi-cluster placement is alpha and off by default, as [Retry a failed member read within a placement pass](#retry-a-failed-member-read-within-a-placement-pass) says. What triggers the next read is `ome.multicluster.config.workloadCluster.cacheEnabled`, which picks one of two pacing models:
+
+- **With the cache off**, the chart's default, the control plane reads the workload clusters live and holds no watch on them, so nothing on a member can wake it: a change there becomes visible when the next placement pass re-reads the members, and the mirrored status trails each member by up to the gap between passes.
+- **With the cache on**, the control plane serves its member reads — the services' derived copies, and the members' ServingRuntimes and ClusterServingRuntimes — from per-cluster watches, and those watches feed events back: a member change re-reconciles its source after a short debounce, so freshness is event-driven and the cadences below only recover what the watches miss.
+
+Four settings under `ome.multicluster.config`, which the chart writes into the same `multicluster` entry of the `inferenceservice-config` ConfigMap, set the model and its cadences:
+
+| Setting | Chart default | What it does |
+| --- | --- | --- |
+| `workloadCluster.cacheEnabled` | `false` | Serves member InferenceService, ServingRuntime and ClusterServingRuntime reads from per-cluster watches, and turns the member event funnels on. `false` keeps the reads live, with no event source. |
+| `placement.requeueInterval` | `""` | How soon a pass with work in flight re-checks: a candidate still admitting, a hold, a transient read error. Empty, such a pass re-checks every 30 seconds. With the cache off, a settled placement's re-read cadence also folds to this value, and `statusSafetyRequeue` is ignored. |
+| `placement.statusBatchPeriod` | `""` | With the cache on, the debounce that folds a burst of member events for one service into a single pass. Empty falls back to 1 second. With the cache off there are no events to fold. |
+| `placement.statusSafetyRequeue` | `""` | With the cache on, how long a settled placement waits before re-reading its members anyway, to recover a missed event — a watch gap, a full event buffer. Empty falls back to 10 minutes. It isn't the convergence latency: events drive freshness, so lowering it doesn't speed status up. |
+
+So with the chart's defaults — the cache off and every duration empty — the status is pass-paced: a placement with work in flight is re-read every 30 seconds, which is the up-to-half-a-minute lag between a workload cluster and `status.placement`, and a settled placement can wait for the 10-minute backstop fallback before its next re-read. When you keep the cache off, set `requeueInterval`: a placement in flight and a settled one then both follow the one cadence you chose. A placement-relevant change to the source InferenceService or to a [WorkloadCluster](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-WorkloadCluster) registration starts a pass at once either way: the cadences only bound changes on the member side, which the control plane can't see without the cache.
+
+This example turns the cache on, folds each service's event bursts into at most one pass every 2 seconds, and tightens the missed-event backstop to 5 minutes:
+
+```yaml title="values.yaml"
+ome:
+  multicluster:
+    config:
+      workloadCluster:
+        cacheEnabled: true
+      placement:
+        statusBatchPeriod: "2s"
+        statusSafetyRequeue: "5m"
+```
+
+The cache isn't free: the control plane then keeps watches open on every connected workload cluster for the three kinds and holds their objects in memory — including runtimes and same-name services it doesn't own, which its ownership checks must still see.
+
+Upgrade with your values file, as in [Step 1](#with-a-helm-value), and check the rendered entry:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.multicluster}' \
+  | jq '{cacheEnabled: .workloadCluster.cacheEnabled} + (.placement | {requeueInterval, statusBatchPeriod, statusSafetyRequeue})'
+```
+
+```output
+{
+  "cacheEnabled": true,
+  "requeueInterval": "",
+  "statusBatchPeriod": "2s",
+  "statusSafetyRequeue": "5m"
+}
+```
+
+The `multicluster` entry is in [the list that needs a restart](#tune-the-config-cache): the manager reads it once, when it starts, so the upgrade's restart applies the change, and a `kubectl` edit to the ConfigMap needs one. At startup, a manager with multi-cluster on refuses a stated duration that doesn't parse or isn't positive — an empty value isn't an error, the fallback in the table applies — and stops with `invalid multi-cluster configuration`, whose rest names the value and the rule, such as `invalid multi-cluster configuration: placement.statusSafetyRequeue: "10" is not a duration (use forms like "30s", "5m")`: see [Troubleshooting](#the-manager-rollout-doesnt-finish).
+
 ## Recognize other accelerator resources
 
 The `acceleratorResources` entry of the `inferenceservice-config` ConfigMap lists the extended resource names that OME counts as accelerators when it reads a runner container's requests and limits. The count sets the `PARALLELISM_SIZE` environment variable in the engine's and the decoder's runner: the accelerators in each pod times the pods in each replica. The chart writes the entry from `ome.controller.acceleratorResources`, whose default lists only `nvidia.com/gpu`.
@@ -580,7 +631,7 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E 
 | --- | --- |
 | `Invalid leader election timing` | The lease values break a rule in [Lease timing](#lease-timing). The error gives the values and the rule. |
 | `invalid --multicluster-role` | Set `ome.multicluster.role` to `control-plane`, or leave it empty. |
-| `invalid multi-cluster configuration` | The `multicluster` entry of the `inferenceservice-config` ConfigMap breaks a rule, and the rest of the line says which. For `placement.memberReadRetry`, see [Retry a failed member read within a placement pass](#retry-a-failed-member-read-within-a-placement-pass). |
+| `invalid multi-cluster configuration` | The `multicluster` entry of the `inferenceservice-config` ConfigMap breaks a rule, and the rest of the line says which. For `placement.memberReadRetry`, see [Retry a failed member read within a placement pass](#retry-a-failed-member-read-within-a-placement-pass); for a refused duration, such as the status pacing settings, see [Pace a placed service's status refresh](#pace-a-placed-services-status-refresh). |
 | `flag provided but not defined`, `invalid value` or `invalid boolean value` | A patched argument is misspelled, isn't in your OME version, or has a bad value, such as `3d` for a duration. |
 | `Failed to initialize deployment configuration`, or the same for another entry | That entry of the `inferenceservice-config` ConfigMap is invalid, and the rest of the line says why. For `replicas` in the `deploy` entry, see [Set replica defaults](set-replica-defaults.md). For `Failed to initialize event recorder configuration`, the `eventRecorder` entry breaks a rule in [Tune the per-object event budget](#tune-the-per-object-event-budget). For `Failed to initialize lifecycle scale configuration`, a scale setting in the `lifecycle` entry breaks a rule in [Pace OMENative scale-ups and scale-downs](#pace-omenative-scale-ups-and-scale-downs). |
 
