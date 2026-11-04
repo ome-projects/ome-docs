@@ -12,7 +12,9 @@ Default is what the manager uses without the flag. The Helm value column names t
 | Flag | Default | Helm value | Description |
 | --- | --- | --- | --- |
 | `--webhook` | `false` | None. The chart always passes it. | Runs the admission webhook server. |
+| `--webhook-only` | `false` | None | Serves the admission webhooks and runs no controller, so a manager outside a serving control plane can validate OME manifests. It requires `--webhook` and no `--leader-elect`: otherwise the manager exits at startup with `webhook-only mode requires --webhook and disabled leader election`. Every admission webhook registers except the [BenchmarkJob](../../concepts/serving/benchmarks.md) validator. |
 | `--webhook-port` | `9443` | None | The port of the webhook server. The chart's webhook Service expects 9443. |
+| `--webhook-cert-dir` | Empty | None | The directory with the webhook server's `tls.crt` and `tls.key`. Empty uses controller-runtime's certificate directory, `/tmp/k8s-webhook-server/serving-certs`, where the chart mounts the webhook certificate. It applies whenever the webhook server runs, with or without `--webhook-only`. |
 | `--health-probe-addr` | `:8081` | None | The address of the `/healthz` and `/readyz` endpoints. The chart's probes expect port 8081. |
 | `--enable-http2` | `false` | None | Serves HTTP/2 on the metrics and webhook servers. |
 | `--metrics-bind-address` | `:8080` | None. The chart always passes `:8080`. | The address of the metrics endpoint. `0` turns the endpoint off. The chart's metrics Service expects port 8080. |
