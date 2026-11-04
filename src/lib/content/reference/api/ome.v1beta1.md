@@ -2117,7 +2117,7 @@ Underlying type: `string`.
 
 ### `AcceleratorSelector` {#ome-io-v1beta1-AcceleratorSelector}
 
-Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec).
+Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EncoderSpec`](#ome-io-v1beta1-EncoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec), [`RoleView`](#ome-io-v1beta1-RoleView).
 
 AcceleratorSelector defines how to select accelerators for the InferenceService
 
@@ -3196,7 +3196,31 @@ MatchingTerms contains zero-based indexes into the source&#39;s affinity terms.
 <td><code>int64</code></td>
 <td>
 
-Weight is the effective static allocation weight, when applicable.
+Weight is deprecated in favour of MinWeight. MinWeight, when present,
+equals Weight. A plan accepted before MinWeight existed carries only
+Weight, so readers fall back to Weight when MinWeight is absent. Weight
+stays until every stored plan carries MinWeight.
+
+Minimum: `0`.
+
+</td></tr>
+<tr><td><code>minWeight</code></td>
+<td><code>int64</code></td>
+<td>
+
+MinWeight is the primary component&#39;s effective static weight, which
+divides minReplicas, when applicable. The planner writes it wherever it
+writes Weight.
+
+Minimum: `0`.
+
+</td></tr>
+<tr><td><code>maxWeight</code></td>
+<td><code>int64</code></td>
+<td>
+
+MaxWeight is the primary component&#39;s summed max ratio. It is set only
+when the source uses the *Replicas ratio form.
 
 Minimum: `0`.
 
@@ -3207,7 +3231,8 @@ Minimum: `0`.
 
 ComponentMatches records the Split weight of the other components when
 the affinity terms set weights: the decoder&#39;s, and the router&#39;s when
-routers are divided. Weight holds the primary component&#39;s. The accepted
+routers are divided. MinWeight, or Weight on an older plan, holds the
+primary component&#39;s. The accepted
 plan keeps them so that member floors never follow unaccepted label changes.
 
 Maximum items: `2`.
@@ -3625,22 +3650,9 @@ Multiple terms form a union; weights assign replica shares to each match.
 
 Validation: a cluster affinity term must contain a requirement.
 
-Validation: weight means weights.default; it may sit beside weights.decoder and weights.router, but not beside weights.default or weights.engine.
-
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
-<tr><td><code>weight</code></td>
-<td><code>int32</code></td>
-<td>
-
-Deprecated: Weight is weights.default, and is permitted only for static
-Split. It is the only weight a manager without weights support reads, so
-a rollback to such a manager keeps the engine shares set here.
-
-Minimum: `1`.
-
-</td></tr>
 <tr><td><code>weights</code></td>
 <td><a href="#ome-io-v1beta1-ClusterAffinityWeights"><code>ClusterAffinityWeights</code></a></td>
 <td>
@@ -3649,6 +3661,8 @@ Weights sets each component&#39;s replica weight on the clusters this term
 matches, and is permitted only for static Split. If any term gives a
 component a weight, the weights of matching terms add and a term that
 gives none contributes one. Weights are ratios, so they have no upper bound.
+With no weights on any term, every matched cluster weighs one and routers
+are divided, as a default weight of one on every term would.
 
 </td></tr>
 <tr><td><code>matchExpressions</code></td>
@@ -3679,8 +3693,11 @@ Used by [`ClusterAffinityTerm`](#ome-io-v1beta1-ClusterAffinityTerm).
 
 ClusterAffinityWeights holds one term&#39;s weight per component. The engine
 takes engine, then default. The decoder takes decoder, then default, then
-the engine&#39;s weight. Routers are divided across clusters only when a term
-sets router; a term without it then contributes the engine&#39;s weight.
+the engine&#39;s weight. The router takes router, then default, then the
+engine&#39;s weight. Routers are divided across clusters unless the terms set
+weights that name only the engine or decoder; then every cluster runs the
+full router policy. The integer keys and the *Replicas ratio keys are two
+forms of the same weights; one placement uses only one form.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -3690,6 +3707,8 @@ sets router; a term without it then contributes the engine&#39;s weight.
 <td>
 
 Default is the weight of every component this term does not name.
+Setting it on any term divides router.minReplicas across the clusters,
+as router does.
 
 Minimum: `1`.
 
@@ -3716,11 +3735,41 @@ Minimum: `1`.
 <td><code>int32</code></td>
 <td>
 
-Router is the router&#39;s weight. Setting it on any term divides
-router.minReplicas across the clusters; otherwise every cluster runs the
-full router policy.
+Router is the router&#39;s weight. Setting it or default on any term divides
+router.minReplicas across the clusters, as setting no weights does;
+weights that name only the engine or decoder keep the full router policy
+on every cluster.
 
 Minimum: `1`.
+
+</td></tr>
+<tr><td><code>defaultReplicas</code></td>
+<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
+<td>
+
+DefaultReplicas is the ratio form of default. It applies to every
+component this term does not name.
+
+</td></tr>
+<tr><td><code>engineReplicas</code></td>
+<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
+<td>
+
+EngineReplicas is the ratio form of engine.
+
+</td></tr>
+<tr><td><code>decoderReplicas</code></td>
+<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
+<td>
+
+DecoderReplicas is the ratio form of decoder.
+
+</td></tr>
+<tr><td><code>routerReplicas</code></td>
+<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
+<td>
+
+RouterReplicas is the ratio form of router.
 
 </td></tr>
 </tbody>
@@ -3844,7 +3893,31 @@ Allowed values: `engine`, `decoder`, `router`.
 <td><code>int64</code></td>
 <td>
 
-Weight is the component&#39;s effective static weight, when applicable.
+Weight is deprecated in favour of MinWeight. MinWeight, when present,
+equals Weight. A plan accepted before MinWeight existed carries only
+Weight, so readers fall back to Weight when MinWeight is absent. Weight
+stays until every stored plan carries MinWeight.
+
+Minimum: `0`.
+
+</td></tr>
+<tr><td><code>minWeight</code></td>
+<td><code>int64</code></td>
+<td>
+
+MinWeight is the component&#39;s effective static weight, which divides
+minReplicas, when applicable. The planner writes it wherever it writes
+Weight.
+
+Minimum: `0`.
+
+</td></tr>
+<tr><td><code>maxWeight</code></td>
+<td><code>int64</code></td>
+<td>
+
+MaxWeight is the component&#39;s summed max ratio. It is set only when the
+source uses the *Replicas ratio form.
 
 Minimum: `0`.
 
@@ -4029,7 +4102,7 @@ Allowed values: `MaxReplicas`, `MinReplicas`.
 
 ### `ComponentExtensionSpec` {#ome-io-v1beta1-ComponentExtensionSpec}
 
-Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`RouterSpec`](#ome-io-v1beta1-RouterSpec).
+Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EncoderSpec`](#ome-io-v1beta1-EncoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`RoleView`](#ome-io-v1beta1-RoleView), [`RouterSpec`](#ome-io-v1beta1-RouterSpec).
 
 ComponentExtensionSpec defines the deployment configuration for a given InferenceService component
 
@@ -4362,10 +4435,11 @@ LatestRolledoutRevision for the Component.
 <td><code>string</code></td>
 <td>
 
-PairingProtocol is the engine↔decoder wire-compatibility token the
-target&#39;s revision was minted under (spec.rollout.pairingProtocol at
-mint time). Consumers MUST only pair engine and decoder targets whose
-PairingProtocol values are equal; an empty value pairs with anything.
+PairingProtocol is the wire-compatibility token the target&#39;s revision
+was minted under (spec.rollout.pairingProtocol at mint time). Consumers
+MUST only pair targets of two roles that pass state to each other
+(engine and decoder, encoder and engine) whose PairingProtocol values
+are equal; an empty value pairs with anything.
 
 </td></tr>
 </tbody>
@@ -4373,7 +4447,7 @@ PairingProtocol values are equal; an empty value pairs with anything.
 
 ### `ComponentType` {#ome-io-v1beta1-ComponentType}
 
-Used by [`CandidateComponentFloor`](#ome-io-v1beta1-CandidateComponentFloor), [`ComponentAffinityMatch`](#ome-io-v1beta1-ComponentAffinityMatch), [`FollowerScalingStatus`](#ome-io-v1beta1-FollowerScalingStatus), [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`MigrationHistoryEntry`](#ome-io-v1beta1-MigrationHistoryEntry), [`PlacementComponentDemand`](#ome-io-v1beta1-PlacementComponentDemand), [`PlacementComponentFloor`](#ome-io-v1beta1-PlacementComponentFloor), [`ProportionalPolicy`](#ome-io-v1beta1-ProportionalPolicy), [`RolloutCoordinationGroupStatus`](#ome-io-v1beta1-RolloutCoordinationGroupStatus), [`RolloutGroup`](#ome-io-v1beta1-RolloutGroup), [`RolloutRunTarget`](#ome-io-v1beta1-RolloutRunTarget), [`ScalingPolicyStatus`](#ome-io-v1beta1-ScalingPolicyStatus).
+Used by [`CandidateComponentFloor`](#ome-io-v1beta1-CandidateComponentFloor), [`ComponentAffinityMatch`](#ome-io-v1beta1-ComponentAffinityMatch), [`FollowerScalingStatus`](#ome-io-v1beta1-FollowerScalingStatus), [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`MigrationHistoryEntry`](#ome-io-v1beta1-MigrationHistoryEntry), [`PlacementComponentDemand`](#ome-io-v1beta1-PlacementComponentDemand), [`PlacementComponentFloor`](#ome-io-v1beta1-PlacementComponentFloor), [`ProportionalPolicy`](#ome-io-v1beta1-ProportionalPolicy), [`Role`](#ome-io-v1beta1-Role), [`RoleView`](#ome-io-v1beta1-RoleView), [`RolloutCoordinationGroupStatus`](#ome-io-v1beta1-RolloutCoordinationGroupStatus), [`RolloutCoordinationMemberFinish`](#ome-io-v1beta1-RolloutCoordinationMemberFinish), [`RolloutGroup`](#ome-io-v1beta1-RolloutGroup), [`RolloutRunTarget`](#ome-io-v1beta1-RolloutRunTarget), [`ScalingPolicyStatus`](#ome-io-v1beta1-ScalingPolicyStatus).
 
 ComponentType contains the different types of components of the service
 
@@ -4446,7 +4520,7 @@ Allowed values: `BlueGreen`, `RollingUpdate`, `Independent`, `Sequential`.
 
 ### `DecoderSpec` {#ome-io-v1beta1-DecoderSpec}
 
-Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec), [`ServingRuntimeSpec`](#ome-io-v1beta1-ServingRuntimeSpec).
+Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec), [`RoleSpecs`](#ome-io-v1beta1-RoleSpecs), [`ServingRuntimeSpec`](#ome-io-v1beta1-ServingRuntimeSpec).
 
 DecoderSpec defines the configuration for the Decoder component (token generation in PD-disaggregated deployment).
 Used specifically for prefill-decode disaggregated deployments to handle the token generation phase.
@@ -4683,6 +4757,84 @@ Underlying type: `string`.
 
 Allowed values: `AlwaysDownload`, `ReuseIfExists`.
 
+### `EncoderSpec` {#ome-io-v1beta1-EncoderSpec}
+
+Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec), [`RoleSpecs`](#ome-io-v1beta1-RoleSpecs), [`ServingRuntimeSpec`](#ome-io-v1beta1-ServingRuntimeSpec).
+
+EncoderSpec defines the configuration for the Encoder component of an
+encoder-prefill-decode (EPD) disaggregated deployment: the pods that turn
+a request&#39;s images or audio into embeddings the engine reads. An encoder is
+a single pod per replica; it has no Leader or Worker.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><em>Embedded</em></td>
+<td><a href="#ome-io-v1beta1-PodSpec"><code>PodSpec</code></a></td>
+<td>
+
+This spec provides a full PodSpec for the encoder component.
+Allows complete customization of the Kubernetes Pod configuration including
+containers, volumes, security contexts, affinity rules, and other pod settings.
+
+The fields of `PodSpec` appear directly in this object.
+
+</td></tr>
+<tr><td><em>Embedded</em></td>
+<td><a href="#ome-io-v1beta1-ComponentExtensionSpec"><code>ComponentExtensionSpec</code></a></td>
+<td>
+
+ComponentExtensionSpec defines deployment configuration like min/max replicas, scaling metrics, etc.
+Controls scaling behavior and resource allocation for the encoder component.
+
+The fields of `ComponentExtensionSpec` appear directly in this object.
+
+</td></tr>
+<tr><td><code>runner</code></td>
+<td><a href="#ome-io-v1beta1-RunnerSpec"><code>RunnerSpec</code></a></td>
+<td>
+
+Runner container override for customizing the main container.
+This is essentially a container spec that can override the default container.
+Defines the main encoder container configuration, including image,
+resource requests/limits, environment variables, and command.
+
+</td></tr>
+<tr><td><code>topologySpread</code></td>
+<td><a href="#ome-io-v1beta1-TopologySpreadPolicy"><code>TopologySpreadPolicy</code></a></td>
+<td>
+
+TopologySpread spreads this component&#39;s instances across fault
+domains so losing one domain (rack / fabric slice / cube) cannot
+take out every instance at once. Rendered as a standard
+topologySpreadConstraint (maxSkew 1) on each encoder pod. Required
+renders as DoNotSchedule; Preferred renders as ScheduleAnyway. Not
+part of the revision hash: changing it shapes future placements
+without rolling a healthy fleet. Unset keeps pure bin-packing.
+
+Allowed values: `Preferred`, `Required`.
+
+</td></tr>
+<tr><td><code>topologySpreadKey</code></td>
+<td><code>string</code></td>
+<td>
+
+TopologySpreadKey is the node-label key naming the fault domains
+TopologySpread spreads across. An encoder pod has no co-location key,
+so spreading it requires setting this explicitly. Ignored unless
+TopologySpread is set.
+
+</td></tr>
+<tr><td><code>acceleratorOverride</code></td>
+<td><a href="#ome-io-v1beta1-AcceleratorSelector"><code>AcceleratorSelector</code></a></td>
+<td>
+
+AcceleratorOverride allows overriding the global accelerator selection for this component
+
+</td></tr>
+</tbody>
+</table>
+
 ### `Endpoint` {#ome-io-v1beta1-Endpoint}
 
 Used by [`EndpointSpec`](#ome-io-v1beta1-EndpointSpec).
@@ -4795,7 +4947,7 @@ Endpoint holds the details of a direct endpoint for an external inference servic
 
 ### `EngineSpec` {#ome-io-v1beta1-EngineSpec}
 
-Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec), [`ServingRuntimeSpec`](#ome-io-v1beta1-ServingRuntimeSpec).
+Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec), [`RoleSpecs`](#ome-io-v1beta1-RoleSpecs), [`ServingRuntimeSpec`](#ome-io-v1beta1-ServingRuntimeSpec).
 
 EngineSpec defines the configuration for the Engine component (can be used for both single-node and multi-node deployments).
 Provides a comprehensive specification for deploying model serving containers and pods.
@@ -5481,7 +5633,8 @@ the replica&#39;s own name otherwise. Controller-only.
 <td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
 <td>
 
-Component is the role this pod set fills: engine | decoder | router.
+Component is the role this pod set fills: engine | decoder | encoder |
+router.
 Immutable; moving a workload between roles requires recreating the
 InferenceReplica.
 
@@ -5583,11 +5736,12 @@ value is the effective InferenceService or runtime component setting.
 PairingProtocol is the engine/decoder wire-compatibility token. It is
 folded into the revision hash (a change mints a new revision) and
 stamped as the ome.io/pairing-protocol label on rendered pods; nil pairs
-with anything. Only engine and decoder replicas pair on it; a change on
-any replica still mints a new revision. On a projected replica the
-InferenceService controller copies spec.rollout.pairingProtocol onto
-the engine and decoder replicas and never onto the router, which must
-not re-roll on a protocol change.
+with anything. Only engine, decoder and encoder replicas pair on it; a
+change on any replica still mints a new revision. On a projected
+replica the InferenceService controller copies
+spec.rollout.pairingProtocol onto the engine, decoder and encoder
+replicas and never onto the router, which must not re-roll on a
+protocol change.
 
 Maximum length: `63`. Pattern: `^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$`.
 
@@ -5734,9 +5888,9 @@ the most recent status flush reflects.
 <td>
 
 ObservedTemplateHash is the pod-template hash (the ome.io/template-hash
-annotation the projector stamps beside the spec&#39;s templates) that
+annotation the projector writes beside the spec&#39;s templates) that
 updateRevision was last computed from. It names the roll target this
-status describes: a spec whose stamp differs asks for a revision the
+status describes: a spec whose template hash differs asks for a revision the
 status has not recorded yet, while a spec change outside the templates
 leaves both unchanged.
 
@@ -6024,6 +6178,23 @@ but is only utilized when implementing the disaggregated serving pattern
 to separate the prefill and decode phases of inference.
 
 </td></tr>
+<tr><td><code>encoder</code></td>
+<td><a href="#ome-io-v1beta1-EncoderSpec"><code>EncoderSpec</code></a></td>
+<td>
+
+Since v1.3.
+Encoder defines the encoder spec: a pod set that turns a request&#39;s
+images or audio into embeddings for the engine (prefill), for
+encoder-prefill-decode (EPD) disaggregated serving. The runtime moves
+the embeddings between encoder and engine pods; OME runs the pods,
+tells each side the other&#39;s address (OME_ENCODER_* and OME_ENGINE_*
+variables) and rolls the encoder as its own Component. Requires
+spec.engine, at least one spec.rollout.groups entry, and OMENative for
+every declared role, the router included; not allowed beside
+spec.placement or spec.routing. Alpha. The API may change without
+notice.
+
+</td></tr>
 <tr><td><code>model</code></td>
 <td><a href="#ome-io-v1beta1-ModelRef"><code>ModelRef</code></a></td>
 <td>
@@ -6164,6 +6335,7 @@ Conditions for the InferenceService:
 
 - EngineReady: engine readiness condition.
 - DecoderReady: decoder readiness condition.
+- EncoderReady: encoder readiness condition.
 - RouterReady: router readiness condition.
 - IngressReady: ingress resource readiness.
 - Ready: component aggregate on workload clusters, or placement serving
@@ -6427,6 +6599,22 @@ read off the cluster on a later pass: it is recorded here, and the
 hold pass converts it into the Waiting token and the deadline park
 on every pass it stands. Cleared by a create that completes with no
 refusal. Empty means the last create was not refused for capacity.
+
+</td></tr>
+<tr><td><code>placementWaitSince</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta"><code>Time</code></a></td>
+<td>
+
+PlacementWaitSince is when the attempt started waiting for its pods
+to be placed, recorded once a pod name the attempt needs is held by a
+node that stopped reporting: the member there must be rebuilt before
+the attempt can run. It is the earlier of that moment and the start
+of another member&#39;s wait for the scheduler. It stays while the
+attempt waits, even as the waiting pod changes (one member placed,
+the rebuilt member then unplaceable), and is cleared once every pod
+the attempt asks for runs on a node or the attempt ends. The
+unschedulable grace is measured from it when it is earlier than the
+unplaceable pod&#39;s own wait. Empty means no such wait is recorded.
 
 </td></tr>
 <tr><td><code>strategy</code></td>
@@ -7126,7 +7314,7 @@ Default: `kubeconfig`.
 
 ### `LeaderSpec` {#ome-io-v1beta1-LeaderSpec}
 
-Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec).
+Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`RoleView`](#ome-io-v1beta1-RoleView).
 
 LeaderSpec defines the configuration for a leader node in a multi-node component.
 The leader node coordinates the activities of worker nodes in distributed inference or
@@ -9112,6 +9300,10 @@ PlacementSpec declares explicit multi-cluster matching and allocation intent.
 
 Validation: replacementTimeout requires Single placement.
 
+Validation: clusterAffinity weights use either default/engine/decoder/router or the *Replicas ratios, not both.
+
+Validation: *Replicas ratios are allowed only in Split and replace spec.placement.split; remove split.
+
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
@@ -9307,7 +9499,7 @@ More info: https://kubernetes.io/docs/concepts/storage/volumes
 
 ### `PodSpec` {#ome-io-v1beta1-PodSpec}
 
-Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`LeaderSpec`](#ome-io-v1beta1-LeaderSpec), [`RouterSpec`](#ome-io-v1beta1-RouterSpec), [`WorkerSpec`](#ome-io-v1beta1-WorkerSpec).
+Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EncoderSpec`](#ome-io-v1beta1-EncoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`LeaderSpec`](#ome-io-v1beta1-LeaderSpec), [`RoleView`](#ome-io-v1beta1-RoleView), [`RouterSpec`](#ome-io-v1beta1-RouterSpec), [`WorkerSpec`](#ome-io-v1beta1-WorkerSpec).
 
 PodSpec is a description of a pod.
 
@@ -9777,7 +9969,7 @@ notice.
 
 Anchor is the Component whose replica count drives followers.
 
-Allowed values: `engine`, `decoder`, `router`.
+Allowed values: `engine`, `decoder`, `encoder`, `router`.
 
 Default: `engine`.
 
@@ -9793,6 +9985,40 @@ A follower&#39;s minReplicas is a floor on the count it is given. Its
 maxReplicas, when set, is a ceiling; a follower that sets none has no
 ceiling of its own, and the anchor&#39;s bounds cap its count. The status
 reports a follower as clamped when either bound moved its target.
+
+</td></tr>
+</tbody>
+</table>
+
+### `ReplicaRatio` {#ome-io-v1beta1-ReplicaRatio}
+
+Used by [`ClusterAffinityWeights`](#ome-io-v1beta1-ClusterAffinityWeights).
+
+ReplicaRatio gives a cluster&#39;s share of a component&#39;s minimum and maximum
+replicas. Both values are ratios, not replica counts: min divides the
+source&#39;s minReplicas and max divides its maxReplicas across the clusters.
+An omitted min counts as 1 and an omitted max counts as 1, independently,
+so an empty ratio weighs the same as a matching term that sets no ratio.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>min</code></td>
+<td><code>int32</code></td>
+<td>
+
+Min is the cluster&#39;s ratio share of minReplicas. When omitted, it is 1.
+
+Minimum: `1`.
+
+</td></tr>
+<tr><td><code>max</code></td>
+<td><code>int32</code></td>
+<td>
+
+Max is the cluster&#39;s ratio share of maxReplicas. When omitted, it is 1.
+
+Minimum: `1`.
 
 </td></tr>
 </tbody>
@@ -9940,6 +10166,210 @@ RetryBlockState is the retry authority state for one target revision.
 Underlying type: `string`.
 
 Allowed values: `Backoff`, `Held`, `RetryInProgress`.
+
+### `Role` {#ome-io-v1beta1-Role}
+
+Role describes one role an InferenceService may declare: the condition its
+readiness sets and the facts the rules that walk the roles read. A rule
+that needs every role ranges over Roles instead of naming them one by one,
+so a new role is one more row here.
+
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Type</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
+<td>
+
+Type is the role&#39;s ComponentType.
+
+</td></tr>
+<tr><td><code>ReadyCondition</code> <span class="doc-api-required">Required</span></td>
+<td><code>ConditionType</code></td>
+<td>
+
+ReadyCondition is the condition the role&#39;s readiness sets.
+
+</td></tr>
+<tr><td><code>Pairs</code> <span class="doc-api-required">Required</span></td>
+<td><code>bool</code></td>
+<td>
+
+Pairs reports whether the role carries spec.rollout.pairingProtocol:
+its pods pass per-request state to, or take it from, another role&#39;s
+pods over a runtime-owned protocol.
+
+</td></tr>
+<tr><td><code>RunsModel</code> <span class="doc-api-required">Required</span></td>
+<td><code>bool</code></td>
+<td>
+
+RunsModel reports whether the role&#39;s pods run the model rather than
+route to it: the selector picks an accelerator class for it, the
+runtime&#39;s model format applies, its own node selector joins the
+class&#39;s, and runtime selection matches its deployment mode.
+
+</td></tr>
+<tr><td><code>PrimaryRank</code> <span class="doc-api-required">Required</span></td>
+<td><code>int</code></td>
+<td>
+
+PrimaryRank ranks the role when a rollout group picks its primary, the
+Component its canary step machine runs through: the member with the
+lowest rank is the primary. It is not the ingress entrypoint order.
+
+</td></tr>
+<tr><td><code>ServiceField</code> <span class="doc-api-required">Required</span></td>
+<td><code>string</code></td>
+<td>
+
+ServiceField is the path of the role&#39;s block on an InferenceService,
+as a refusal names it.
+
+</td></tr>
+<tr><td><code>RuntimeField</code> <span class="doc-api-required">Required</span></td>
+<td><code>string</code></td>
+<td>
+
+RuntimeField is the path of the role&#39;s piece on a ServingRuntime.
+
+</td></tr>
+</tbody>
+</table>
+
+### `RoleSpecs` {#ome-io-v1beta1-RoleSpecs}
+
+RoleSpecs holds one typed block per role, nil for a role that is not
+declared. Role-generic code reads a role through View; role-specific code
+(typed merge and render, ingress, placement, the prefill-decode pair gate)
+names its field directly.
+
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Engine</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-EngineSpec"><code>EngineSpec</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>Decoder</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-DecoderSpec"><code>DecoderSpec</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>Encoder</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-EncoderSpec"><code>EncoderSpec</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>Router</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-RouterSpec"><code>RouterSpec</code></a></td>
+<td>
+
+
+
+</td></tr>
+</tbody>
+</table>
+
+### `RoleView` {#ome-io-v1beta1-RoleView}
+
+RoleView is one role&#39;s block read through pointers into the object that
+declares it: an InferenceService spec, a runtime, or their merge. A field
+the role does not have is nil. Writing through a pointer writes the object;
+reassigning a field of the view does not.
+
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Type</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>PodSpec</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-PodSpec"><code>PodSpec</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>Extension</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-ComponentExtensionSpec"><code>ComponentExtensionSpec</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>Runner</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-RunnerSpec"><code>RunnerSpec</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>Leader</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-LeaderSpec"><code>LeaderSpec</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>Worker</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-WorkerSpec"><code>WorkerSpec</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>TopologyKey</code> <span class="doc-api-required">Required</span></td>
+<td><code>string</code></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>TopologySpread</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-TopologySpreadPolicy"><code>TopologySpreadPolicy</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>TopologySpreadKey</code> <span class="doc-api-required">Required</span></td>
+<td><code>string</code></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>AcceleratorOverride</code> <span class="doc-api-required">Required</span></td>
+<td><a href="#ome-io-v1beta1-AcceleratorSelector"><code>AcceleratorSelector</code></a></td>
+<td>
+
+
+
+</td></tr>
+<tr><td><code>RouterConfig</code> <span class="doc-api-required">Required</span></td>
+<td><code>map[string]string</code></td>
+<td>
+
+
+
+</td></tr>
+</tbody>
+</table>
 
 ### `RollingUpdate` {#ome-io-v1beta1-RollingUpdate}
 
@@ -10144,6 +10574,29 @@ a Sequential group&#39;s order. Empty when no Component has yet
 reached Idle on the new revision.
 
 </td></tr>
+<tr><td><code>memberFinished</code></td>
+<td><a href="#ome-io-v1beta1-RolloutCoordinationMemberFinish"><code>RolloutCoordinationMemberFinish</code></a></td>
+<td>
+
+MemberFinished records, for a Sequential group with a wait between
+members, the member whose roll most recently read done and the
+instant it first read so. The wait before the next member runs from
+that instant on the group and on the replica side; the member losing
+readiness afterwards, or its replica being recreated, does not move
+it. Cleared when that member rolls again.
+
+</td></tr>
+<tr><td><code>memberNotReady</code></td>
+<td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
+<td>
+
+MemberNotReady names the finished Sequential member whose Ready
+condition is False or absent while the next member waits on it: the
+next member is held until that member is Ready again, and the wait
+keeps running from MemberFinished meanwhile, so the next member starts
+on the recovery when the wait has elapsed by then. Empty otherwise.
+
+</td></tr>
 <tr><td><code>observedSurge</code></td>
 <td><a href="https://pkg.go.dev/k8s.io/apimachinery/pkg/util/intstr#IntOrString"><code>IntOrString</code></a></td>
 <td>
@@ -10167,12 +10620,61 @@ group uses RatioBalanced pacing. Nil for PerComponent pacing.
 LastTransitionTime is when Phase last changed.
 
 </td></tr>
+<tr><td><code>mixedPairing</code></td>
+<td><code>bool</code></td>
+<td>
+
+MixedPairing reports that the group&#39;s Components serve distinct
+revisions at once, which a RollingUpdate group permits while it
+rolls; a BlueGreen or Sequential group never sets it. It holds for
+as long as the picture does. The event MixedPairingObserved is
+recorded on the pass that sets it, not on every pass it holds.
+
+</td></tr>
+<tr><td><code>surgeHeldByRatio</code></td>
+<td><code>bool</code></td>
+<td>
+
+SurgeHeldByRatio reports that RatioBalanced pacing refused the
+group&#39;s next surge on this pass to keep the cross-Component ratio.
+It holds for as long as the refusal does. The event RatioSkewRejected
+is recorded on the pass that sets it, not on every pass it holds.
+
+</td></tr>
 <tr><td><code>message</code></td>
 <td><code>string</code></td>
 <td>
 
 Message is a short operator-facing explanation of the current
 Phase. Set on Failed / RollingBack / Paused phases.
+
+</td></tr>
+</tbody>
+</table>
+
+### `RolloutCoordinationMemberFinish` {#ome-io-v1beta1-RolloutCoordinationMemberFinish}
+
+Used by [`RolloutCoordinationGroupStatus`](#ome-io-v1beta1-RolloutCoordinationGroupStatus).
+
+RolloutCoordinationMemberFinish is the instant a Sequential member&#39;s
+roll first read done, the clock the wait before the next member runs
+from.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>component</code></td>
+<td><a href="#ome-io-v1beta1-ComponentType"><code>ComponentType</code></a></td>
+<td>
+
+Component names the member.
+
+</td></tr>
+<tr><td><code>at</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta"><code>Time</code></a></td>
+<td>
+
+At is the instant the member first read done.
 
 </td></tr>
 </tbody>
@@ -10262,9 +10764,9 @@ Validation: order must reference only Components listed in this group.
 <td>
 
 Components lists the Component names in this group (they roll together).
-Valid values: &#34;router&#34;, &#34;engine&#34;, &#34;decoder&#34;.
+Valid values: &#34;router&#34;, &#34;engine&#34;, &#34;decoder&#34;, &#34;encoder&#34;.
 
-Minimum items: `1`. Maximum items: `3`.
+Minimum items: `1`. Maximum items: `4`.
 
 </td></tr>
 <tr><td><code>order</code></td>
@@ -10279,7 +10781,7 @@ enforce. To roll Components one at a time, declare one single-Component
 blueGreen group per Component, in the desired list order. Must reference
 only Components in this group.
 
-Maximum items: `3`.
+Maximum items: `4`.
 
 </td></tr>
 <tr><td><code>canary</code></td>
@@ -11018,7 +11520,7 @@ groups are independent and the list order promises nothing.
 
 Only meaningful for OMENative-managed Components.
 
-Maximum items: `3`.
+Maximum items: `4`.
 
 </td></tr>
 <tr><td><code>groupOrdering</code></td>
@@ -11053,6 +11555,9 @@ target so routing pairs only engine and decoder revisions whose values
 are equal. Empty or unset pairs with anything, so setting or clearing the
 token is upgrade-neutral. Changing it between two non-empty values
 requires engine and decoder to roll as one blueGreen or canary group.
+While the service declares an encoder, whose revisions carry the token
+too, and in the edit that removes it, the value may only stay the same
+or be cleared.
 
 Maximum length: `63`. Pattern: `^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$`.
 
@@ -11137,7 +11642,7 @@ Minimum: `1`. Maximum: `65535`.
 
 ### `RouterSpec` {#ome-io-v1beta1-RouterSpec}
 
-Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec), [`ServingRuntimeSpec`](#ome-io-v1beta1-ServingRuntimeSpec).
+Used by [`InferenceServiceSpec`](#ome-io-v1beta1-InferenceServiceSpec), [`RoleSpecs`](#ome-io-v1beta1-RoleSpecs), [`ServingRuntimeSpec`](#ome-io-v1beta1-ServingRuntimeSpec).
 
 RouterSpec defines the configuration for the Router component, which handles request routing
 
@@ -11245,7 +11750,9 @@ Validation: quorum must not exceed samples.
 Mode selects a replica ceiling or an authoritative reported weight.
 Unset preserves Ceiling. In Reported mode a home&#39;s accepted report is its
 capacity in replicas, neither capped by its replica count nor scaled by
-its capacity factor. A home without one keeps its replica-based weight.
+its capacity factor. A positive report applies only while placement
+status shows a ready replica in that cluster. A home without an applied
+report keeps its replica-based weight.
 
 </td></tr>
 <tr><td><code>disabled</code></td>
@@ -11597,7 +12104,7 @@ Allowed values: `default`, `leader`, `worker`.
 
 ### `RunnerSpec` {#ome-io-v1beta1-RunnerSpec}
 
-Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`LeaderSpec`](#ome-io-v1beta1-LeaderSpec), [`RouterSpec`](#ome-io-v1beta1-RouterSpec), [`WorkerSpec`](#ome-io-v1beta1-WorkerSpec).
+Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EncoderSpec`](#ome-io-v1beta1-EncoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`LeaderSpec`](#ome-io-v1beta1-LeaderSpec), [`RoleView`](#ome-io-v1beta1-RoleView), [`RouterSpec`](#ome-io-v1beta1-RouterSpec), [`WorkerSpec`](#ome-io-v1beta1-WorkerSpec).
 
 RunnerSpec defines container configuration plus additional config settings.
 The Runner is the primary container that executes the model serving or token generation logic.
@@ -12039,6 +12546,15 @@ Engine configuration for this runtime
 Decoder configuration for this runtime
 
 </td></tr>
+<tr><td><code>encoderConfig</code></td>
+<td><a href="#ome-io-v1beta1-EncoderSpec"><code>EncoderSpec</code></a></td>
+<td>
+
+Since v1.3.
+Encoder configuration for this runtime. A service that declares
+spec.encoder merges it; the piece alone deploys no encoder.
+
+</td></tr>
 <tr><td><code>protocolVersions</code></td>
 <td><a href="https://pkg.go.dev/sigs.k8s.io/ome/pkg/constants#InferenceServiceProtocol"><code>[]InferenceServiceProtocol</code></a></td>
 <td>
@@ -12176,11 +12692,63 @@ would pin if the inline progression were removed.
 </tbody>
 </table>
 
+### `SplitCeilings` {#ome-io-v1beta1-SplitCeilings}
+
+Used by [`SplitSpec`](#ome-io-v1beta1-SplitSpec).
+
+SplitCeilings holds one cap per component. A component takes its own key,
+then default. A component with neither takes the primary component&#39;s cap,
+scaled by its ratio of minimums and rounded up; the primary component is
+the engine, or the decoder when there is no engine. A component with no cap
+is fixed at its share.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>default</code></td>
+<td><code>int32</code></td>
+<td>
+
+Default caps every component this map does not name.
+
+Minimum: `1`.
+
+</td></tr>
+<tr><td><code>engine</code></td>
+<td><code>int32</code></td>
+<td>
+
+Engine caps the engine.
+
+Minimum: `1`.
+
+</td></tr>
+<tr><td><code>decoder</code></td>
+<td><code>int32</code></td>
+<td>
+
+Decoder caps the decoder.
+
+Minimum: `1`.
+
+</td></tr>
+<tr><td><code>router</code></td>
+<td><code>int32</code></td>
+<td>
+
+Router caps the router. It applies only when Split divides the routers.
+
+Minimum: `1`.
+
+</td></tr>
+</tbody>
+</table>
+
 ### `SplitSpec` {#ome-io-v1beta1-SplitSpec}
 
 Used by [`PlacementSpec`](#ome-io-v1beta1-PlacementSpec).
 
-SplitSpec declares the fleet floor and optional local ceiling. The floor
+SplitSpec declares the fleet floor and optional local ceilings. The floor
 falls back only to an explicitly declared positive engine.minReplicas.
 
 <table class="doc-api-fields">
@@ -12199,14 +12767,12 @@ ceiling that stays a per-home local concern).
 Minimum: `1`.
 
 </td></tr>
-<tr><td><code>maxReplicasPerCluster</code></td>
-<td><code>int32</code></td>
+<tr><td><code>maxPerCluster</code></td>
+<td><a href="#ome-io-v1beta1-SplitCeilings"><code>SplitCeilings</code></a></td>
 <td>
 
-MaxReplicasPerCluster is an optional local ceiling. Plans exceeding it
-are held; zero follows the assigned allocation without an extra ceiling.
-
-Minimum: `0`.
+MaxPerCluster caps how many replicas of each component one cluster runs.
+A plan that gives a component more than its cap is held.
 
 </td></tr>
 </tbody>
@@ -12453,7 +13019,7 @@ Minimum: `0`.
 
 ### `TopologySpreadPolicy` {#ome-io-v1beta1-TopologySpreadPolicy}
 
-Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec).
+Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EncoderSpec`](#ome-io-v1beta1-EncoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`InferenceReplicaSpec`](#ome-io-v1beta1-InferenceReplicaSpec), [`RoleView`](#ome-io-v1beta1-RoleView).
 
 TopologySpreadPolicy selects how a component&#39;s instances spread across
 fault domains, expressed through a rendered topologySpreadConstraint on
@@ -12476,7 +13042,8 @@ TrafficMapCapacity records why an entry&#39;s weight is what it is.
 
 ReportedWeight is the accepted endpoint capacity in Reported mode, in
 replicas, and replaces the replica-based weight. Nil means no fresh
-quorum, so the entry weighs its replica count; zero means the reporter
+quorum, or a positive report while placement status shows no ready
+replica, so the entry weighs its replica count. Zero means the reporter
 cannot serve traffic.
 
 </td></tr>
@@ -12539,9 +13106,11 @@ Minimum: `0`.
 <td>
 
 FallbackReason explains why a configured endpoint capacity source did not
-produce a current observation. The entry keeps its replica-based weight;
-in Reported mode it first uses a fresh cached report. Empty means the
-latest result was usable or polling is disabled.
+produce a current observation, or why Reported mode did not apply a
+positive one: placement status shows no ready replica. The entry keeps its
+replica-based weight, except that after a failed poll Reported mode uses a
+fresh cached report while a replica is ready. Empty means the latest result
+was usable or polling is disabled.
 
 </td></tr>
 </tbody>
@@ -12979,7 +13548,8 @@ deletion propagation removes the owner reference.
 <td>
 
 Published reports whether the active publisher has realized this map onto
-its data plane.
+its data plane. For a publisher that only writes weights to an external
+system, it means those writes succeeded, not that anything reads them.
 
 </td></tr>
 <tr><td><code>gatewayRef</code></td>
@@ -13191,7 +13761,7 @@ Allowed values: `SurgeThenDrain`, `RecreatePod`, `InPlaceIfPossible`, `InPlaceOn
 
 ### `WorkerSpec` {#ome-io-v1beta1-WorkerSpec}
 
-Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec).
+Used by [`DecoderSpec`](#ome-io-v1beta1-DecoderSpec), [`EngineSpec`](#ome-io-v1beta1-EngineSpec), [`RoleView`](#ome-io-v1beta1-RoleView).
 
 WorkerSpec defines the configuration for worker nodes in a multi-node component.
 Worker nodes perform the distributed processing tasks assigned by the leader node,
