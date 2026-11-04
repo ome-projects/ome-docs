@@ -483,7 +483,24 @@ Before OME writes the derived InferenceServices, the placement controller checks
 `False` blocks placement: OME writes no new derived InferenceServices, and the clusters already serving the source keep serving — the source holds where it is rather than move onto an unverified cluster. Skipping alone doesn't block: while a candidate remains eligible, the condition stays `Passed`, and placement avoids the skipped clusters. A timed-out or failed read is transient — the reason `MemberGetTimeout` covers both — so a cluster that the last successful check verified stays eligible while OME retries. A missing policy or a digest mismatch is a verdict, and makes the cluster ineligible at once.
 
 !!! warning "Cap Split placements"
-    With a policy reference and `spec.placement.mode: Split` or `SplitByCapacity`, set `spec.placement.split.maxReplicasPerCluster`. The policy renders against each home's own derived replica bounds, and without the per-cluster cap that ceiling is unbounded, so a [fallback](#define-a-policy) of `fromComponent: MaxReplicas` on one home can scale it to the whole fleet's count. The webhook warns on apply — the warning ends with `(UnboundedSplitCeiling)` — but never rejects, and placement runs. The API lists `UnboundedSplitCeiling` among the preflight condition's reasons, but OME doesn't write it.
+    With a policy reference and `spec.placement.mode: Split` or `SplitByCapacity`, cap the components in [`spec.placement.split.maxPerCluster`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-SplitCeilings), a map with one cap per component. The policy renders against each home's own derived replica bounds, and without a per-cluster cap that ceiling is unbounded, so a [fallback](#define-a-policy) of `fromComponent: MaxReplicas` on one home can scale it to the whole fleet's count. This caps the engine at 3 replicas per home:
+
+    ```yaml
+    spec:
+      placement:
+        mode: Split
+        split:
+          maxPerCluster:
+            engine: 3
+    ```
+
+    The keys `engine`, `decoder` and `router` each cap the named component, and `default` caps every component the map doesn't name; the `router` cap applies only when Split divides the routers. A component with neither its own key nor `default` takes the primary component's cap — the engine's, or the decoder's when there is no engine — scaled by its ratio of minimums.
+
+    The webhook warns on apply — the warning ends with `(UnboundedSplitCeiling)` — but never rejects, and placement runs. The warning is quiet when the primary component has a cap, its own key or `default`, and otherwise names each referencing component with no cap of its own, such as `spec.placement.mode=Split with autoscalerPolicyRef on engine but spec.placement.split.maxPerCluster caps none of them; policy templates render against each home's derived bounds, and without a per-cluster cap that ceiling is unbounded (UnboundedSplitCeiling)`.
+
+    When the `clusterAffinity` terms set `engineReplicas`, `decoderReplicas` or `routerReplicas` ratios, which replace the `split` block, set `maxReplicas` on each referencing component instead: each cluster's ceiling is its share of the component's `maxReplicas`. The warning then names each referencing component without `maxReplicas`, and ends with `each cluster's ceiling is its share of maxReplicas, and without maxReplicas that ceiling is unbounded (UnboundedSplitCeiling)`.
+
+    In both forms, the API lists `UnboundedSplitCeiling` among the preflight condition's reasons, but OME doesn't write it.
 
 ### Track the homes after fan-out
 
