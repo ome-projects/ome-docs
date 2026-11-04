@@ -137,12 +137,34 @@ The scheduler's default is `defaultPermitTimeoutSeconds` for the OME scheduler, 
 
 [Change the cluster defaults](../../guides/omenative/set-instance-readiness-deadlines.md#change-the-cluster-defaults) shows how to change these settings. OME updates existing PodGroups to the new timeout in place, unlike [the topology annotation](#the-topology-annotation-follows-the-instances-pods), which a live gang's pods hold.
 
+## A gang held to a full domain can fail sooner
+
+Placed members pin their gang. When some of an Instance's pods run in one topology domain and the scheduler reports that the domain can't take the rest — for example, one of its nodes stopped reporting — freeing capacity in another domain doesn't help: each worker's [affinity](#the-topology-annotation-follows-the-instances-pods) keeps it in its leader's domain. Only removing the placed members frees the gang. Ending the attempt does exactly that, and the rebuilt gang can land in a domain that fits.
+
+By default, such a member still waits out the controller's [`unschedulableGracePeriod`](../../guides/omenative/set-instance-readiness-deadlines.md), 15 minutes with the chart, like any other unschedulable pod. The `lifecycle.gangDomainFullGracePeriod` cluster setting, which the chart leaves unset, ends the attempt sooner. Set it with the other [readiness deadlines](../../guides/omenative/set-instance-readiness-deadlines.md#change-the-cluster-defaults), with a unit — OME treats a value it can't parse, or one that isn't above zero, as unset:
+
+```yaml
+ome:
+  controller:
+    lifecycle:
+      unschedulableGracePeriod: 15m
+      gangDomainFullGracePeriod: 5m
+```
+
+Three rules bound the shorter window:
+
+- **Only the scheduler's own reports trigger it.** OME matches the message against the [OME scheduler](../scheduling/ome-scheduler.md)'s reports that placed members hold the gang where it can't complete: the `pinned domain` and `adopted domain` [scheduling events](../../reference/scheduling/ome-scheduler-configuration.md#scheduling-events), and the split-gang report `already has members in multiple topology domains`. The phrases are fixed in OME's code, the same on every cluster. Another scheduler's messages don't match them, so under Coscheduling such a hold waits on `unschedulableGracePeriod`.
+- **Terminating pods push it out.** While any pod of the attempt is still terminating, only `unschedulableGracePeriod` applies: a member on its way out may be what fills the domain, and its room frees as it goes.
+- **The clock doesn't start over.** Both windows run from the same start: the attempt's placement wait, when it began before the unplaceable pod's own `PodScheduled` transition. A member OME rebuilds after a node loss keeps the attempt's clock, so its first refusal can end the attempt.
+
+When both settings are set, the shorter applies, and `gangDomainFullGracePeriod` also works with `unschedulableGracePeriod` unset. Past the window, OME fails the Instance as the cluster's problem, never the revision's: the failure reason is `Unschedulable`, with the scheduler's message. [When a limit runs out](../../guides/omenative/set-instance-readiness-deadlines.md#when-a-deadline-runs-out) says what OME does next for each operation.
+
 ## What you see
 
 | What you see | What it means |
 | --- | --- |
 | The component's `GangSchedulingUnavailable` condition is `True`, with the reason `PodGroupCRDNotInstalled` | The CRD is missing, or was when the controller started. The default scheduler may place part of an Instance, and the OME scheduler keeps its pods `Pending`. [Install the CRD](#when-the-podgroup-crd-is-missing). |
-| An `InstanceFailed` Warning event with the scheduler's message | A pod stayed unschedulable longer than the controller's [`unschedulableGracePeriod`](../../guides/omenative/set-instance-readiness-deadlines.md), 15 minutes with the chart. |
+| An `InstanceFailed` Warning event with the scheduler's message | A pod stayed unschedulable longer than the controller's [`unschedulableGracePeriod`](../../guides/omenative/set-instance-readiness-deadlines.md), 15 minutes with the chart — or longer than `gangDomainFullGracePeriod`, when [the gang was held to a full domain](#a-gang-held-to-a-full-domain-can-fail-sooner). |
 | An `InstanceFailed` Warning event that names `PodGroupOwnershipConflict` | Another owner controls a PodGroup with the Instance's PodGroup name. OME fails the Instance and creates none of its pods. |
 | A `PodGroupReset` Warning event on the InferenceService | A pod of a running gang failed, so the scheduler-plugins controller marked the PodGroup `Failed`. OME replaced it without failing the Instance. The Instance's [restart policy](../omenative/instance-restart-policy.md) decides what happens next. |
 
