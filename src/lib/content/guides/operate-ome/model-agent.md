@@ -97,6 +97,15 @@ kubectl get configmap gpu-node-1 -n ome \
 }
 ```
 
+The ConfigMap is the agent's record of the node, not what it works from: the agent keeps the same records in memory while it runs, and heals the ConfigMap from them. It checks the ConfigMap when it starts and every five minutes after that, recreates it when it's gone, and puts back each missing record with the model's `status` and `config` as it last wrote them. A write for any model recreates a missing ConfigMap right away, and the next five-minute pass fills in the rest.
+
+So when a cleanup script — or your own `kubectl delete` — removes the ConfigMap or one of its records while the agent runs, nothing needs doing: the models' files and labels on the node stay as they are, nothing downloads again, and the records are back within five minutes, without an agent restart. Until they are, the model's `status.nodesReady` can drop the node, since OME builds it from these ConfigMaps: see [Node labels and status](../../concepts/models/base-models.md#node-labels-and-status). A restored record has no `progress`; a download that's still running writes it again as it reports progress.
+
+Two cases heal differently. The records of models that [share a Hugging Face copy](shared-hf-artifacts.md#how-sharing-works) come back needing a check: those models are `Failed` on the node until the agent validates the shared copy, then get their saved state back — the repair that section describes. And the healing restores what the running agent has written, so a ConfigMap lost while no agent runs — OME deletes it when the node leaves the cluster — comes back as the next agent pod checks the node's models again: for shared copies, see [Losing the node's records](shared-hf-artifacts.md#losing-the-nodes-records).
+
+!!! warning "Don't edit the ConfigMap"
+    The healing restores records that are missing; it doesn't check records that are still there. A record you change by hand stands, and OME reads it as the node's state. Treat the ConfigMap as the agent's own, like the [`_artifacts`](shared-hf-artifacts.md#step-2-check-the-shared-copy-on-the-node) directory and the [`.hf-artifact-locks` directories](#hf-artifact-locks).
+
 ## Configure the agent {#step-2-change-a-setting}
 
 Set the agent's values under `modelAgent` in your values file, and upgrade the release as in [Step 1](#step-1-turn-on-the-agent).
