@@ -277,9 +277,44 @@ kubectl get inferenceservice llama-chat -n llama-demo \
 OwnWeights: decoder follows the engine shares; router is split by its own weights
 ```
 
+### A shrinking share holds until its replacements are ready
+
+A plan change can shrink the share of a cluster that stays in the placement: new weights, a lower `split.replicas`, or a new cluster joining the split. The cluster's decoders and divided routers don't drop to the new share at once. Placement keeps the floor on the cluster's copy — the `minReplicas` it wrote there — at the old value until the replacements on the growing clusters are ready, so the shrink never removes ready replicas the fleet still needs: the ready replicas on the clusters serving traffic stay at or above the component's count, the one [Each component's share](#each-components-share) divides. The hold covers only the components that divide their own counts over the engine's clusters — the decoder and a divided router — never the engine's own shares.
+
+A held floor falls in two steps. The cluster's unready replicas leave at once: the floor drops to its ready count right away, though never below the new share. Its ready replicas leave only while the serving clusters' ready replicas stay at or above the component's count; when more than one cluster waits, the first by name releases first. A cluster whose copy OME can't observe keeps the floor it was last given, and placement never holds a cluster it's retiring: one that's draining or runs no replicas follows [the drain-first move below](#a-placement-move-drains-a-cluster-first) instead.
+
+While any floor is held, the InferenceService's `PlacementConverged` condition — `True` with reason `AllocationConverged` once the clusters apply the accepted allocation — is `False` with reason `ReplacementNotReady`, and its message names each held floor. Another problem, such as a failed member write, reports its own reason in its place.
+
+The floors are in the control-plane InferenceService's `status.placement.candidates`. On a service with a decoder or a divided router, each cluster's [`componentFloors`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CandidateComponentFloor) lists every component placement scales, with `current`, the floor on the cluster's copy now — zero without a copy — and `desired`, the floor at the accepted plan's shares. A `current` above `desired` is a held floor. An engine-only service lists no floors, and neither does a cluster whose floors are all zero.
+
+Take [the service above](#the-placementcomponentshares-condition) and raise `cluster-a`'s `default` weight from 2 to 5. The engine and decoder shares turn 5:1 — `cluster-b`'s decoder floor falls from 2 to 1, `cluster-a`'s rises from 4 to 5 — and the router weights still divide the routers evenly. The six decoders of `decoder.minReplicas` are the fleet's count, so until `cluster-a`'s fifth decoder is ready, `cluster-b` keeps its second one:
+
+```bash
+kubectl get inferenceservice llama-chat -n llama-demo \
+  -o jsonpath='{range .status.placement.candidates[*]}{.cluster}:{range .componentFloors[*]} {.component}={.current}/{.desired}{end}{"\n"}{end}'
+```
+
+```output
+cluster-a: engine=5/5 decoder=5/5 router=1/1
+cluster-b: engine=1/1 decoder=2/1 router=1/1
+```
+
+`cluster-b`'s copy keeps `decoder.minReplicas: 2`, so its second decoder keeps running and serving. The condition names the hold:
+
+```bash
+kubectl get inferenceservice llama-chat -n llama-demo \
+  -o jsonpath='{range .status.conditions[?(@.type=="PlacementConverged")]}{.status} {.reason}: {.message}{"\n"}{end}'
+```
+
+```output
+False ReplacementNotReady: cluster-b keeps 2 decoder replicas until their replacements on other clusters are ready
+```
+
+Nothing is stuck. Once the fifth decoder serves on `cluster-a`, the floor falls to the share on its own, `cluster-b`'s entry reads `decoder=1/1`, and `PlacementConverged` returns to `True`.
+
 ## A placement move drains a cluster first
 
-Placement can zero a weight on its own, with no drain of yours. When a plan change retires one of a `Split` or `All` placement's homes, placement asks that cluster to drain first: in the control-plane InferenceService's `status.placement.candidates`, the cluster's [`allocation.drainRequested`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CandidateAllocationStatus) turns `true`, and the map's next table holds its entry at 0.
+Placement can zero a weight on its own, with no drain of yours. When a plan change retires one of a `Split` or `All` placement's homes, placement asks that cluster to drain first: in the control-plane InferenceService's `status.placement.candidates`, the cluster's [`allocation.drainRequested`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CandidateAllocationStatus) turns `true`, and the map's next table holds its entry at 0. A home that stays with a smaller share isn't drained: [its decoders and divided routers hold until their replacements are ready](#a-shrinking-share-holds-until-its-replacements-are-ready).
 
 Placement removes the InferenceService's copy from the cluster only after the map shows the zero. Until then the entry looks intact apart from its weight: it keeps its endpoint, `healthy: true` and its positive `capacity.allocated` and `capacity.ready`, and it gets no `drainRefs` — those list only the drains of the `ome.io/traffic-drain` annotation. That's the designed order of a move, not a fault, and there's nothing to undrain: the zero stays until the copy is gone and the entry leaves the table. To tell a draining cluster from a bug, read the allocations:
 
