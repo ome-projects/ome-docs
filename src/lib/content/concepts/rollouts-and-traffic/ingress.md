@@ -52,6 +52,8 @@ With `domain: example.com`, the Ingress for `llama-chat` has these hostnames:
 
 The hostnames come from `domainTemplate`, a Go template that defaults to `{{ .Name }}.{{ .Namespace }}.{{ .IngressDomain }}`. In the template, `.Name` is the InferenceService's name for the top-level hostname, and the component's Service name for the others.
 
+OME keeps the `.Name` value within the 63-character DNS label limit before it renders the template. A longer name becomes an 8-character hash of the full name — an `a` replaces a leading digit — then a hyphen and the name's last 54 characters, 63 in all. So a long-named InferenceService's hostnames start with the hash instead of the name, wherever `domainTemplate` renders them: in the Ingress rules, in the [per-service Gateway API scheme](#hostnames) and in the host of `status.url`. `.Name` is all OME shortens: `.Namespace` and the domain render as they are.
+
 ## Through the Gateway API {since=v1.3}
 
 To create HTTPRoutes, set these values in the `ome-resources` chart:
