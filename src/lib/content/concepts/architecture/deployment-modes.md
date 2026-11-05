@@ -3,7 +3,7 @@ title: Deployment modes and OMENative
 description: OME runs InferenceService components as Kubernetes Deployments or on OMENative, which creates, updates, repairs and moves each replica as one unit. Opt in to OMENative, see how OME picks a component's mode, and read what OMENative creates and reports.
 ---
 
-An [InferenceService](../serving/inference-services.md) component, the engine, decoder or router, runs in a deployment mode, which decides what creates and manages its pods: a Kubernetes Deployment, or [OMENative](../omenative/overview.md). On OMENative, the component's replicas run as [Instances](../omenative/instances.md). An Instance is one pod, or a leader and its workers, and OME creates, updates, repairs and moves it as one unit. You can put a whole InferenceService on OMENative, or one component.
+An [InferenceService](../serving/inference-services.md) component, the engine, decoder, encoder or router, runs in a deployment mode, which decides what creates and manages its pods: a Kubernetes Deployment, or [OMENative](../omenative/overview.md). On OMENative, the component's replicas run as [Instances](../omenative/instances.md). An Instance is one pod, or a leader and its workers, and OME creates, updates, repairs and moves it as one unit. You can put a whole InferenceService on OMENative, or one component.
 
 ## The deployment modes
 
@@ -15,7 +15,7 @@ An [InferenceService](../serving/inference-services.md) component, the engine, d
 
 All three modes put a Service named `{isvc}-{component}` in front of the component. On RawDeployment, a change is a plain Deployment update, with no rollout group, canary or held revision. A RawDeployment or OMENative component also gets a PodDisruptionBudget, from its `minAvailable` or `maxUnavailable` or the `ome-resources` chart's default of `maxUnavailable: 1`: see [Configure pod disruption budgets](../../guides/deploy-models/configure-pod-disruption-budgets.md). [Autoscaler policy](../serving/autoscaler-policy.md) explains when it gets an autoscaler.
 
-An InferenceService with both an engine and a decoder is prefill-decode disaggregated, a shape rather than a mode: the engine runs prefill and the decoder runs decode. On OMENative, each gets its own InferenceReplica, and the two can roll out as one [rollout group](../rollouts-and-traffic/rollout-groups.md).
+An InferenceService with both an engine and a decoder is prefill-decode disaggregated, a shape rather than a mode: the engine runs prefill and the decoder runs decode. On OMENative, each gets its own InferenceReplica, and the two can roll out as one [rollout group](../rollouts-and-traffic/rollout-groups.md). An InferenceService with an [encoder](../serving/inference-services.md#the-encoder), which is since v1.3 and alpha, is encoder-prefill-decode disaggregated, and OMENative is its only shape: the webhook requires every component of such a service to resolve to OMENative, the only mode that gives the components each other's addresses.
 
 ## Opt in to OMENative {since=v1.3}
 
@@ -154,7 +154,7 @@ OME adds these labels to the pods, on top of those in the component's pod templa
 | Label | Value |
 | --- | --- |
 | `ome.io/inferenceservice` | The InferenceService's name |
-| `component` | `engine`, `decoder` or `router` |
+| `component` | `engine`, `decoder`, `encoder` or `router` |
 | `ome.io/managed-by` | `OMENative` |
 | `ome.io/instance-index` | The Instance's index |
 | `ome.io/instance-incarnation` | The Instance's [incarnation](../omenative/instances.md#incarnation): `1` when new, and up by one for each restart and each update that recreates its pods |
@@ -169,7 +169,7 @@ It also sets these environment variables:
 | Variable | Value |
 | --- | --- |
 | `OME_INFERENCESERVICE_NAME` | The InferenceService's name |
-| `OME_COMPONENT` | `engine`, `decoder` or `router` |
+| `OME_COMPONENT` | `engine`, `decoder`, `encoder` or `router` |
 | `OME_COMPONENT_REPLICAS` | The component's number of Instances |
 | `OME_INSTANCE_INDEX` | The Instance's index |
 | `OME_RUNNER` | `default`, `leader` or `worker` |
@@ -226,7 +226,7 @@ Other conditions flag problems without changing `Ready`:
 | `MigrationPolicyUnconfigured` | A migration request waits because `ome.controller.lifecycle.audit` isn't set. The chart sets it. | `MigrationCapacityUnconfigured`, `MigrationCapacityConfigured` |
 | `InstanceReadyTimeoutUnconfigured` | Both the component's `lifecycle.instanceReadyTimeout` and the operator's are unset, so an Instance that stays unready waits for you instead of failing. The chart sets `ome.controller.lifecycle.instanceReadyTimeout: 30m`. | `InstanceReadyTimeoutUnconfigured`, `InstanceReadyTimeoutConfigured` |
 
-OME also sets the InferenceService's `EngineReady`, `DecoderReady` or `RouterReady` condition for an OMENative component, with the same minimum:
+OME also sets the InferenceService's `EngineReady`, `DecoderReady`, `EncoderReady` or `RouterReady` condition for an OMENative component, with the same minimum:
 
 | Reason | Status | Message |
 | --- | --- | --- |

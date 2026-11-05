@@ -113,7 +113,7 @@ To divide a cluster's GPUs among teams with AcceleratorQuota, see [Set accelerat
 
 -   **[InferenceService](serving/inference-services.md)**
 
-    An InferenceService names a model, a serving runtime or both, and declares the engine, decoder and router components that OME turns into workloads.
+    An InferenceService names a model, a serving runtime or both, and declares the engine, decoder, encoder and router components that OME turns into workloads.
 
 -   **[Component autoscaling](serving/component-autoscaling.md)**
 

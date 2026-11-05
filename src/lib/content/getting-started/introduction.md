@@ -23,7 +23,7 @@ You install OME with Helm. The `ome-crd` chart installs OME's resource definitio
 
 ## Deployment modes
 
-An InferenceService has up to three components: an engine that runs the model, an optional decoder for prefill-decode disaggregation, and an optional router in front of them. Each component runs in a [deployment mode](../concepts/architecture/deployment-modes.md):
+An InferenceService has up to four components: an engine that runs the model, an optional decoder for prefill-decode disaggregation, an optional [encoder](../concepts/serving/inference-services.md#the-encoder), alpha and since v1.3, that turns a request's images or audio into embeddings for the engine, and an optional router in front of them. Each component runs in a [deployment mode](../concepts/architecture/deployment-modes.md):
 
 | Mode | What runs the pods | When a component gets it |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ These features are alpha: their API and behavior can change between releases. Ea
 | [Rollout policies](../concepts/rollouts-and-traffic/rollout-policy.md) | Reusable canary, blue-green or rolling-update progressions that rollout groups reference with `policyRef`. | Set `ome.rolloutPolicy.enabled: true` in both the `ome-crd` and `ome-resources` charts. |
 | [Multi-cluster placement](../reference/api/ome.v1beta1.md#ome-io-v1beta1-WorkloadCluster) and [routing](../concepts/rollouts-and-traffic/traffic-map.md) | Still in development. A control-plane cluster places InferenceServices that set `placement` onto WorkloadClusters, and runs none itself. Routing adds a TrafficMap that tells a gateway how to split their traffic. | On the control-plane cluster, set `ome.multicluster.enabled: true` and `ome.multicluster.role: control-plane` in the `ome-resources` chart. For routing, also set `ome.multicluster.config.routing.enabled: true`. |
 
-The InferenceService fields `placement`, `routing` and `scalingPolicy` are alpha too, and so are the `kubectl ome` commands that change resources. See [Guarded actions](../reference/kubectl-ome/guarded-actions.md).
+The InferenceService fields `encoder`, `placement`, `routing` and `scalingPolicy` are alpha too, and so are the `kubectl ome` commands that change resources. See [Guarded actions](../reference/kubectl-ome/guarded-actions.md).
 
 ## Next steps
 

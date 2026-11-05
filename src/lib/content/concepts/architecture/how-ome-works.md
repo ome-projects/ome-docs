@@ -26,10 +26,10 @@ All of OME's kinds have the API version `ome.io/v1beta1`. You write them all exc
 
 | Kind | Scope | Purpose |
 | --- | --- | --- |
-| [InferenceService](../serving/inference-services.md) | Namespaced | Serves a model. It names a model, a runtime or both, and describes the engine, decoder and router. |
+| [InferenceService](../serving/inference-services.md) | Namespaced | Serves a model. It names a model, a runtime or both, and describes the engine, decoder, encoder and router. |
 | [BaseModel, ClusterBaseModel](../models/base-models.md) | Namespaced, Cluster | A model: where its weights live and which nodes keep a copy. |
 | [FineTunedWeight](../models/fine-tuned-weights.md) | Cluster | Weights fine-tuned from a base model, which an InferenceService serves on top of that model. |
-| [ServingRuntime, ClusterServingRuntime](../runtimes/serving-runtimes.md) | Namespaced, Cluster | How to serve a family of models: the models it supports, and the containers and settings of the engine, decoder and router. |
+| [ServingRuntime, ClusterServingRuntime](../runtimes/serving-runtimes.md) | Namespaced, Cluster | How to serve a family of models: the models it supports, and the containers and settings of the engine, decoder, encoder and router. |
 | [AcceleratorClass](../runtimes/accelerator-classes.md) | Cluster | A kind of GPU or other accelerator, and how to find the nodes that have it. |
 | [BenchmarkJob](../serving/benchmarks.md) | Namespaced | A genai-bench run against an InferenceService or a URL. |
 | [AutoscalerPolicy](../serving/autoscaler-policy.md) | Namespaced | Since v1.3. Alpha, and off by default. An autoscaling template that InferenceService components attach by name. |
@@ -61,17 +61,18 @@ Since v1.3, an InferenceService can skip this path and name only a runtime, whic
 
 ## From InferenceService to pods
 
-An [InferenceService](../serving/inference-services.md) serves one model with up to three components:
+An [InferenceService](../serving/inference-services.md) serves one model with up to four components:
 
 - the **engine**, which runs the model;
 - optionally, a **decoder**, for prefill-decode disaggregation: the engine's pods run the prefill phase, and the decoder's pods the decode phase;
+- optionally, an **encoder**, which turns a request's images or audio into embeddings for the engine, for encoder-prefill-decode disaggregation. Since v1.3, and alpha: see [The encoder](../serving/inference-services.md#the-encoder);
 - optionally, a **router** in front of them, which sends requests to their pods.
 
 When you create or change an InferenceService, OME works through these steps:
 
 1. **Find the model** that `spec.model` names. The kind defaults to ClusterBaseModel, so an InferenceService that uses a [BaseModel](../models/base-models.md) sets `spec.model.kind: BaseModel`.
 2. **Choose the runtime.** When `spec.runtime` names a runtime, OME uses it. Otherwise, it picks the best match among the runtimes that support the model and allow automatic selection. See [How runtimes match the model](../models/base-models.md#how-runtimes-match-the-model). By default, the InferenceService follows changes to its runtime. To pin it to one revision, see [Runtime revisions and pinning](../runtimes/runtime-revisions.md).
-3. **Build the components.** OME starts from the runtime's `engineConfig`, `decoderConfig` and `routerConfig`, and the InferenceService's own settings win. When the runtime lists accelerator classes and the InferenceService names a class or a selection policy, OME picks an [AcceleratorClass](../runtimes/accelerator-classes.md) for the engine and decoder. Their pods get the class's node selector. See [Select accelerators](../../guides/deploy-models/select-accelerators.md).
+3. **Build the components.** OME starts from the runtime's `engineConfig`, `decoderConfig`, `encoderConfig` and `routerConfig`, and the InferenceService's own settings win. When the runtime lists accelerator classes and the InferenceService names a class or a selection policy, OME picks an [AcceleratorClass](../runtimes/accelerator-classes.md) for the engine and decoder. Their pods get the class's node selector. See [Select accelerators](../../guides/deploy-models/select-accelerators.md).
 4. **Create each component's workload** for its [deployment mode](#deployment-modes), and a Service for it. Both are named after the InferenceService and the component, such as `llama-engine` for the engine of `llama`.
 5. **Expose the InferenceService.** By default, OME creates a ClusterIP Service named after the InferenceService, which sends requests to the router's pods, or to the engine's when there's no router. When you turn on ingress creation, OME creates a Kubernetes Ingress or Gateway API HTTPRoutes instead. See [Ingress and external access](../rollouts-and-traffic/ingress.md).
 6. **Report status.** OME records the InferenceService's URL, the state of its components, and conditions such as `Ready` in its status. Since v1.3, [`kubectl ome status`](../../reference/kubectl-ome/status.md) shows in one report why the InferenceService is or isn't ready.

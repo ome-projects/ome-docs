@@ -4,7 +4,7 @@ description: Choose the minReplicas and maxReplicas that components get when the
 since: v1.3
 ---
 
-The `ome-resources` chart's defaults are 1 to 3 replicas for the engine and the decoder, and 1 to 2 for the router. A [component](../../concepts/serving/inference-services.md#components) takes a default for each bound that the InferenceService and its [runtime](../../concepts/runtimes/serving-runtimes.md) leave unset. Change the defaults in your values file, then check the range that a component gets.
+The `ome-resources` chart's defaults are 1 to 3 replicas for the engine, the decoder and the encoder, and 1 to 2 for the router. A [component](../../concepts/serving/inference-services.md#components) takes a default for each bound that the InferenceService and its [runtime](../../concepts/runtimes/serving-runtimes.md) leave unset. Change the defaults in your values file, then check the range that a component gets.
 
 <div class="prerequisites" markdown>
 
@@ -21,8 +21,8 @@ OME takes each bound, `minReplicas` and `maxReplicas`, from the first of these t
 
 | Order | Where | Example |
 | --- | --- | --- |
-| 1 | The component in the InferenceService: `spec.engine`, `spec.decoder` or `spec.router`. | `spec.engine.maxReplicas: 2` |
-| 2 | The runtime's [`engineConfig`, `decoderConfig` or `routerConfig`](../../concepts/runtimes/serving-runtimes.md#the-engine-decoder-and-router). | `engineConfig.maxReplicas: 2` |
+| 1 | The component in the InferenceService: `spec.engine`, `spec.decoder`, `spec.encoder` or `spec.router`. | `spec.engine.maxReplicas: 2` |
+| 2 | The runtime's [`engineConfig`, `decoderConfig`, `encoderConfig` or `routerConfig`](../../concepts/runtimes/serving-runtimes.md#the-engine-decoder-and-router). | `engineConfig.maxReplicas: 2` |
 | 3 | The replica defaults. | `defaultMaxReplicas.engine: 3` |
 
 So a component can take `minReplicas` from the InferenceService and `maxReplicas` from the defaults. When a default `maxReplicas` is below the component's `minReplicas`, OME raises it to match. On v1.2.2, the webhook wrote both bounds into the InferenceServices that you created or updated, and they win over the defaults until you [remove them](#a-component-doesnt-get-the-defaults).
@@ -46,6 +46,7 @@ ome:
       defaultMaxReplicas:
         engine: 4
         decoder: 4
+        encoder: 3
         router: 2
 ```
 
@@ -54,6 +55,7 @@ ome:
 | `defaultMinReplicas` | `minReplicas` of every component | `1` |
 | `defaultMaxReplicas.engine` | `maxReplicas` of the engine | `3` |
 | `defaultMaxReplicas.decoder` | `maxReplicas` of the decoder | `3` |
+| `defaultMaxReplicas.encoder` | `maxReplicas` of the [encoder](../../concepts/serving/inference-services.md#the-encoder) | `3` |
 | `defaultMaxReplicas.router` | `maxReplicas` of the router | `2` |
 
 Each value must be a whole number above 0. A key that you leave out keeps the chart's default. To remove a default, set its key to `null`: `router: null` removes the router's, and `replicas: null` removes them all.
@@ -132,7 +134,7 @@ To add defaults to a manifest install, [move to the Helm charts](move-to-the-hel
   "defaultDeploymentMode": "RawDeployment",
   "replicas": {
     "defaultMinReplicas": 1,
-    "defaultMaxReplicas": {"engine": 3, "decoder": 3, "router": 2}
+    "defaultMaxReplicas": {"engine": 3, "decoder": 3, "encoder": 3, "router": 2}
   }
 }
 ```
@@ -143,7 +145,7 @@ Then restart the manager, as [Change ConfigMap settings](configure-the-controlle
 
 ### A component doesn't get the defaults
 
-Check the component in the InferenceService, and the runtime's `engineConfig`, `decoderConfig` or `routerConfig`: a bound set there wins over the default.
+Check the component in the InferenceService, and the runtime's `engineConfig`, `decoderConfig`, `encoderConfig` or `routerConfig`: a bound set there wins over the default.
 
 An InferenceService that you created or updated on v1.2.2 holds the values that the webhook wrote: `minReplicas: 1`, and `maxReplicas: 3`, or `2` for the router. To make a component follow the defaults, remove them with a merge patch, as here for the engine of `qwen3-0-6b`:
 
@@ -168,7 +170,7 @@ kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.deploy}
 With the values from Step 1, the output is:
 
 ```output
-  "replicas": {"defaultMaxReplicas":{"decoder":4,"engine":4,"router":2},"defaultMinReplicas":1},
+  "replicas": {"defaultMaxReplicas":{"decoder":4,"encoder":3,"engine":4,"router":2},"defaultMinReplicas":1},
 ```
 
 An empty result means that the config sets no defaults. OME ignores a key that it doesn't know, so check the spelling of each key. If the line is right but a component keeps its old range after a `kubectl` edit, restart the manager, as [Change ConfigMap settings](configure-the-controller.md#tune-the-config-cache) shows.
