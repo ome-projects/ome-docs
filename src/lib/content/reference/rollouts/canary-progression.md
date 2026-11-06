@@ -58,7 +58,7 @@ A canary runs when a change, such as a new image, gives the engine a new revisio
 
 ### Canary prefill and decode together
 
-When an InferenceService declares both an engine and a decoder, a canary group that names one must name both, and the two roll out as one canary. The InferenceService `chat-pd` uses the model and the prefill-decode runtime that [Serve a prefill-decode model](../../guides/omenative/serve-a-prefill-decode-model.md) creates, on GPU nodes with RDMA NICs:
+The components that pair — the engine, the decoder and the encoder — are one canary unit: when an InferenceService declares two or more of them, a canary group that names one must name every one the service declares, and they roll out as one canary. The InferenceService `chat-pd` declares the engine and the decoder, so its group names both. It uses the model and the prefill-decode runtime that [Serve a prefill-decode model](../../guides/omenative/serve-a-prefill-decode-model.md) creates, on GPU nodes with RDMA NICs:
 
 ```yaml title="chat-pd.yaml"
 apiVersion: ome.io/v1beta1
@@ -313,9 +313,9 @@ The webhook rejects a canary with a message that names the field and gives one o
 | --- | --- |
 | `CanaryRequiresOMENative` | A component in the group doesn't declare OMENative. `deploymentMode=""` means it sets neither the field nor the annotation. |
 | `CanaryInvalid` | A step or `readyTimeout` breaks a rule in [Fields](#fields), or a `capacity` isn't one of the forms in [New-revision capacity](#new-revision-capacity). |
-| `CanaryInvalid` | The group names a component other than `router`, `engine` or `decoder`, or one the InferenceService doesn't declare, or sets `maintainRatio`. |
-| `CanaryInvalid` | The InferenceService has an engine and a decoder, and the group names one: `a canary group naming either must name both`, or for the decoder, `must include its entrypoint Component "engine"`. |
-| `MultipleCanaryGroups` | Two canary groups cover the same unit: the router, or the engine and decoder. |
+| `CanaryInvalid` | The group names a component other than `router`, `engine`, `decoder` or `encoder`, or one the InferenceService doesn't declare, or sets `maintainRatio`. |
+| `CanaryInvalid` | The InferenceService declares two or more of the engine, the decoder and the encoder, and the group names some of them but not all: `a canary group naming either must name both`, or with all three declared, `a canary group naming any of them must name all of them`. A group that leaves out the engine gets `must include its entrypoint Component "engine"` instead. |
+| `MultipleCanaryGroups` | Two canary groups cover the same unit: the router, or the engine, decoder and encoder. |
 | `GroupOrderingNotHonored` | A canary group sits beside other groups without `spec.rollout.groupOrdering: Concurrent`. |
 | `SoakNotHonored` | The canary group sets `soak`. |
 | `InvalidDuration` | The `ome.io/rollout-ready-timeout` annotation isn't a duration. |
