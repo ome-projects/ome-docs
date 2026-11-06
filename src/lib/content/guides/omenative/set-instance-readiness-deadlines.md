@@ -25,6 +25,7 @@ The `ome-resources` chart sets all three limits by default. You'll give one comp
 | `instanceReadyTimeout` | Time for an attempt to become Ready, including scheduling, the image pull and the server start. With none set anywhere, a stuck Instance waits for you. | A component's `lifecycle`, or the cluster | `30m` |
 | `stuckPodGracePeriod` | Fails the attempt early when a container or init container is stuck, as in `ImagePullBackOff`, and its pod is older than this. Unset, only the deadline fails it. | The cluster | `60s` |
 | `unschedulableGracePeriod` | Fails the attempt when the scheduler can't place a pod for this long. Unset, the pod waits until you free capacity. | The cluster | `15m` |
+| `gangDomainFullGracePeriod` | Fails a multi-pod attempt sooner when the scheduler reports that [the gang is held to a topology domain that can't take its remaining members](../../concepts/serving/gang-scheduling.md#a-gang-held-to-a-full-domain-can-fail-sooner), where freeing capacity elsewhere doesn't help. The shorter of this and `unschedulableGracePeriod` applies. | The cluster | Unset |
 
 A component's value in the InferenceService wins over the runtime's, and either wins over the cluster's. The same timeout sets the deadline of an [Instance migration](../../concepts/omenative/migration-and-transient-scale.md#deadline), and a [drain](recover-stuck-deletions.md) that runs past it raises `DrainOverdue`. OME also derives a multi-pod Instance's [gang schedule timeout](../../concepts/serving/gang-scheduling.md#bound-the-gang-schedule-timeout) from it.
 
@@ -118,7 +119,7 @@ OME marks the Instance `Failed`, and the `failure reason` row says why:
 | `CrashLoopBackOff`, `CreateContainerError`, `RunContainerError` | The container can't start, or keeps exiting. | Read the logs. With a `60s` `stuckPodGracePeriod`, one crash after the pod's first minute fails the attempt. Raise it for a server that needs a restart or two. |
 | `ContainersNotReady` | The pod runs, but its containers never passed their readiness checks. | Read the logs. If the model needs longer to load, raise `instanceReadyTimeout`. |
 | `ReadinessGateNotSatisfied` | The containers are ready, but a readiness gate keeps the pod out of its Service. | Run `kubectl describe pod` to see which gate stays `False`. |
-| `Unschedulable` | The scheduler couldn't place the pod within `unschedulableGracePeriod`. | Free capacity, or change the spec. |
+| `Unschedulable` | The scheduler couldn't place the pod within `unschedulableGracePeriod`, or a [gang held to a full domain](../../concepts/serving/gang-scheduling.md#a-gang-held-to-a-full-domain-can-fail-sooner) within `gangDomainFullGracePeriod`. | Free capacity, or change the spec. |
 | `DeadlineExceeded` | The deadline passed with none of the evidence above. | Read the logs. If the start needs longer, raise `instanceReadyTimeout`. |
 
 What OME does next depends on the cause and the operation:
@@ -155,7 +156,7 @@ ome:
       unschedulableGracePeriod: 15m
 ```
 
-Give each duration a unit, as in `90s` or `1h`. A bare number, like `30`, stops new controller pods from starting: see [The controller doesn't start after you change the settings](#the-controller-doesnt-start-after-you-change-the-settings). To turn a setting off, set it to `null`.
+Give each duration a unit, as in `90s` or `1h`. A bare number, like `30`, stops new controller pods from starting: see [The controller doesn't start after you change the settings](#the-controller-doesnt-start-after-you-change-the-settings). To turn a setting off, set it to `null`. To fail a [gang held to a full domain](../../concepts/serving/gang-scheduling.md#a-gang-held-to-a-full-domain-can-fail-sooner) sooner, add `gangDomainFullGracePeriod`, which the chart leaves unset, to the same block.
 
 With no timeout at all, a migration request fails as soon as OME accepts it, with `deadline exceeded in phase Accepted: surge never allocated`. This is a known bug, so keep a timeout set while you use migrations.
 
