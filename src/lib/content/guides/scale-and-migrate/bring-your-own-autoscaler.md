@@ -39,7 +39,7 @@ spec:
       class: External
 ```
 
-`External` needs no other settings. OME creates the InferenceReplica with the engine's `minReplicas`, 2 Instances here, and then your autoscaler sets the count. A RawDeployment component starts with 1 pod, whatever its `minReplicas`. On a running component, OME deletes the autoscaler that it created, and the count stays put until yours changes it. Add the same block under `decoder` or `router` for any other component that your autoscaler scales.
+`External` needs no other settings. OME creates the InferenceReplica with the engine's `minReplicas`, 2 Instances here, and then your autoscaler sets the count. A RawDeployment component starts at its `minReplicas` too, or with 1 pod when `minReplicas` is unset or 0. On a running component, OME deletes the autoscaler that it created, and the count stays put until yours changes it. Add the same block under `decoder` or `router` for any other component that your autoscaler scales.
 
 To hand off the engine of all the InferenceServices that use a runtime and set no autoscaling of their own, put the block in the runtime's `engineConfig` instead. To hold a component at a fixed count, use [`class: None`](../../concepts/serving/component-autoscaling.md#external-and-none).
 
