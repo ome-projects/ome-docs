@@ -1,9 +1,9 @@
 ---
 title: InferenceService
-description: An InferenceService names a model, a serving runtime or both, and declares the engine, decoder and router components that OME turns into workloads.
+description: An InferenceService names a model, a serving runtime or both, and declares the engine, decoder, encoder and router components that OME turns into workloads.
 ---
 
-An InferenceService serves a model. It names a [base model](../models/base-models.md), a [serving runtime](../runtimes/serving-runtimes.md) or both, and declares the components that serve the model: an engine, and optionally a decoder and a router. OME fills in each component from the runtime, runs it as a Deployment or on [OMENative](../omenative/overview.md), and reports in `status` when the InferenceService is ready and where to send requests. A service can instead front replicas you run yourself: see [Referenced replicas](#referenced-replicas).
+An InferenceService serves a model. It names a [base model](../models/base-models.md), a [serving runtime](../runtimes/serving-runtimes.md) or both, and declares the components that serve the model: an engine, and optionally a decoder, an encoder and a router. OME fills in each component from the runtime, runs it as a Deployment or on [OMENative](../omenative/overview.md), and reports in `status` when the InferenceService is ready and where to send requests. A service can instead front replicas you run yourself: see [Referenced replicas](#referenced-replicas).
 
 ## A minimal InferenceService
 
@@ -134,22 +134,23 @@ By default, a change to the runtime rolls out to the InferenceService. To pin it
 
 ## Components
 
-An InferenceService has up to three components:
+An InferenceService has up to four components:
 
 | Component | What it does |
 | --- | --- |
 | `engine` | Runs the model server. Every InferenceService needs one, declared here or [referenced](#referenced-replicas): with neither, OME creates no workload and records a `DeploymentModeError` event. With a decoder, the engine runs the prefill phase. |
 | `decoder` | Runs the decode phase, for prefill-decode disaggregated serving: see [Serve a prefill-decode model](../../guides/omenative/serve-a-prefill-decode-model.md). Needs an engine. |
+| `encoder` | Since v1.3, and alpha. Turns a request's images or audio into embeddings for the engine, for encoder-prefill-decode (EPD) disaggregated serving: see [The encoder](#the-encoder). Needs an engine, a rollout group and OMENative on every component. |
 | `router` | Receives requests and spreads them across the engine, or the engine and decoder. Without a router, requests go to the engine. |
 
-A component exists only when you declare it, or when [`spec.replicaRefs`](#referenced-replicas) names a replica for its role. The runtime's `engineConfig`, `decoderConfig` and `routerConfig` fill in the components you declare, and your values win, so a runtime's `routerConfig` adds no router by itself.
+A component exists only when you declare it, or when [`spec.replicaRefs`](#referenced-replicas) names a replica for its role. The runtime's `engineConfig`, `decoderConfig`, `encoderConfig` and `routerConfig` fill in the components you declare, and your values win, so a runtime's `routerConfig` adds no router by itself.
 
 Each component is a pod spec, so it takes pod fields such as `nodeSelector` and `tolerations`. It also has these fields:
 
 | Field | Components | What it does |
 | --- | --- | --- |
 | `runner` | All | The main container. Your settings, such as `image`, `args` or `resources`, override the runtime's. |
-| `minReplicas`, `maxReplicas` | All | The replica range. Unset bounds come from the runtime, then from the chart's [replica defaults](../../guides/operate-ome/set-replica-defaults.md): 1 to 3 for the engine and decoder, 1 to 2 for the router. |
+| `minReplicas`, `maxReplicas` | All | The replica range. Unset bounds come from the runtime, then from the chart's [replica defaults](../../guides/operate-ome/set-replica-defaults.md): 1 to 3 for the engine, decoder and encoder, 1 to 2 for the router. |
 | `labels`, `annotations` | All | Added to the component's workload and pods. |
 | `minAvailable`, `maxUnavailable` | All | The component's PodDisruptionBudget, in place of the default budget. Set one of them. |
 | `deploymentStrategy` | All | The Deployment's update strategy, for components that run as a RawDeployment. |
@@ -158,8 +159,9 @@ Each component is a pod spec, so it takes pod fields such as `nodeSelector` and 
 | `lifecycle` | All | Since v1.3. How an OMENative component updates and restarts its Instances, and how long each may take to become ready. See [OMENative update strategies](../architecture/omenative-update-strategies.md) and [Instance restart policy](../omenative/instance-restart-policy.md). |
 | `autoscaler`, `autoscalerPolicyRef` | All | Since v1.3. How the component scales. See [Scaling](#scaling). |
 | `leader`, `worker` | Engine, decoder | Run each replica as a leader pod and worker pods. See [Multi-node serving](#multi-node-serving). |
-| `topologyKey`, `topologySpread`, `topologySpreadKey` | Engine, decoder | Since v1.3. Keep each OMENative Instance's pods in one topology domain, and spread Instances across failure domains. |
-| `acceleratorOverride` | Engine, decoder | The component's own accelerator choice. See [Accelerator selection](#accelerator-selection). |
+| `topologyKey` | Engine, decoder | Since v1.3. Keep each OMENative Instance's pods in one topology domain. |
+| `topologySpread`, `topologySpreadKey` | Engine, decoder, encoder | Since v1.3. Spread OMENative Instances across failure domains. |
+| `acceleratorOverride` | Engine, decoder, encoder | The component's own accelerator choice. See [Accelerator selection](#accelerator-selection). |
 | `config` | Router | Settings passed to the router's container as environment variables. |
 
 One pod field has a default of its own: `terminationGracePeriodSeconds`, how long a pod gets to finish its in-flight requests after SIGTERM. A component whose InferenceService and runtime both leave it unset takes it from the `deploy` entry of the `inferenceservice-config` ConfigMap, in every deployment mode, on its `leader` and `worker` pod specs too. The `ome-resources` chart sets that default to `600` with `ome.controller.terminationGracePeriodSeconds`, so serving pods get 600 seconds. A manifest install sets none, and the pods take the Kubernetes default, 30 seconds. OME doesn't write the value into the InferenceService, so read it from the component's workload:
@@ -172,6 +174,25 @@ kubectl get deployment llama-3-2-1b-instruct-engine -n llama-demo \
 ```output
 600
 ```
+
+### The encoder {since=v1.3}
+
+`spec.encoder` declares an encoder: pods that turn a request's images or audio into embeddings for the engine, for encoder-prefill-decode (EPD) disaggregated serving. OME runs the pods and tells the encoder and its peers each other's addresses, through the [`OME_<PEER>_ENDPOINT` variables](../architecture/deployment-modes.md#pod-labels-and-environment): the engine's pods get `OME_ENCODER_ENDPOINT`, the encoder's get `OME_ENGINE_ENDPOINT`. Moving the embeddings between them is the runtime's job, so the encoder needs a runtime built for EPD serving. The encoder is alpha: its API can change without notice.
+
+Each encoder replica is one pod, so an encoder takes no `leader`, `worker` or `topologyKey`. You configure it like the other components: the runtime's `encoderConfig` fills in what you leave unset, `runner` overrides its main container, and unset replica bounds come from the runtime, then from the chart's [replica defaults](../../guides/operate-ome/set-replica-defaults.md), 1 to 3. To spread the pods across failure domains, set `topologySpread` together with `topologySpreadKey`: a single pod has no co-location key, so nothing fills the spread key in.
+
+The webhook enforces the shape an encoder needs, and each rejection ends with its reason in parentheses:
+
+| An encoder needs | Reason |
+| --- | --- |
+| `spec.engine`: the encoder makes embeddings for the prefill, so it serves nothing alone. | `EncoderRequiresEngine` |
+| No `spec.placement` or `spec.routing`: multi-cluster placement doesn't place an encoder, so serve the service from one cluster. | `EncoderNotPlaceable` |
+| At least one entry in `spec.rollout.groups`: the peer address variables, which tell the encoder and its peers where the others are, exist only on a service that declares [rollout groups](../rollouts-and-traffic/rollout-groups.md). | `EncoderRequiresRolloutGroups` |
+| OMENative for every component the InferenceService declares, the router included: set `spec.deploymentMode: OMENative`, or each component's `ome.io/deploymentMode` annotation. | `EncoderRequiresOMENative` |
+
+The webhook reads the modes the InferenceService itself declares, so a mode that only the runtime sets gets past it. The controller catches that when it merges the runtime in: it sets `EncoderReady` to `False` with the reason `EncoderRequiresOMENative`, records a Warning event with the same reason, and changes nothing in the cluster, so a serving InferenceService keeps running its pods. The message names the component and where the mode comes from. Remove the mode, or override it with the component's own annotation, and the next reconcile proceeds.
+
+The encoder runs like any other OMENative component: OME writes an InferenceReplica named `{isvc}-encoder`, [creates the same objects](../architecture/deployment-modes.md#what-ome-creates) for it, the Service `{isvc}-encoder` included, and rolls it as its own component. In `status`, `EncoderReady` follows the encoder's Instance counts the way `DecoderReady` follows the decoder's, without joining the aggregate `Ready`, and `status.components.encoder` reports the encoder's [lifecycle](../architecture/deployment-modes.md#lifecycle-status) like the other components.
 
 ## Deployment modes {#how-ome-picks-the-deployment-mode}
 
@@ -279,12 +300,13 @@ OME checks the TTL before anything else in the reconcile, so a spec problem that
 
 ## Status
 
-The `Ready` condition is `True` when both `EngineReady` and `IngressReady` are. With ingress creation off, the default, `IngressReady` is `True` with reason `IngressDisabled`, so `Ready` follows the engine alone: check `DecoderReady` and `RouterReady` too. [When IngressReady is True](../rollouts-and-traffic/ingress.md#when-ingressready-is-true) covers an Ingress and the Gateway API.
+The `Ready` condition is `True` when both `EngineReady` and `IngressReady` are. With ingress creation off, the default, `IngressReady` is `True` with reason `IngressDisabled`, so `Ready` follows the engine alone: check `DecoderReady`, `EncoderReady` and `RouterReady` too. [When IngressReady is True](../rollouts-and-traffic/ingress.md#when-ingressready-is-true) covers an Ingress and the Gateway API.
 
 | Condition | What it says |
 | --- | --- |
 | `EngineReady` | The engine's workload is available. |
 | `DecoderReady` | The decoder's workload is available. Only when you declare or [reference](#referenced-replicas) a decoder. |
+| `EncoderReady` | Since v1.3. The encoder's workload is available, or `False` with reason `EncoderRequiresOMENative` when a component's merged mode isn't OMENative: see [The encoder](#the-encoder). Only when you declare an encoder. |
 | `RouterReady` | The router's workload is available. Only when you declare or reference a router. |
 | `IngressReady` | The Ingress or HTTPRoutes that OME creates are ready, or ingress creation is off. |
 | `OverlaysReady` | Since v1.3. Only when you declare overlays: `True` with reason `AllOverlaysMounted`, or `False` with reason `OverlaysSkipped` and the overlays it left out. |

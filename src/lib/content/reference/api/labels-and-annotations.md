@@ -265,7 +265,7 @@ For multi-cluster serving, which is alpha, ome-quota-manager copies [Accelerator
 | Key | Values | Read or set by | Description |
 | --- | --- | --- | --- |
 | `ome.io/inferenceservice` | The InferenceService's name | Set and read by the controller. Read by the pod webhook | Marks the pods that the pod webhook changes. |
-| `component` | `engine`, `decoder` or `router` | Set by the controller. Read by the controller, kubectl ome and Alfred | The pod's component. |
+| `component` | `engine`, `decoder`, `encoder` or `router` | Set by the controller. Read by the controller, kubectl ome and Alfred | The pod's component. `encoder` since v1.3. |
 | `serving-runtime` | The runtime's name | Set by the controller | OME doesn't read it. |
 | `fine-tuned-serving` | `"true"` or `"false"` | Set by the controller | Whether the pod serves a FineTunedWeight. OME doesn't read it. |
 | `base-model-name`, `base-model-size`, `base-model-type` | The model's name; `models.ome.io/category`, or `SMALL`; `Serving` | Set by the controller. The pod webhook reads `base-model-type` | Set when the InferenceService has a base model. The pod webhook passes `base-model-type` to `model-init`. OME doesn't read the other two. |
