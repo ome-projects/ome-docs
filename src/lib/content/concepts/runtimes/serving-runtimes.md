@@ -18,7 +18,7 @@ An InferenceService names its runtime in `spec.runtime.name`, and `spec.runtime.
 
 ## What's in a runtime {#anatomy-of-a-runtime}
 
-A runtime lists the models that OME can choose it for in `supportedModelFormats`, and describes each component's pods in `engineConfig`, `decoderConfig` and `routerConfig`. The [ServingRuntimeSpec](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-ServingRuntimeSpec) reference lists every field.
+A runtime lists the models that OME can choose it for in `supportedModelFormats`, and describes each component's pods in `engineConfig`, `decoderConfig`, `routerConfig` and, since v1.3, [`encoderConfig`](#the-encoder). The [ServingRuntimeSpec](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-ServingRuntimeSpec) reference lists every field.
 
 The examples use the `llama-3-2-3b-instruct` ClusterBaseModel from [`config/models/meta/Llama-3.2-3B-Instruct.yaml`](https://github.com/ome-projects/ome/blob/main/config/models/meta/Llama-3.2-3B-Instruct.yaml). To download it, turn on the [model agent](../../guides/operate-ome/model-agent.md) with the chart values `modelAgent.enabled=true` and `modelAgent.hostPath=/raid/models`. It's gated, so the agent also needs a Hugging Face token in the Secret `hf-token` in the `ome` namespace; see [Credentials](../models/base-models.md#credentials). Apply the model, wait until it's `Ready`, and create a namespace for the examples:
 
@@ -158,16 +158,16 @@ A model matches an entry when their format, framework, architecture and quantiza
 | `modelSizeRange` | The model sizes the runtime supports, from `min` to `max`, both optional and inclusive. Write `M`, `B` or `T` in upper case: OME reads `4b` as 0. On v1.2.2, set both. See [Model size range matching](../../reference/matching/model-size-range-matching.md). |
 | `acceleratorRequirements.acceleratorClasses` | The [accelerator classes](accelerator-classes.md) the runtime runs on. OME picks a class for a component only when its runtime lists some. The other fields of `acceleratorRequirements` have no effect. |
 | `disabled` | `true` stops new use: OME never auto-selects the runtime, and since v1.3 the webhook rejects InferenceServices that name it. Running pods keep serving. A disabled runtime can still be a [profile](runtime-inheritance.md) for others. |
-| `nodeSelector` | Added to the engine's and the decoder's pods. It wins over `engineConfig.nodeSelector` and `decoderConfig.nodeSelector`, and loses to the accelerator class's node selector and to the InferenceService's. |
+| `nodeSelector` | Added to the engine's, the decoder's and, since v1.3, the encoder's pods. It wins over `engineConfig.nodeSelector`, `decoderConfig.nodeSelector` and `encoderConfig.nodeSelector`, and loses to the accelerator class's node selector and to the InferenceService's. |
 | `schedulerName` | The default scheduler for every component's pods. |
 | `protocolVersions` | Read only by the webhook's cross-runtime priority check: two runtimes conflict only when their lists share a protocol, so a runtime that lists none never conflicts; see [Common errors](#what-the-admission-webhook-checks). The catalog runtimes set it; you can leave it out. |
-| `volumes`, `tolerations`, `affinity` and most other pod fields | Not used. Set them in `engineConfig`, `decoderConfig` or `routerConfig`. |
+| `volumes`, `tolerations`, `affinity` and most other pod fields | Not used. Set them in `engineConfig`, `decoderConfig`, `routerConfig` or, since v1.3, `encoderConfig`. |
 
 ### The engine, decoder and router
 
 `engineConfig`, `decoderConfig` and `routerConfig` take the fields of the InferenceService's `engine`, `decoder` and `router`, including a `runner`: the model server container, which OME names `ome-container` unless you name it. A multi-node component has a `leader` and a `worker`, each with a `runner`, and `worker.size` sets the number of worker pods for each leader; see [Deployment modes and OMENative](../architecture/deployment-modes.md). On v1.2.2, runtimes also have a top-level `workers` field, which v1.3 drops; use `engineConfig.worker.size` instead.
 
-OME uses a config only for the components that the InferenceService declares: an InferenceService with only an `engine` gets no decoder or router.
+OME uses a config only for the components that the InferenceService declares: an InferenceService with only an `engine` gets no decoder, router or [encoder](#the-encoder).
 
 Since v1.3, the annotation `ome.io/engine: sglang-pd` on a runtime fills in an SGLang prefill-decode engine, decoder and router wherever the runtime leaves fields unset. Its images use the `latest` tag, so set each `image` yourself; see [Labels and annotations](../../reference/api/labels-and-annotations.md#runtime-annotations).
 
@@ -180,10 +180,16 @@ Where the runtime and the InferenceService both set a value, the InferenceServic
 
 Attach an [autoscaler policy](../serving/autoscaler-policy.md) and set `acceleratorOverride` in the InferenceService: since v1.3 the webhook rejects `autoscalerPolicyRef` in a runtime, and `acceleratorOverride` has no effect there.
 
-OME sets two environment variables in the engine's and the decoder's runner:
+OME sets two environment variables in the engine's, the decoder's and, since v1.3, the [encoder's](#the-encoder) runner:
 
 - `MODEL_PATH`, the path of the model's weights, when the InferenceService names a base model and the runner doesn't set it. Without a base model, a runner that passes `$(MODEL_PATH)`, as the catalog runtimes do, gets that text literally. Set `MODEL_PATH` in `env`, or load the weights another way; see [Reference a runtime explicitly](../../guides/deploy-models/reference-a-runtime-explicitly.md#step-2-name-the-runtime-in-the-inferenceservice).
-- `PARALLELISM_SIZE`, the GPUs in each pod times the pods in each replica, which is one plus `worker.size`. It replaces any value you set. OME leaves it unset for a runner without GPUs, or when a [matched entry's](#per-accelerator-configuration) `acceleratorConfig` sets `tensorParallelismOverride` for the chosen class. A runner is without GPUs when it requests none of the resource names on the operator's [`acceleratorResources` list](../../guides/operate-ome/configure-the-controller.md#recognize-other-accelerator-resources) — only `nvidia.com/gpu`, until the operator adds more — so a runner that requests `amd.com/gpu` or `google.com/tpu` counts as one until its resource is listed.
+- `PARALLELISM_SIZE`, the GPUs in each pod times the pods in each replica, which is one plus `worker.size`; an encoder replica is always one pod. It replaces any value you set. OME leaves it unset for a runner without GPUs, or when a [matched entry's](#per-accelerator-configuration) `acceleratorConfig` sets `tensorParallelismOverride` for the chosen class. A runner is without GPUs when it requests none of the resource names on the operator's [`acceleratorResources` list](../../guides/operate-ome/configure-the-controller.md#recognize-other-accelerator-resources) — only `nvidia.com/gpu`, until the operator adds more — so a runner that requests `amd.com/gpu` or `google.com/tpu` counts as one until its resource is listed.
+
+### The encoder {since=v1.3}
+
+A runtime can also carry `encoderConfig`: the piece for the alpha `encoder` component of encoder-prefill-decode serving, whose pods turn a request's images or audio into embeddings for the engine. It takes the fields of the InferenceService's `encoder`, including a `runner`; the [EncoderSpec](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-EncoderSpec) reference lists them. An encoder replica is one pod, so there is no `leader` or `worker`.
+
+The piece alone deploys no encoder. OME reads it only when the InferenceService declares `spec.encoder`, and merges the two by the same rules as the other components, with the InferenceService's fields winning. OME completes the encoder's runner the way it completes the engine's and the decoder's: it sets `MODEL_PATH` and `PARALLELISM_SIZE` as above — one pod per replica, so `PARALLELISM_SIZE` is the GPUs in the pod — and applies the matched entry's [per-accelerator settings](#per-accelerator-configuration).
 
 ### Placeholders
 
@@ -433,7 +439,7 @@ The settings for a class can hold these fields:
 | `environmentOverride` | Sets environment variables in the runner, over the InferenceService's values. |
 | `dataParallelSize`, `minMemoryPerBillionParams` | No effect. |
 
-OME applies these settings after it merges the runtime with the InferenceService, once it [picks a class](../../guides/deploy-models/select-accelerators.md#how-ome-picks-a-class) for the engine or the decoder, leaders and workers included. The router gets none. OME takes them from the entry that best matches the model's format and framework, counting only entries with `autoSelect: true` when OME chose the runtime.
+OME applies these settings after it merges the runtime with the InferenceService, once it [picks a class](../../guides/deploy-models/select-accelerators.md#how-ome-picks-a-class) for the engine or the decoder, leaders and workers included, and since v1.3 for [the encoder](#the-encoder). The router gets none. OME takes them from the entry that best matches the model's format and framework, counting only entries with `autoSelect: true` when OME chose the runtime.
 
 The settings exist only through that matched entry: without one, OME applies none of them, and nothing records the skip. The pods still get the class's [node selector, resources and node affinity](accelerator-classes.md#how-services-choose-a-class), but the runner keeps its own flags and environment, and OME sets `PARALLELISM_SIZE` as usual. That happens when:
 
