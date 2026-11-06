@@ -142,6 +142,30 @@ While something outside the Instance holds an operation, such as a scheduling ga
 
 An `AdmissionUnavailable` hold isn't a failure: the attempt keeps its phase and its operation, and OME keeps retrying the write until one goes through admission again, which ends the hold. OME records the wait in the Instance's `lastFailure` under the same `AdmissionUnavailable` reason, with the refused pod and the API server's own message, which names the webhook it couldn't reach, and one `InstanceAdmissionUnavailable` warning event per episode carries that message. The wait blames no revision — no revision can reach a webhook the API server can't — so it never counts toward a [revision hold](#what-ome-does-with-a-failed-instance).
 
+### Changing the pod template mid-create
+
+A fix you push while an Instance's pods are still being created doesn't wait for the broken create to fail or time out. When the target revision moves while a `Create` operation is still building pods that have never served — the pods of a new Instance, or of one being rebuilt at a revision other than the one it served — OME retires the attempt at once and replaces it with a fresh `Create` pinned to the new revision: a new attempt, whose deadline starts over. Pods the retired attempt already created carry the old revision, so OME deletes them and the fresh attempt creates its own.
+
+The retirement isn't a failure: the retired revision never got the chance to fail. The Instance stays `Creating` with no `lastFailure`, and the retired revision gets no [retry or hold](#what-ome-does-with-a-failed-instance). OME records one Normal `CreateAttemptSuperseded` event on the InferenceService for each Instance it retires, naming both revisions. For the example's Instance 1, retargeted mid-create by a pod template change:
+
+```bash
+kubectl get events -n qwen3-0-6b --field-selector reason=CreateAttemptSuperseded \
+  -o custom-columns=TYPE:.type,MESSAGE:.message
+```
+
+```output
+TYPE     MESSAGE
+Normal   OMENative component=engine instance=1 retired the Create attempt pinned to qwen3-0-6b-engine-5f8c3d2a and restarted it at qwen3-0-6b-engine-a41b7e90
+```
+
+Not every in-flight create is retired:
+
+- An attempt with every pod built and runtime-ready is one promote away from serving, so OME finishes it instead: the Instance promotes on the revision it was built for, and an [update](../architecture/omenative-update-strategies.md) then rolls it to the new revision without a serving gap.
+- The new revision's [retry backoff or hold](#what-ome-does-with-a-failed-instance) gates the restarted attempt exactly as it gates a first attempt at that revision. While the new revision is denied, OME leaves the old attempt in place, rather than tear it down and build nothing.
+- A [paused](../../guides/roll-out-changes/pause-and-resume-a-rollout.md) rollout finishes the creates it has committed but starts nothing new, and the replacement is a new attempt: the retirement waits for the unpause.
+
+A `Create` that refills the pods of an Instance at the revision it already served is never retired: those pods belong to a serving Instance, and moving it to a new revision is the [update strategy's](../architecture/omenative-update-strategies.md) business. And a create that already [failed](#when-an-instance-fails) needs no retiring: its next attempt commits to the newest revision when the backoff allows.
+
 ## When an Instance fails
 
 OME moves an Instance to `Failed` when an operation can't finish. The chart sets the three limits under `ome.controller.lifecycle`:
