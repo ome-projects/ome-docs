@@ -43,7 +43,7 @@ A runtime's score is the highest score among its `supportedModelFormats` entries
 | `modelFormat.weight` | 1 | `weight: 0` counts as 10. |
 | `modelFramework.weight` | 1 | `weight: 0` counts as 5. |
 | `priority` | 1 | Must be at least 1. |
-| `autoSelect` | Not set | `false` leaves the entry out of the score; unset counts. |
+| `autoSelect` | Not set | Only `true` counts the entry toward the score; `false` or unset leaves it out. |
 
 Writing `weight: 0` raises the score rather than switching the weight off. A weight can be negative, which lowers the score.
 
