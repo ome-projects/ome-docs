@@ -361,7 +361,19 @@ With a value empty, or the entry absent — the kustomize manifests don't write 
 
 ## Damp per-revision traffic churn in status
 
-For each [OMENative](../../concepts/omenative/overview.md) component that no canary step drives, OME writes the component's live traffic split into `status.components.<component>.traffic`: the revisions' shares of the component's serving pods, as percents that sum to 100. The weights follow the raw pod counts, so on a large component one pod that blips out of readiness between reconciles — momentarily Pending, or draining — shifts the computed percents, and every shift is another status write for the API server and every watcher of the InferenceService to process. The weights report the split, they don't route it: requests reach every ready Instance either way, so only the report churns.
+For each [OMENative](../../concepts/omenative/overview.md) component that no canary step drives, OME writes the component's live traffic split into `status.components.<component>.traffic`: the revisions' shares of the component's [serving pods](../../concepts/omenative/instances.md#readiness-and-availability) that the endpoints controller lists as Ready endpoints of their per-revision routing Service, as percents that sum to 100. The weights follow the raw counts of those listed pods, so on a large component one pod that blips out of readiness between reconciles — momentarily Pending, or draining — shifts the computed percents, and every shift is another status write for the API server and every watcher of the InferenceService to process. The weights report the split, they don't route it: requests reach every listed pod either way, so only the report churns.
+
+Listed, not just Ready: the endpoints controller lists a pod behind its Service from the same `Ready` condition that serving reads, with a delay of its own, and no request reaches the pod before it's listed. So while a revision has serving pods that aren't listed yet, the written split withholds the missing share rather than report weight onto a Service with nothing behind it: the revision's listed pods alone carry its weight, and with none listed it gets no entry, so the revisions already listed keep the whole split. The InferenceService says why in a `TrafficEndpointsReady: False` condition, reason `WaitingForEndpoints`, whose message names each waiting revision and its counts:
+
+```bash
+kubectl get inferenceservice llama-chat -n llama-demo -o jsonpath='{.status.conditions[?(@.type=="TrafficEndpointsReady")].message}'
+```
+
+```output
+engine revision 5c21f3aa: waiting for endpoints: 2 pods Ready, 0 listed
+```
+
+The wait isn't a stall, and no action of yours moves it: once the endpoints controller lists the pods, the revision's share lands in the written split and the condition turns `True`, reason `EndpointsListed`. OME writes that `True` only to resolve an earlier wait — an InferenceService that never waited carries no `TrafficEndpointsReady` condition — and the condition doesn't gate the InferenceService's `Ready` condition. The pod on its way out is the mirror case and counts for nothing: one the endpoints controller still lists after it stopped serving is leaving, and pulls no weight toward its revision.
 
 The setting `ome.controller.coordination.trafficWeightDeadbandPercent`, which the chart writes to the `coordination` entry of the `inferenceservice-config` ConfigMap, puts a per-revision band on that writer. With a band above 0, OME skips the write when the recomputed weights name the same revisions as status and every revision's percent moves by less than the band from the value already written: the move counts as pod-count jitter. The chart's default is `0`: the band is off, and every meaningful change is written. A negative value also turns the band off, and the manager itself has no built-in band — an absent entry reads as 0.
 
