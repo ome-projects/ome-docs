@@ -205,7 +205,7 @@ The first step waits until you promote it. To promote a step, or to roll the can
 
 ## Change the engine-decoder wire protocol
 
-`spec.rollout.pairingProtocol` is a token you choose, such as `kv-v1`, for the wire protocol between the engine and the decoder. Change it only when that protocol changes. A new token gives both components a new revision, and OME labels their pods with `ome.io/pairing-protocol`.
+`spec.rollout.pairingProtocol` is a token you choose, such as `kv-v1`, for the wire protocol between the engine and the decoder. Change it only when that protocol changes. A new token gives both components a new revision, and OME labels their pods with `ome.io/pairing-protocol`. An [encoder](../serving/inference-services.md#the-encoder) carries the token too, but isn't kept pairable through a change, so while a service declares one the token is frozen except for clearing: see [While an encoder is declared](#while-an-encoder-is-declared).
 
 To move from one token to another, roll the engine and the decoder out in one blue-green group. If `mistral-pd` runs with `pairingProtocol: kv-v1`, this spec moves it to `kv-v2`:
 
@@ -231,7 +231,16 @@ A floor holds a drain only when the drain itself lowers the pairable count, so a
 
 Under `RecreatePod` or an in-place strategy, a component runs the new token only once its old pods leave rotation, so OME checks both floors before a step takes its pod out of rotation, at the same `Pairing` gate. The step waits with a reason such as `pairing protocol transition to "kv-v2": updating a serving engine of cohort "kv-v1" would leave the engine with 2 pairable serving Instance(s), below its floor of 3 (desired 4 minus maxUnavailable 1); holding until cohort "kv-v2" serves on both Components`, until the new token serves on both components. With one engine and one decoder the change can briefly leave no pair.
 
-The webhook rejects a change from one token to another when the engine and the decoder roll out separately or by rolling update (`PairingProtocolChangeUncoordinated`). It always accepts setting a token for the first time, or clearing it.
+The webhook rejects a change from one token to another when the engine and the decoder roll out separately or by rolling update (`PairingProtocolChangeUncoordinated`). With no encoder declared, it always accepts setting a token for the first time, or clearing it.
+
+### While an encoder is declared
+
+An [encoder](../serving/inference-services.md#the-encoder)'s revisions and pods carry the token exactly as the engine's and the decoder's do, so a change of the token rolls the encoder too. But the holds above keep only the engine and the decoder pairable through a change — nothing keeps the encoder and the engine paired — and they start from what still serves, not from your edit: a token set while an earlier change still rolls would leave the encoder beside two tokens with no guard. So two refusals apply to an edit, whatever groups the service declares, a blue-green group over all three components included:
+
+- **While the old or the new spec declares an encoder, the token may only stay as it is or be cleared** (`PairingProtocolChangeWithEncoder`). A move between tokens and a first-time set from empty are refused alike, in the edit that removes the encoder too, since the rule reads both specs. If `mistral-pd` declared an encoder, the spec above would be refused with `spec.rollout.pairingProtocol: setting the pairing protocol to "kv-v2" is refused while the service declares an encoder, or in the edit that removes it; the value may only stay "kv-v1" or be cleared, since only the engine and the decoder are kept pairable through a change (PairingProtocolChangeWithEncoder)`. For a first-time set, the middle of the message reads `the value may only stay empty`. To move to a new token, remove the encoder first, then change the token in a second edit, under the group rule above.
+- **An edit that adds an encoder must leave the token empty** (`EncoderAddedWithPairingProtocol`), even when the edit doesn't touch the value: an earlier change of the token may still be rolling, and the edit alone can't show it. The refusal names the fix: `spec.rollout.pairingProtocol: adding an encoder needs an empty pairing protocol, but it is "kv-v1"; clear it in the same edit, because an earlier change of the value may still be rolling and only the engine and the decoder are kept pairable through it (EncoderAddedWithPairingProtocol)`.
+
+Clearing the token is always admitted, and safe at any mix of revisions, since an empty token pairs with any. The clear gives every component that carries the token a new revision, the encoder included.
 
 ## Roll components one at a time
 
@@ -289,7 +298,9 @@ When the webhook rejects a rollout, `kubectl` prints `admission webhook "inferen
 | `OrderNotHonored` | A group sets `order`, which no progression applies. |
 | `InvalidRollingUpdateInteger`, `InvalidRollingUpdatePercent`, `ZeroBudgetPacingUnstartable` | A negative count, a string that isn't a percentage from `"0%"` to `"100%"`, or two budgets that resolve to zero. |
 | `RatioDrainInfeasible` | A `maintainRatio` group's drain-first member's first drain would leave it with nothing serving, or move a pair's serving ratio more than twice the `tolerance`. See [Rolling update](#rolling-update). |
-| `PairingProtocolChangeUncoordinated` | `pairingProtocol` changes tokens while the engine and the decoder roll out separately or by rolling update. |
+| `PairingProtocolChangeUncoordinated` | With no encoder declared, `pairingProtocol` changes tokens while the engine and the decoder roll out separately or by rolling update. |
+| `PairingProtocolChangeWithEncoder` | `pairingProtocol` changes — between tokens, or a first-time set — while the old or the new spec declares an encoder. The token may only stay or be cleared. See [While an encoder is declared](#while-an-encoder-is-declared). |
+| `EncoderAddedWithPairingProtocol` | An edit adds an encoder while `pairingProtocol` is set. Clear the token in the same edit. |
 | `RolloutPolicyRefUnsupported` | A group sets `policyRef` while RolloutPolicy is off. |
 
 Not every reason in parentheses is a rejection: an edit that changes only some of a rolling-update group's components is admitted, with a `RollingUpdatePartialChange` warning. See [Rolling update](#rolling-update).
