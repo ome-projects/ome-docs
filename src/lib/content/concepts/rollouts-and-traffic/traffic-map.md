@@ -201,12 +201,12 @@ A `weights` block weighs each component by name, with `default` for every compon
 | --- | --- |
 | Engine | `weights.engine`, then `weights.default`. |
 | Decoder | `weights.decoder`, then `weights.default`, then the engine's. |
-| Router | `weights.router`, then the engine's. |
+| Router | `weights.router`, then `weights.default`, then the engine's. |
 
 The engine is the unit placement counts, so its shares are the split itself; a service without an engine counts decoders instead. The other components divide their own counts over the clusters that hold engines, each of those clusters getting at least one — a count smaller than their number refuses the plan:
 
 - **The decoder follows the engine's shares.** Its count — `decoder.minReplicas`, or one decoder for each engine replica when it's unset — divides in proportion to the engine's shares when the decoder has no weights of its own, and also when its weights are proportional to the engine's: decoder weights `6` and `3` beside engine weights `2` and `1` still follow. Only weights in a different ratio split it independently.
-- **The router isn't divided at all** until a term sets `weights.router`. Without one, every cluster runs the service's full router policy, `router.minReplicas` to `router.maxReplicas` on each. When any term sets `weights.router`, placement divides `router.minReplicas` across the clusters by the router weights, so the validator requires a positive `router.minReplicas`.
+- **The router divides by default.** When no term sets `weights`, placement divides `router.minReplicas` across the clusters in the engine's shares; when a term sets `weights.default` or `weights.router`, it divides by the router weights above. Either way the validator requires a positive `router.minReplicas`. Only `weights` that name just the engine or the decoder keep the full router policy on every cluster, `router.minReplicas` to `router.maxReplicas` on each.
 
 When `split.replicas` sets a count other than `engine.minReplicas`, a declared `decoder.minReplicas` and a divided `router.minReplicas` scale with it, in their declared ratio to `engine.minReplicas`, rounded up.
 
@@ -214,13 +214,13 @@ A decoder split by its own weights gives the clusters different engine-to-decode
 
 ### What the validator refuses
 
-The InferenceService validator refuses a weights block that can't work. On the control-plane cluster, where [the control-plane role turns the validator off](../../reference/operate-ome/controller-manager-flags.md#what-the-control-plane-role-turns-off), the same checks run in placement instead: the service's `PlacementInputValid` condition turns `False` with reason `InvalidPlacementIntent` and the same message, and placement accepts no new plan.
+The InferenceService validator refuses a weights block that can't work — and one case that needs no block: a divided router without a positive `router.minReplicas`. On the control-plane cluster, where [the control-plane role turns the validator off](../../reference/operate-ome/controller-manager-flags.md#what-the-control-plane-role-turns-off), the same checks run in placement instead: the service's `PlacementInputValid` condition turns `False` with reason `InvalidPlacementIntent` and the same message, and placement accepts no new plan.
 
 | The spec | The refusal |
 | --- | --- |
 | `weights` on a term in any mode but `Split`, `SplitByCapacity` included | `spec.placement.clusterAffinity[0]: weights is permitted only in Split mode` |
 | A weight for a component the service doesn't declare | `spec.placement.clusterAffinity[0].weights.decoder names a component the service does not declare` |
-| `weights.router` without a positive `router.minReplicas` | `spec.placement.clusterAffinity weights.router divides router.minReplicas across clusters; set a positive router.minReplicas` |
+| A router without a positive `router.minReplicas`, in a Split [that divides the routers](#each-components-share) — a spec with no `weights` block included | `Split divides router.minReplicas across clusters when no term sets weights, or when a term sets weights.default or weights.router; set a positive router.minReplicas` |
 | A `spec.placement.policy` other than `ClusterAffinity` | `spec.placement.policy must be ClusterAffinity; the ComponentAffinity policy was removed, set each component's weight in the weights block of each clusterAffinity term` |
 
 A term can also carry the deprecated scalar `weight`, which means `weights.default`. It's the one weight a manager without weights support reads, so a rollback to such a manager keeps the engine shares set there. Outside mode `Split` it's refused like the block, with `weight is permitted only in Split mode`. The API server itself rejects an empty `weights` block, a weight below 1, and the scalar next to the fields it duplicates, with `weight means weights.default; it may sit beside weights.decoder and weights.router, but not beside weights.default or weights.engine`.
