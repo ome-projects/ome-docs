@@ -259,7 +259,7 @@ Set the reserve label when you create the model: adding a label later makes all 
 
 ## What OME learns from the model
 
-Once a node has the weights, the agent reads the model's `config.json`, or `model_index.json` for a diffusion pipeline, and `hf_quant_config.json` if there is one. OME fills in these fields:
+Once a node has the weights, the agent reads the model's `config.json`, or `model_index.json` for a diffusion pipeline, and two more files when they exist: `hf_quant_config.json`, and the `config_sentence_transformers.json` next to `config.json`. OME fills in these fields:
 
 | Field | What OME records |
 | --- | --- |
@@ -280,7 +280,7 @@ OME fills in only empty fields, so a value that you set always wins. For `pvc://
 
 OME detects `modelCapabilities` with an ordered list of rules over the model's files. The first rule that recognizes the model writes its whole list of values, so a multimodal model gets several at once, and the rules after it don't run. The agent and the `pvc://` metadata Job run the same rules.
 
-The rules read the pipeline class — `_class_name` in `model_index.json`, such as `FluxPipeline` — and, from `config.json`, the `model_type` and the first entry of `architectures`, the architecture below. `model_type` matches ignore case; the others are case-sensitive. The first matching row fills the field:
+The rules read the pipeline class — `_class_name` in `model_index.json`, such as `FluxPipeline` — and, from `config.json`, the `model_type` and the first entry of `architectures`, the architecture below. A third file adds one signal: a `config_sentence_transformers.json` next to `config.json` that sets `similarity_fn_name` marks the model as an embedding model. `model_type` matches ignore case; the others are case-sensitive. The first matching row fills the field:
 
 | The model's files | `modelCapabilities` |
 | --- | --- |
@@ -295,11 +295,13 @@ The rules read the pipeline class — `_class_name` in `model_index.json`, such 
 | A `model_type` that contains `inkling_mm_model` | `TEXT_TO_TEXT` and `AUDIO_TEXT_TO_TEXT` |
 | A vision key in `config.json`: `vision_config`, `mm_vision_tower`, `image_token_id`, `image_token_index` or `img_processor` | `IMAGE_TEXT_TO_TEXT` |
 | An architecture that ends in `ForCTC` or `ForSpeechToText`, or is `WhisperForConditionalGeneration` | `AUDIO_TO_TEXT` |
-| An architecture with the word `Bert`, `Embedding` or `Sentence`, or the architecture `MistralModel` with `model_type` `mistral` | `EMBEDDING` |
+| A `config_sentence_transformers.json` that sets `similarity_fn_name`, an architecture with the word `Bert`, `Embedding` or `Sentence`, or the architecture `MistralModel` with `model_type` `mistral` | `EMBEDDING` |
 | An architecture that ends in `ForCausalLM`, `ForConditionalGeneration` or `LMHeadModel` | `TEXT_TO_TEXT` |
 | None of the above | The empty entry |
 
 An architecture has a word when it appears as a CamelCase or underscore-separated segment: `Qwen3Omni` has the word `Omni`, and `Demonic` doesn't. The order carries intent: a vision model whose architecture ends in `ForConditionalGeneration` gets `IMAGE_TEXT_TO_TEXT` from the vision-key row, not the fallback `TEXT_TO_TEXT`, and `NemotronH_Omni_Reasoning_V3` without `"sound_config": null` falls through to the `Omni` row's audio values.
+
+`config_sentence_transformers.json` is the file the sentence-transformers library saves next to `config.json` for the embedding models it serves, and it's what detects decoder-based embedding models whose `config.json` is a causal LM's: a Qwen3-Embedding model's architecture is `Qwen3ForCausalLM`, but the file sets `"similarity_fn_name": "cosine"`, so the model gets `EMBEDDING` instead of the fallback `TEXT_TO_TEXT`. For your own embedding model, ship the file with `similarity_fn_name` set, in the same directory as the `config.json` OME reads: a file that doesn't parse counts as no signal, and one in another directory doesn't count.
 
 When no row matches, OME writes the empty entry — `modelCapabilities: [""]` — and you [set the field yourself](#set-the-metadata-yourself). The field is a list of plain strings, which OME doesn't validate, so prefer the values in the table; the API also names `RERANK` and `AUDIO_TRANSLATION`, which no rule writes, and lists the older task names `TEXT_GENERATION`, `TEXT_SUMMARIZATION`, `TEXT_EMBEDDINGS`, `TEXT_RERANK`, `CHAT` and `VISION` as deprecated.
 
