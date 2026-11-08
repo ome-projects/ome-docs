@@ -158,7 +158,7 @@ The autoscaling rows show the [component autoscaling](../../concepts/serving/com
 | Row | What it shows |
 | --- | --- |
 | Autoscaling | `<state> / <evidence> parent status`, or `Unavailable; parent read, no usable scaler status`. |
-| `Scale <component>` | One row for each component with an entry in `status.components`, as `<state> <class>/<managedBy> <current>-><desired> (<replicas>)`. The counts show `-` unless replicas is `Reported` or `Ambiguous`. |
+| `Scale <component>` | One row for each of `engine`, `decoder` and `router` with an entry in `status.components`, as `<state> <class>/<managedBy> <current>-><desired> (<replicas>)`. The counts show `-` unless replicas is `Reported` or `Ambiguous`. |
 | Scale target | Wide, after each Scale row. `<component> / <state>`: the scale target the status records. |
 | Scale conditions | Wide, after each Scale row. `<component> / <state>`: the scaler conditions the status records. |
 | Autoscale issue | Wide. `<component> / <code>` for each issue. An issue of the whole service, such as `UnknownComponentStatus`, has nothing before the slash. |
@@ -169,11 +169,13 @@ Autoscaling is one of:
 | --- | --- |
 | `Reported / Reported parent status` | Every component's autoscaler status is complete. |
 | `Partial / Reported parent status` | A component's autoscaler status is incomplete, or some components have none. |
-| `Invalid / Reported parent status` | `status.components` has a key the CLI doesn't know, or a component's autoscaler status is invalid. |
+| `Invalid / Reported parent status` | `status.components` has a key the CLI doesn't know, as it always does on a service with an encoder, or a component's autoscaler status is invalid. |
 | `Unavailable / Unavailable parent status` | `status.components` has no engine, decoder or router entry, or is too large to read. |
 | `Unavailable; parent read, no usable scaler status` | The component entries carry no autoscaler status. |
 
 [`kubectl ome autoscale status`](autoscale.md#status-output-fields) explains the values in a Scale row and the Autoscale issue codes. The state in Scale target and Scale conditions is `Reported`, `NotReported`, `Unavailable` or `Invalid`. `PolicyEvidenceInvalid` and `PolicyConditionConflict` come from an [AutoscalerPolicy](../../concepts/serving/autoscaler-policy.md), which is alpha.
+
+The controller also records an [encoder](../../concepts/serving/inference-services.md#the-encoder)'s autoscaler status, under `status.components.encoder`, a key the CLI doesn't read. So once that entry exists, a service with `spec.encoder` always shows Autoscaling `Invalid / Reported parent status` with the Autoscale issue `UnknownComponentStatus`, and no `Scale encoder` row. That marks the CLI's limit, not a problem the controller found: the other components' rows still report as usual.
 
 ### Placement
 
