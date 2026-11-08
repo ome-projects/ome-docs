@@ -192,7 +192,7 @@ nvidia-l40s   nvidia   ada      48Gi     1
 
 OME picks a class for the engine and the decoder when their runtime lists classes in `acceleratorRequirements.acceleratorClasses`. If the InferenceService names a class, in `spec.acceleratorSelector` or the component's `acceleratorOverride`, the component gets it. If it sets a `policy` there instead, the policy picks one of the runtime's classes that pass the constraints. With neither, the component gets no class: there's no default policy. [Select accelerators](../../guides/deploy-models/select-accelerators.md) shows both ways.
 
-A policy ignores free capacity, so it can pick a class whose nodes are full or that no node matches yet. Constraints in an `acceleratorOverride` have no effect, so set them in `spec.acceleratorSelector`. With `BestFit`, always set at least one there, to avoid a [known bug](../../guides/deploy-models/select-accelerators.md#bestfit-doesnt-create-or-update-the-workload).
+A policy ignores free capacity, so it can pick a class whose nodes are full or that no node matches yet. Constraints in an `acceleratorOverride` have no effect, so set them in `spec.acceleratorSelector`. They're optional, `BestFit` included: without `minMemory`, it ignores memory, and a class that states a `performance` figure beats one that doesn't; see [Policies](../../guides/deploy-models/select-accelerators.md#policies).
 
 When OME picks the runtime itself, it considers only runtimes that list all the classes the InferenceService names; see [Runtime accelerator-class matching](../../reference/matching/runtime-accelerator-class-matching.md).
 

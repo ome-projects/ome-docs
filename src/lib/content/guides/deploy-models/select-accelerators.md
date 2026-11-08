@@ -41,6 +41,8 @@ When only one class passes the constraints, every policy picks it, and the compa
 | `MostCapable` | The class with the most memory, memory bandwidth and TFLOPS, with memory counting most. |
 | `FirstAvailable` | The first class in the runtime's list that passes the constraints. |
 
+`BestFit` weights memory fit at 0.70 and compute performance at 0.30, and needs no constraints. With none set, every class gets the full memory score, so the compute score decides: a class whose `capabilities.performance` states a figure beats one that states none, the figures' size doesn't matter, and the first in the runtime's list wins a tie. To compare memory, set `minMemory`.
+
 The `tier` fallback runs only when no passing class sets `spotPerHour`, `perHour` or `perMillionTokens`. `Cheapest` then picks the class with the lowest tier: `low` beats `medium`, which beats `high`, ignoring case. `tier` takes any text, and a value other than those three counts as `medium`, so `tier: premium` loses to `low`, beats `high` and ties `medium`. When two classes share the lowest tier, the one listed first in the runtime's `acceleratorClasses` wins.
 
 ## Step 1: Create the AcceleratorClasses
@@ -212,8 +214,7 @@ With the classes from Step 1, the policies pick:
 | `MostCapable` | `nvidia-h200`, which has more memory and bandwidth. |
 | `FirstAvailable` | `nvidia-h100`, which is first in the runtime's list. |
 
-!!! warning "Set constraints with BestFit"
-    With `BestFit`, always set `spec.acceleratorSelector.constraints`, also when `BestFit` is in an `acceleratorOverride`. If you leave them out and two or more classes qualify, [OME doesn't create or update the serving workload](#bestfit-doesnt-create-or-update-the-workload).
+Constraints are optional. Without `minMemory`, `BestFit` doesn't compare memory: these two classes both state a `performance` figure, so they tie, and it picks `nvidia-h100`, the first in the runtime's list; see [Policies](#policies).
 
 Apply the file:
 
@@ -328,16 +329,6 @@ LAST SEEN   TYPE      REASON                  OBJECT                            
 ```
 
 The class that the InferenceService names is missing from the cluster. Create the class or fix the name. Until then, OME leaves the serving workload as it is, and keeps retrying.
-
-### BestFit doesn't create or update the workload
-
-This happens with `BestFit`, no `spec.acceleratorSelector.constraints`, and two or more classes to pick from. OME records no event, but the controller log shows `invalid memory address or nil pointer dereference`:
-
-```bash
-kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep "invalid memory address"
-```
-
-Add `constraints` to `spec.acceleratorSelector`, such as `minMemory: 80`. This is a known bug.
 
 ### The pods don't get the class's node selector
 
