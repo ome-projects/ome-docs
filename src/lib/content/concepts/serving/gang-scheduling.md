@@ -107,6 +107,32 @@ So a `topologyKey` edit never retargets a live gang. OME records a new revision,
 
 OME proves a live gang's key from the worker-to-leader affinity it generated on the gang's pods, and otherwise keeps the annotation the PodGroup already carries. Affinity you wrote yourself never sets the annotation, since it can express an unrelated relationship. When the component sets `topologyKey` but neither source proves the key of a gang that still has pods, say because the annotation was removed by hand while only the leader runs, OME fails the component's reconcile rather than guess, with an error in the controller's log that says `cannot prove active topology`. It reconciles again when the annotation is restored, or the gang's pods are gone.
 
+## A gang without a co-location rule warns `GangSplitRisk` {#gang-split-risk}
+
+A gang-aware scheduler places a gang all or nothing, but all-or-nothing alone doesn't keep its pods in one topology domain. The gang stays together only when something pins it:
+
+- The component's `topologyKey`. OME injects a required `podAffinity` into each worker that [keeps it in its leader's domain](#the-topology-annotation-follows-the-instances-pods) under that key.
+- A required worker `podAffinity` you wrote yourself. OME checks only that a required term exists, not what it pins.
+- A [provisioned TPU slice](../../guides/omenative/provision-tpu-slices.md): the node selector OME gives each pod confines it to the Slice's nodes.
+
+When OME creates a worker pod of a multi-pod Instance with none of these — no required `podAffinity` at all — it records a `GangSplitRisk` Warning event on the InferenceService, with or without the PodGroup CRD. Read the event's message:
+
+```bash
+kubectl get events -n qwen3-multi-node --field-selector reason=GangSplitRisk \
+  -o jsonpath='{range .items[*]}{.message}{"\n"}{end}'
+```
+
+```output
+OMENative component=engine is a multi-node gang but its worker pods have no co-location podAffinity: the gang may be scheduled across separate network/NVLink/TPU topology domains, breaking the tightly-coupled collectives a multi-node runtime needs (NCCL/RCCL/NIXL all-reduce, multi-host TPU sessions). Set engine.topologyKey to the node label that identifies the required topology domain, or declare a worker podAffinity.
+```
+
+The warning is advisory — it never blocks the create — and the gang isn't necessarily split: the pods can still land in one domain when it has room, but nothing holds them there. To clear it, do what the message says: set the component's `topologyKey` to the node label that identifies the required topology domain, such as `nvidia.com/gpu.clique`, or declare a required worker `podAffinity`. On a live gang, a `topologyKey` edit [lands as the rollout replaces the Instance's pods](#the-topology-annotation-follows-the-instances-pods), because a pod's affinity is immutable.
+
+!!! note "A false positive under the chart's fallback key"
+    OME reads only the pod. When the [OME scheduler](../scheduling/ome-scheduler.md) places the gang with the chart's fallback `scheduler.plugin.topologyKey` instead of a component `topologyKey`, it keeps the gang in one domain, but the pods carry no affinity, so the warning appears anyway. Set the component's `topologyKey`, or ignore it.
+
+`GangSplitRisk` is a standing warning about the Instance as built: OME announces it once per [incarnation](../omenative/instances.md#incarnation), not once per reconcile or per worker, and records a marker on the Instance's row, which [`kubectl ome instance status`](../../reference/kubectl-ome/instance.md#status) shows under `announced` as `GangSplitRisk@#1`. A restart, or an update that recreates the pods, starts the next incarnation, so an Instance whose workers are still unconstrained warns again — and a marker can outlive its incarnation, so an old one doesn't mean the warning still applies.
+
 ## Bound the gang schedule timeout
 
 A gang-aware scheduler holds a gang's placed pods until the whole gang fits, for up to the PodGroup's `scheduleTimeoutSeconds`. At the timeout, it frees their resources for other pods and tries the gang again later.
@@ -167,6 +193,7 @@ When both settings are set, the shorter applies, and `gangDomainFullGracePeriod`
 | An `InstanceFailed` Warning event with the scheduler's message | A pod stayed unschedulable longer than the controller's [`unschedulableGracePeriod`](../../guides/omenative/set-instance-readiness-deadlines.md), 15 minutes with the chart — or longer than `gangDomainFullGracePeriod`, when [the gang was held to a full domain](#a-gang-held-to-a-full-domain-can-fail-sooner). |
 | An `InstanceFailed` Warning event that names `PodGroupOwnershipConflict` | Another owner controls a PodGroup with the Instance's PodGroup name. OME fails the Instance and creates none of its pods. |
 | A `PodGroupReset` Warning event on the InferenceService | A pod of a running gang failed, so the scheduler-plugins controller marked the PodGroup `Failed`. OME replaced it without failing the Instance. The Instance's [restart policy](../omenative/instance-restart-policy.md) decides what happens next. |
+| A `GangSplitRisk` Warning event on the InferenceService | A multi-pod Instance's worker pods carry no required `podAffinity`, so [nothing keeps the gang in one topology domain](#gang-split-risk). The create went ahead: set the component's `topologyKey`, or declare a worker affinity. |
 
 The condition is on the component's InferenceReplica, and in the InferenceService's `status.components.<component>.lifecycle.conditions`. When it's `False`, its reason is `GangSchedulingAvailable`. Read its reason for the engine, here without the CRD:
 
