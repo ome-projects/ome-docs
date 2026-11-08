@@ -30,7 +30,7 @@ An [encoder](../../concepts/serving/inference-services.md#the-encoder) — the a
 
 - `--component` refuses `encoder` with `invalid component "encoder" (valid: engine, decoder, router)`.
 - A full `--revision` name takes only those three components, so the encoder's revision `chat-encoder-1a2b3c4d` is refused with `invalid revision "chat-encoder-1a2b3c4d" (expected 8 lowercase hexadecimal characters or <inferenceservice>-<component>-<hash>)`.
-- A hash-only `--revision`, and `--instance`, require `--component`, which can't name the encoder.
+- A hash-only `--revision` requires `--component`, and `--instance` requires `--component` or a full `--revision` — neither of which can name the encoder.
 
 The labels themselves are there: OME runs an encoder only on OMENative, so its pods carry `component=encoder`, `ome.io/instance-index` and `ome.io/revision-hash`. To read just the encoder's logs, select them with `kubectl logs`:
 
