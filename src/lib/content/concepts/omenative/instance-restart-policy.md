@@ -137,13 +137,39 @@ The chart also sets `ome.controller.lifecycle.repairBatchSize`, to `10`: how man
 
 ## What a restart does
 
-OME sets the Instance's phase to `Restarting`. It takes the pods out of the Service, deletes them once the Service stops routing to them, and creates them again on the same revision, one [incarnation](instances.md#incarnation) higher. Once the new pods are ready and have passed the component's [minReadySeconds](../../guides/roll-out-changes/pace-rollouts-with-min-ready-seconds.md), the Instance is `Ready` again.
+OME sets the Instance's phase to `Restarting`. It takes the pods out of the Service, deletes them once the Service stops routing to them, and creates them again on the same revision, one [incarnation](instances.md#incarnation) higher — unless a rollout moves the component's target revision while the repair runs: see [Changing the pod template mid-restart](#changing-the-pod-template-mid-restart). Once the new pods are ready and have passed the component's [minReadySeconds](../../guides/roll-out-changes/pace-rollouts-with-min-ready-seconds.md), the Instance is `Ready` again.
 
 The old pods' logs go with them. When a pod failed, the Instance's [`lastFailure`](instances.md#when-an-instance-fails) keeps its container, reason, exit code and time, even after the Instance is `Ready` again.
 
 A restart has until the Instance readiness timeout to get its new pods serving: the component's `lifecycle.instanceReadyTimeout`, or `30m` with the ome-resources chart. When the time runs out, or a new pod stays stuck past the stuck-pod grace period, the Instance becomes `Failed`. OME keeps a `Failed` Instance and its pods for you to inspect until you [reset it](../../guides/omenative/reset-failed-instances.md) or a new revision reaches it.
 
 The new pods render from the ControllerRevision that stores the Instance's revision; only the component's current revision renders without one, straight from the InferenceService and its runtime. [Revision pruning](../../reference/api/labels-and-annotations.md#omenative-operations) never deletes a revision an Instance still runs or targets, but when something else has deleted that ControllerRevision, the rebuild creates nothing: a pod rendered from the current template under the missing revision's label would be routed, counted and drained as one revision while running another. One `RepairRevisionGone` warning event per attempt names the Instance and the gone revision, and the attempt runs to the readiness timeout above. From `Failed`, the rollout replaces the pods at the component's current revision, which needs no stored ControllerRevision.
+
+### Changing the pod template mid-restart
+
+A fix you push while an Instance restarts doesn't wait for the repair to finish on the revision it's rebuilding, just as it doesn't wait for [an in-flight create](instances.md#changing-the-pod-template-mid-create). When a rollout moves the component's target revision off the one an open repair rebuilds, what happens depends on how far the rebuild got:
+
+- **No new pod exists yet.** The rebuild creates its pods at the new revision directly. The Instance was serving nothing, so the repair is also the pass that puts it on the new revision, and no pod set is torn down for the move.
+- **The rebuilt pods exist, but the set is short of serving**: a member is still missing, or a pod isn't runtime-ready. OME replaces the set rather than finish it on a revision the rollout has dropped. The incarnation moves one higher again, the just-built pods become an old set that the repair drains and deletes, and the next rebuild renders the new revision, with the readiness timeout above starting over. OME records one Normal `RestartRetargeted` event for each set it replaces, naming the revision the set was built on and the one that replaces it.
+- **The set is complete and every pod is runtime-ready**: one promote from serving. OME keeps it. The Instance promotes to `Ready` on the revision it was rebuilt on, and an [update](../architecture/omenative-update-strategies.md) then replaces it at the new revision from `Ready`, under the component's [rollingUpdate pacing](../architecture/omenative-update-strategies.md#pacing-with-rollingupdate).
+
+In all three cases it stays the one restart on record, with no new `RestartTriggered` event, and the replacement isn't a failure: the dropped revision never got the chance to fail. After a fix pushed while a restart's new pod was still starting, list the replacements:
+
+```bash
+kubectl get events -n qwen3-native --field-selector reason=RestartRetargeted \
+  -o custom-columns=TYPE:.type,MESSAGE:.message
+```
+
+```output
+TYPE     MESSAGE
+Normal   OMENative component=engine instance=0 restart replaces the pod set built on qwen3-0-6b-engine-5f8c3d2a at qwen3-0-6b-engine-a41b7e90 (incarnation=3)
+```
+
+The repair finishes on the revision it carries — and a rebuild that hasn't created a pod yet keeps rendering the revision the Instance ran — while the rollout can't take the Instance:
+
+- The rollout is [paused](../../guides/roll-out-changes/pause-and-resume-a-rollout.md): repairs go on, on the revision they carry.
+- The new revision is [held](../../guides/roll-out-changes/release-a-held-revision.md) after failing its attempts. A new revision that's only waiting out its [retry backoff](instances.md#what-ome-does-with-a-failed-instance) doesn't keep the set.
+- The update strategy's `partition`, or a [canary](../../reference/rollouts/canary-progression.md) step, holds the Instance on the revision it runs. The rollout takes it once the hold clears.
 
 ## Observe a restart
 
@@ -152,6 +178,7 @@ OME records a restart's events on the InferenceService:
 | Event | Type | When |
 | --- | --- | --- |
 | `RestartTriggered` | Warning | A restart starts. The message names the Instance, the trigger and the new incarnation. |
+| `RestartRetargeted` | Normal | A rollout moved the component's target revision while the rebuilt pods were still starting, so the restart replaces them at the new revision: see [Changing the pod template mid-restart](#changing-the-pod-template-mid-restart). |
 | `RestartCompleted` | Normal | The Instance is `Ready` again. |
 | `RepairHeld` | Warning | A crash-loop repair that takes a serving Instance offline waits for `maxUnavailable`. |
 | `RepairRevisionGone` | Warning | A rebuild's revision has no ControllerRevision left, so OME creates no pods while the attempt runs to its deadline. Once per attempt. |
@@ -178,7 +205,7 @@ By default, while an engine Instance restarts, the InferenceService's `EngineRea
 
 | Case | What happens |
 | --- | --- |
-| A change to the pod template, such as a new image | It rolls out under the [update strategy](../architecture/omenative-update-strategies.md), not the restart policy. |
+| A change to the pod template, such as a new image | It rolls out under the [update strategy](../architecture/omenative-update-strategies.md), not the restart policy. An Instance that's already restarting follows it: see [Changing the pod template mid-restart](#changing-the-pod-template-mid-restart). |
 | An Instance that's being migrated | Its [migration](migration-and-transient-scale.md) handles it, not the restart policy. |
 | A paused InferenceService | At `ome.io/rollout-paused: true`, repairs go on, but under `None`, OME holds off creating missing pods until you resume. At `freeze`, no repair starts. See [What a pause holds](../../guides/roll-out-changes/pause-and-resume-a-rollout.md#what-a-pause-holds). |
 
