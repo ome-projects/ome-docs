@@ -14,15 +14,31 @@ The command needs `list` on pods and `get` on `pods/log` in the InferenceService
 
 ## Pods it reads
 
-The command reads the pods that carry the label `ome.io/inferenceservice=<name>`, and never reads the InferenceService itself: the name you pass only fills the selector. On a service that declares its components, those pods are the service's engine, decoder and router. These flags narrow the selection, and you can combine them:
+The command reads the pods that carry the label `ome.io/inferenceservice=<name>`, and never reads the InferenceService itself: the name you pass only fills the selector. On a service that declares its components, those pods are the service's engine, decoder and router — and its encoder, which only the unfiltered read reaches: see [The encoder](#the-encoder). These flags narrow the selection, and you can combine them:
 
 | Flag | Labels it adds | Pods it selects |
 | --- | --- | --- |
-| `--component engine` | `component=engine` | The pods of one component: `engine`, `decoder` or `router`. |
+| `--component engine` | `component=engine` | The pods of one component: `engine`, `decoder` or `router`, never `encoder`. |
 | `--instance 0` | `ome.io/managed-by=OMENative` and `ome.io/instance-index=0` | The pods of one OMENative Instance. |
 | `--revision 1a2b3c4d` | `ome.io/managed-by=OMENative` and `ome.io/revision-hash=1a2b3c4d`, plus `component` for a full revision name | The OMENative pods of one revision. |
 
-In prefill-decode serving, the engine runs prefill and the decoder runs decode.
+In prefill-decode serving, the engine runs prefill and the decoder runs decode; in encoder-prefill-decode serving, the encoder turns a request's images or audio into embeddings for the engine.
+
+### The encoder
+
+An [encoder](../../concepts/serving/inference-services.md#the-encoder) — the alpha component that `spec.encoder` declares — is streamed only by the unfiltered read. Its pods carry the service's `ome.io/inferenceservice` label like the other components' pods, so `kubectl ome logs chat` reads them, each line prefixed `[encoder/<pod>]`. But no narrowing flag reaches them:
+
+- `--component` refuses `encoder` with `invalid component "encoder" (valid: engine, decoder, router)`.
+- A full `--revision` name takes only those three components, so the encoder's revision `chat-encoder-1a2b3c4d` is refused with `invalid revision "chat-encoder-1a2b3c4d" (expected 8 lowercase hexadecimal characters or <inferenceservice>-<component>-<hash>)`.
+- A hash-only `--revision`, and `--instance`, require `--component`, which can't name the encoder.
+
+The labels themselves are there: OME runs an encoder only on OMENative, so its pods carry `component=encoder`, `ome.io/instance-index` and `ome.io/revision-hash`. To read just the encoder's logs, select them with `kubectl logs`:
+
+```bash
+kubectl logs -n prod -l ome.io/inferenceservice=chat,component=encoder --tail=-1 --prefix
+```
+
+`--tail=-1` lifts kubectl's 10-line default for label selectors, and `--prefix` marks each line with its pod and container. To read one revision or one Instance, add `ome.io/revision-hash=1a2b3c4d` or `ome.io/instance-index=0` to the selector.
 
 ### Standalone and fronted replicas {#standalone-and-fronted-replicas}
 
@@ -50,7 +66,7 @@ error: no pods found for InferenceService "llama-fronted" in namespace "llama-de
 
 `--instance` and `--revision` select only the pods that OME runs on OMENative, so they match nothing on a component that runs as a Deployment. See [Deployment modes](../../concepts/architecture/deployment-modes.md).
 
-`--instance` takes an Instance's [index](../../concepts/omenative/instances.md#index), with `--component` or a full `--revision`. `--revision` takes a revision of a component's pod template: its 8-character hash, with `--component`, or its full name, `<inferenceservice>-<component>-<hash>`, which names the component. It isn't a [runtime revision](../../concepts/runtimes/runtime-revisions.md).
+`--instance` takes an Instance's [index](../../concepts/omenative/instances.md#index), with `--component` or a full `--revision`. `--revision` takes a revision of a component's pod template: its 8-character hash, with `--component`, or its full name, `<inferenceservice>-<component>-<hash>`, which names the component — `engine`, `decoder` or `router`, as with `--component`. It isn't a [runtime revision](../../concepts/runtimes/runtime-revisions.md).
 
 To find the indexes and hashes, list the pods with those labels as columns:
 
@@ -82,7 +98,7 @@ The command reads the container's current run, or its last run while it's in `Cr
 
 Plus the standard kubeconfig flags, such as `-n` and `--context`.
 
-The `--instance` default, `-1`, means every Instance: leave the flag out to read them all. The container fallback in the `--container` help is wrong: see [Containers](#containers).
+The `--instance` default, `-1`, means every Instance: leave the flag out to read them all. Neither `--component` nor a full `--revision` takes `encoder`: see [The encoder](#the-encoder). The container fallback in the `--container` help is wrong: see [Containers](#containers).
 
 ## Output
 
@@ -177,9 +193,10 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1
 | `streaming logs for pod <pod>: container <container> is not valid for pod <pod>` | A selected pod has no container of that name. Add `--component`. |
 | `streaming logs for pod <pod>: a container name must be specified for pod <pod>, choose one of: [<containers>]` | The pod has several containers and no `ome-container`. Pass `--container`. |
 | `bufio.Scanner: token too long` | A log line is 1 MiB or longer. Read that pod with `kubectl logs`. |
-| `invalid component "<component>" (valid: engine, decoder, router)` | `-c` takes a component. Name a container with `--container`. |
+| `invalid component "<component>" (valid: engine, decoder, router)` | `-c` takes a component, and never `encoder`: see [The encoder](#the-encoder). Name a container with `--container`. |
 | `--instance requires --component` | Add `--component`, or give a full `--revision`. |
 | `hash-only --revision requires --component` | Add `--component`, or give the revision's full name. |
+| `invalid revision "<revision>" (expected 8 lowercase hexadecimal characters or <inferenceservice>-<component>-<hash>)` | The value is neither a hash nor a full name with `engine`, `decoder` or `router`. An encoder revision's full name gets this error: see [The encoder](#the-encoder). |
 | `--limit-bytes cannot be used with --follow` | `--limit-bytes` works only on one-shot reads. |
 
 The other validation errors name the flag or value at fault.
