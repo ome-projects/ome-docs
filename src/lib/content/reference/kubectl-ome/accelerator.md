@@ -20,7 +20,7 @@ kubectl ome accelerator SUBCOMMAND INFERENCESERVICE [flags]
 kubectl ome accelerator explain INFERENCESERVICE [flags]
 ```
 
-`explain` prints a row for the engine when `spec.engine` is set, and one for the decoder when `spec.decoder` is set. The router gets no row, because OME never picks a class for it.
+`explain` prints a row for the engine when `spec.engine` is set, and one for the decoder when `spec.decoder` is set. No other component gets a row. The router misses nothing: OME never picks a class for it. The [encoder](../../concepts/serving/inference-services.md#the-encoder) does get one, picked as for the engine and decoder from `spec.encoder`'s `acceleratorOverride`, then `spec.acceleratorSelector`, but the report leaves the encoder out: it shows neither the encoder's declared class or policy nor its base requests. To see the class OME picked for the encoder, check the node selector of its pods, as in [Step 4 of Select accelerators](../../guides/deploy-models/select-accelerators.md#step-4-check-the-selected-class).
 
 In `-o wide`, STATUS_FRESHNESS reflects the observed generation of a component's workload, rather than whether the status is current. This is a known bug.
 
@@ -55,7 +55,7 @@ The table has these columns:
 
 | Column | What it shows |
 | --- | --- |
-| COMP | The component: `engine` or `decoder`. |
+| COMP | The component: `engine` or `decoder`. No other component gets a row: see [`explain`](#explain). |
 | POLICY | `Explicit` when the component names a valid class. Otherwise its policy: `BestFit`, `Cheapest`, `MostCapable`, `FirstAvail` for `FirstAvailable`, or `-`. |
 | CLASS | The declared class when its name is valid, else `-`. Names over 16 characters are cut in the middle with `...`. |
 | SEL | Whether the status reports a selection: `Missing`, `Unavail`, `Invalid` or `None`. The table under [`explain`](#explain) says when each appears. |
@@ -145,7 +145,7 @@ In `-o json` and `-o yaml`, optional fields with no value are left out, and list
     | `NodeSelectorInvalid`, `RequestsInvalid` | The reported `nodeSelector` or `resourceRequests` is malformed. |
     | `RequestsNotReported` | The selection has no `resourceRequests`. |
     | `SelectionUnexpected` | A component with no class or policy has a selection. |
-    | `UnexpectedComponentEvidence` | A component other than the engine and decoder, such as the router, has a selection. |
+    | `UnexpectedComponentEvidence` | A component other than the engine and decoder, such as the router or the encoder, has a selection. |
 
 ### Examples {#explain-examples}
 
