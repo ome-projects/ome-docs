@@ -6,7 +6,7 @@ since: v1.3
 
 `kubectl ome instance` shows the [Instances](../../concepts/omenative/instances.md) of an [InferenceService](../../concepts/serving/inference-services.md)'s [OMENative](../../concepts/architecture/deployment-modes.md#omenative) components. An Instance is one replica of a component: one pod, or a leader pod and its workers, which OME updates, repairs and reports as one unit. Use `list` to find an Instance that isn't `Ready`, `status` to see its pods and their warnings, and `retry-blocks` to see which revisions OME is retrying or holding, and why. Once you've fixed the cause, the alpha `release-held` lets OME try a held revision again.
 
-OME reports the Instances in the status of the InferenceReplica it creates for each component, named `<InferenceService>-<component>`, such as `chat-engine`. Only components with such an InferenceReplica appear: [Opt in to OMENative](../../concepts/architecture/deployment-modes.md#opt-in-to-omenative) shows how a component gets the mode. A standalone InferenceReplica — one you create directly — appears in no report, even when an InferenceService [fronts it](../../concepts/serving/inference-services.md#referenced-replicas): see [Which replicas the command reads](#which-replicas-the-command-reads).
+OME reports the Instances in the status of the InferenceReplica it creates for each component, named `<InferenceService>-<component>`, such as `chat-engine`. Only components with such an InferenceReplica appear, and of those only the engine, the decoder and the router: [Opt in to OMENative](../../concepts/architecture/deployment-modes.md#opt-in-to-omenative) shows how a component gets the mode, and [The encoder never appears](#the-encoder-never-appears) covers the one OMENative component whose InferenceReplica the subcommands leave out. A standalone InferenceReplica — one you create directly — appears in no report, even when an InferenceService [fronts it](../../concepts/serving/inference-services.md#referenced-replicas): see [Which replicas the command reads](#which-replicas-the-command-reads).
 
 ```text
 kubectl ome instance SUBCOMMAND INFERENCESERVICE [flags]
@@ -14,12 +14,12 @@ kubectl ome instance SUBCOMMAND INFERENCESERVICE [flags]
 
 | Subcommand | What it does |
 | --- | --- |
-| [`list`](#list) | Lists the Instances of every OMENative component. |
+| [`list`](#list) | Lists the Instances of the OMENative engine, decoder and router. |
 | [`status`](#status) | Shows one Instance, with its pods and their Warning events. |
 | [`retry-blocks`](#retry-blocks) | Shows the retry blocks of one component. |
 | [`release-held`](#release-held) | Alpha. Asks OME to release one held revision. |
 
-`status`, `retry-blocks` and `release-held` act on one component, which `--component` names: `engine`, `decoder` or `router`. `-o json` and `-o yaml` print the whole report, as an `InstanceListReport`, `InstanceStatusReport`, `InstanceRetryBlocksReport` or `ActionResult`. Only `status` has a wide view: `release-held` treats `-o wide` as `table`. The overview covers the other [output formats](overview.md#output-formats) and the [permissions](overview.md#required-rbac) each command needs.
+`status`, `retry-blocks` and `release-held` act on one component, which `--component` names: `engine`, `decoder` or `router`. An InferenceService's [encoder](#the-encoder-never-appears) isn't one of them: `--component encoder` is refused. `-o json` and `-o yaml` print the whole report, as an `InstanceListReport`, `InstanceStatusReport`, `InstanceRetryBlocksReport` or `ActionResult`. Only `status` has a wide view: `release-held` treats `-o wide` as `table`. The overview covers the other [output formats](overview.md#output-formats) and the [permissions](overview.md#required-rbac) each command needs.
 
 `list` and `status` say how current the status they show is, with an evidence level:
 
@@ -42,7 +42,7 @@ kubectl ome instance list pool-a -n prod
 error: get InferenceService "prod/pool-a": inferenceservices.ome.io "pool-a" not found
 ```
 
-The subcommands then keep only the InferenceReplicas that record the InferenceService as their parent: `spec.parentRef` names it, the `ome.io/inferenceservice` label carries its name, and their controller owner reference points at it. OME writes all three on every InferenceReplica it creates, so those appear. A replica that claims none of them isn't shown and raises no issue, whatever its name. Only a replica that claims the InferenceService but fails the identity checks is reported as left out, as `REJECTED` or `ID_REJECT`.
+The subcommands then keep only the InferenceReplicas that record the InferenceService as their parent — `spec.parentRef` names it, the `ome.io/inferenceservice` label carries its name, and their controller owner reference points at it — and whose `spec.component` is `engine`, `decoder` or `router`, with the `component` label matching it. OME writes all of these on every InferenceReplica it creates, so the engine's, the decoder's and the router's appear. A replica that doesn't claim the InferenceService isn't shown and raises no issue, whatever its name. A replica that claims it but fails any other check is reported as left out: as the `summary` value `REJECTED` in `list`, an `ID_REJECT` issue row in `retry-blocks`, or an `issue` row `IdentityRejected` in `status`. An [encoder's replica](#the-encoder-never-appears) is always reported that way.
 
 A standalone replica claims no InferenceService, so no subcommand shows its Instances. Read them from the replica itself: in `kubectl get inferencereplica pool-a -n prod -o yaml`, they're the rows of `status.instanceStatuses`, or of `status.instanceStatusColumns` when `status.instanceStatusEncoding` is `ColumnarV2`. [`kubectl ome get ir`](get.md#inferencereplicas-columns) finds standalone replicas: their PARENT column shows `-`.
 
@@ -59,13 +59,23 @@ COMP   IDX/INC   PHASE   PODS   REVS   AOF   EVIDENCE
 
 The empty table isn't an error: the command read everything, found no InferenceReplica that claims `front`, and exits `0`. `status` and `retry-blocks` read the same collection, so they can't see the fronted replicas either. To inspect a fronted pool's Instances, read the replica itself, as above.
 
+### The encoder never appears
+
+An InferenceService that declares [`spec.encoder`](../../concepts/serving/inference-services.md#the-encoder) runs every component in OMENative — the webhook requires that, with reason `EncoderRequiresOMENative` — so OME creates an InferenceReplica for the encoder too, such as `chat-encoder`, which claims the InferenceService like the others. The subcommands still leave it out: they read only the engine, the decoder and the router, so the encoder's replica fails the component check on every encoder service, with nothing wrong with the replica.
+
+- `list` shows no encoder rows and adds the `summary` row `REJECTED`. `-o json` and `-o yaml` carry the detail: an `IdentityRejected` issue that names `chat-encoder`, with the rejection reason `Component`.
+- `status` and `retry-blocks` refuse `--component encoder` before reading anything, with `component must be engine, decoder, or router`. Run on another component of the same InferenceService, they still note the left-out replica: `retry-blocks` adds an `ID_REJECT` issue row, and `status` an `issue` row `IdentityRejected`.
+- `release-held` refuses `--component encoder` too — and on a service with an encoder, it refuses the other components as well. Its safety checks validate every InferenceReplica that claims the InferenceService, and the encoder's always fails them, so the command exits `1` with `action refused: no exact current valid Held retry block is releasable`, whichever accepted component `--component` names: see [Refusals](#release-held-refusals). On such a service, the way past a held revision is to change the component's pod template.
+
+The encoder's replica isn't hidden everywhere: [`kubectl ome get ir`](get.md#inferencereplicas-columns) shows every component, so `chat-encoder` appears there with `encoder` in its COMPONENT column. To read the encoder's Instances, read the replica itself, as for a standalone replica above: they're the rows of `status.instanceStatuses` in `kubectl get inferencereplica chat-encoder -n prod -o yaml`.
+
 ## `list`
 
 ```text
 kubectl ome instance list INFERENCESERVICE [flags]
 ```
 
-`list` shows one row for each Instance of the InferenceService's OMENative components, engine first, then decoder and router, in index order. The rows come from the InferenceReplicas' status, so they show what OME last recorded. [`status`](#status) shows the live pods.
+`list` shows one row for each Instance of the InferenceService's OMENative components, engine first, then decoder and router, in index order. An [encoder](#the-encoder-never-appears) gets no rows: `list` leaves its InferenceReplica out and adds the `summary` row `REJECTED`. The rows come from the InferenceReplicas' status, so they show what OME last recorded. [`status`](#status) shows the live pods.
 
 ### Flags {#list-flags}
 
@@ -103,7 +113,7 @@ EVIDENCE shows one value for each component:
 | `BAD:<problem>` | The status is invalid. `DUP-COMP`: a second InferenceReplica claims the component. `DUP-IDX`: two rows share an index. Any other problem names the invalid value: `GEN` (generation), `PARENT` (InferenceService generation), `REVISION`, `COUNTS` (pod or replica counts), `PHASE` or `INSTANCE` (index or incarnation). `COUNTS` can appear briefly while a pod stops serving, as during an update. |
 | `BAD`, `UNAVAILABLE` | The status is malformed or unavailable, with no more specific value. |
 
-A component with no rows to show gets one row of dashes with its EVIDENCE, such as `NOT-OBSERVED`. A problem with the whole collection adds a last row, `summary`. It shows `SOURCE-UNAVL` (the CLI couldn't list or decode an InferenceReplica), `REJECTED` (it left out an InferenceReplica that failed the identity checks) or `TRUNCATED` (there's more than the table shows). With no rows at all, the table shows one row of dashes with a `summary` value or the overall state: `OK`, `PARTIAL` or `UNAVAILABLE`.
+A component with no rows to show gets one row of dashes with its EVIDENCE, such as `NOT-OBSERVED`. A problem with the whole collection adds a last row, `summary`. It shows `SOURCE-UNAVL` (the CLI couldn't list or decode an InferenceReplica), `REJECTED` (it left out an InferenceReplica that failed the identity checks) or `TRUNCATED` (there's more than the table shows). On a service with an encoder, `REJECTED` is the steady state, not a fault: [the encoder's InferenceReplica is always left out](#the-encoder-never-appears). With no rows at all, the table shows one row of dashes with a `summary` value or the overall state: `OK`, `PARTIAL` or `UNAVAILABLE`.
 
 `-o json` and `-o yaml` print every value in full, and every issue behind the EVIDENCE values.
 
@@ -274,7 +284,7 @@ Each issue adds a row with `ISSUE` in STATE and an alias in REASON:
 | `NO_COMPONENT` | The component has no InferenceReplica that [claims the InferenceService](#which-replicas-the-command-reads). |
 | `DUP_COMP` | More than one InferenceReplica claims the component. No blocks show. |
 | `COLL_UNAV` | The CLI couldn't list the InferenceReplicas, or couldn't decode one. |
-| `ID_REJECT` | The CLI left out an InferenceReplica that doesn't belong to the InferenceService. |
+| `ID_REJECT` | The CLI left out an InferenceReplica that fails the [identity checks](#which-replicas-the-command-reads), as [an encoder's replica](#the-encoder-never-appears) always does. |
 | `COLL_TRUNC`, `BLOCK_TRUNC` | There are more InferenceReplicas or retry blocks than the CLI reads. |
 | `PARENT_MISS`, `PARENT_BAD`, `PARENT_AHEAD`, `OBSGEN_BAD` | The InferenceReplica's `ome.io/parent-generation` annotation or observed generation is missing or invalid. |
 | `TARGET_BAD`, `STATE_BAD`, `ATT_BAD`, `TIME_BAD`, `DUP_TARGET` | A block has an invalid or repeated target, an unknown state, no attempts, or times that don't fit together. |
@@ -362,7 +372,7 @@ The first refusal has these causes, likeliest first:
 - No block matches `--revision`, or the block that matches isn't `Held`.
 - An InferenceReplica of the InferenceService, even another component's, has stale status. Wait for OME to catch up.
 - A block on the component's InferenceReplica is malformed, as when its failure time is in the future because your machine's clock runs behind the cluster's.
-- An InferenceReplica of the InferenceService fails the identity checks or is being deleted, or the component's InferenceReplica lacks `ome.io/controller-write: "true"`.
+- An InferenceReplica of the InferenceService fails the identity checks — as [an encoder's replica](#the-encoder-never-appears) always does, so every release on a service with an encoder is refused — or is being deleted, or the component's InferenceReplica lacks `ome.io/controller-write: "true"`.
 - The component doesn't run in OMENative, has no InferenceReplica, or is claimed by two InferenceReplicas.
 
 [The command refuses the release](../../guides/roll-out-changes/release-a-held-revision.md#the-command-refuses-the-release) shows how to find out which applies.
