@@ -191,7 +191,7 @@ The other status fields:
 
 | Field | What it holds |
 | --- | --- |
-| `startTime` | When the Job started. It can be empty while the state is `Running`. |
+| `startTime` | When the Job started, copied from the Job's own `status.startTime`. It fills in while the state is `Running`, once the Job reports a start time. |
 | `completionTime` | When the Job succeeded or failed. |
 | `failureMessage` | The message of the Job's `Failed` condition. genai-bench's own errors are in the pod's logs. |
 | `lastReconcileTime` | When the state last changed. |
