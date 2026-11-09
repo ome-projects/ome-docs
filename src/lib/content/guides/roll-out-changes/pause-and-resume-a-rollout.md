@@ -130,7 +130,7 @@ chat   <none>
 
 ## Pause with kubectl annotate
 
-`pause` needs work in progress, and always sets `true`. Set the annotation yourself to hold a change before you make it, or to hold repairs too. To hold the next change, pause first, then change the spec:
+`pause` needs work in progress, and always sets `true`. Set the annotation yourself to hold a change before you make it, to hold repairs too, or to pause a service that declares an encoder, [which `pause` refuses](#omes-status-is-stale). To hold the next change, pause first, then change the spec:
 
 ```bash
 kubectl annotate inferenceservice chat -n prod ome.io/rollout-paused=true
@@ -171,6 +171,8 @@ error: action refused: controller safety evidence is stale or inconsistent
 ```
 
 OME's status doesn't match the InferenceService yet, or contradicts itself. This happens most often right after a change. Wait a moment and run the command again. If it keeps failing, check the ISSUES row of `kubectl ome rollout status chat -n prod`, which the `status` [output fields](../../reference/kubectl-ome/rollout.md#status-output-fields) explain.
+
+On a service that declares [`spec.encoder`](../../concepts/serving/inference-services.md#the-encoder), though, `pause` always refuses this way, and waiting changes nothing: the replica evidence it reads knows the engine, the decoder and the router, and the encoder's replica fails the check, as [How the actions run](../../reference/kubectl-ome/rollout.md#how-the-actions-run) explains. [Set the annotation yourself](#pause-with-kubectl-annotate) to pause such a service; it holds the encoder's work like the rest. `resume` reads no replica evidence, so it ends the pause as usual.
 
 ### The patch conflicts with a newer change
 

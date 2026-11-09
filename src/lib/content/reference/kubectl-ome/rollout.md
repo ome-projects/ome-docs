@@ -527,6 +527,8 @@ Among the reads in step 1, `pause`, `resume`, `promote` and `rollback` resolve t
 
 That message is the same fixed text as for any failed API request, so it can appear while the API server is healthy: a pinned revision that was deleted, a ControllerRevision read that RBAC denies, or the wrong `--ome-namespace` all refuse this way, even when the service follows the live runtime with `autoSync`. The read-only [`kubectl ome runtime effective`](runtime.md#effective-output-fields) reports the same failed read as a `RevisionNotFound` or `RevisionUnavailable` issue instead of refusing, so run it to tell a missing revision from a connectivity problem.
 
+`pause`, `promote` and `rollback` also read the InferenceReplicas that the service projects for its OMENative components, the safety evidence that [Instance status decoding](guarded-actions.md#instance-status-decoding) describes. That evidence knows three components: a replica of anything but the engine, the decoder or the router refuses the action with `action refused: controller safety evidence is stale or inconsistent`. A service that declares [`spec.encoder`](../../concepts/serving/inference-services.md#the-encoder) always projects such a replica, since an encoder requires OMENative on every component, so on it these three actions always refuse with that message: nothing is stale, and waiting doesn't clear it. Pause such a service by [setting the annotation yourself](../../guides/roll-out-changes/pause-and-resume-a-rollout.md#pause-with-kubectl-annotate). `resume` reads no InferenceReplicas and [`repin`](#repin) reads only the InferenceService, so the encoder's replica stops neither.
+
 ### Refusals {#pause-and-resume-refusals}
 
 `pause` and `resume` also refuse in these cases:
@@ -538,7 +540,7 @@ That message is the same fixed text as for any failed API request, so it can app
 | `action refused: service has no recognized pause` | `resume` when the service isn't paused, whatever else holds the rollout: a canary that ended `Failed` or `RolledBack` [isn't a pause](#pause-and-resume). |
 | `action refused: a rollout promote or rollback mailbox is present` | The promote or rollback annotation is present. On a paused service, `resume --discard-pending-actions --yes` removes it. |
 | `action refused: no applicable active rollout or lifecycle work was observed` | `pause` when no rollout or lifecycle work is in progress. |
-| `action refused: controller safety evidence is stale or inconsistent` | `pause` when the controller's status contradicts itself or the InferenceService. |
+| `action refused: controller safety evidence is stale or inconsistent` | `pause` when the controller's status contradicts itself or the InferenceService — and always when the service declares `spec.encoder`, whose replica the [evidence doesn't recognize](#how-the-actions-run). |
 | `action refused: active runtime is unavailable, inconsistent or unbound` | No component uses OMENative, or the controller reports a different runtime than the CLI resolved. |
 | `action refused: a logical annotation value is unsafe to preview` | The annotation value to replace or remove is unsafe to show. |
 
@@ -662,7 +664,7 @@ Besides the refusals [every action shares](guarded-actions.md#target-checks), `p
 | `action refused: globally paused canary cannot consume a request` | The service is paused. |
 | `action refused: a rollout promote or rollback mailbox is present` | A promote request still waits for the controller, or the rollback annotation remains. |
 | `action refused: no applicable active rollout or lifecycle work was observed` | No run with a canary group is active, or the canary was rolled back. For `rollback`, also a canary outside the five phases it accepts. |
-| `action refused: controller safety evidence is stale or inconsistent` | The canary's status doesn't match the InferenceService or its pinned plan, or the service has more than one canary group. |
+| `action refused: controller safety evidence is stale or inconsistent` | The canary's status doesn't match the InferenceService or its pinned plan, or the service has more than one canary group — and always when the service declares `spec.encoder`, whose replica the [evidence doesn't recognize](#how-the-actions-run). |
 | `action refused: active runtime is unavailable, inconsistent or unbound` | A canary component doesn't use OMENative, or the reported runtime differs. |
 
 `promote` passes the gate only when all of these hold:
