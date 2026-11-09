@@ -45,12 +45,15 @@ The service's STATE is one of:
 
 | State | Meaning |
 | --- | --- |
-| `Invalid` | A component is `Invalid`, or the status names an unknown component. |
+| `Invalid` | A component is `Invalid`, or the status names a component the command doesn't know, as it always does on a service with an encoder. |
 | `Unavailable` | The status reports no components, or no autoscaler for any of them. |
 | `Partial` | A component is `Partial` or `NotReported`. |
 | `Reported` | Every component is `Reported`. |
 
 The first state in this list that applies wins. Any state other than `Reported` adds a `PartialData` warning, which only `-o json` and `-o yaml` show.
+
+!!! warning "A service with an encoder always reports `Invalid`"
+    `status` knows only the engine, decoder and router. The controller also records an [encoder](../../concepts/serving/inference-services.md#the-encoder)'s autoscaler status, under `status.components.encoder`, a key the command doesn't read. So once that entry exists, a service with `spec.encoder` reports STATE `Invalid` with the issue `UnknownComp` under SERVICE, the table shows no encoder column, and `-o json` lists no encoder component. The `Invalid` marks this command's limit, not a problem the controller found, and the engine, decoder and router columns still report as usual. To read the encoder's entry, run `kubectl get inferenceservice chat -n prod -o yaml` and look under `status.components.encoder`.
 
 A component's state is one of:
 
@@ -88,7 +91,7 @@ Each ISSUES cell holds a short alias. State is the state the issue leads to. `-o
 
 | Alias | Code | State | When |
 | --- | --- | --- | --- |
-| `UnknownComp` | `UnknownComponentStatus` | `Invalid`, for the service | The status names a component other than engine, decoder or router. Shown under SERVICE. |
+| `UnknownComp` | `UnknownComponentStatus` | `Invalid`, for the service | The status names a component other than engine, decoder or router, as it always does on a service with an encoder, whose entry the command doesn't read. Shown under SERVICE. |
 | `NoAutoscaler` | `AutoscalerNotReported` | `NotReported` | The status reports no autoscaler for the component. |
 | `NoTarget` | `ScaleTargetNotReported` | `Partial` | The status names no scale target. |
 | `BadClass` | `ClassInvalid` | `Invalid` | The class is unknown. |
