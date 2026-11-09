@@ -206,7 +206,7 @@ Send requests to the `llama-finance` Service in `llama-demo`, as [Step 7: Send a
 
 ### What the pods get
 
-In the engine's and any decoder's pods, the admission webhook adds the `fine-tuned-adapter` init container, which downloads the weights. The runner container mounts them at `/opt/ml/model`, and must keep its default name, `ome-container`. For a Cohere T-Few adapter, with `vendor: cohere` and `strategy: tfew`, they mount under `/opt/ml/tfew`, and OME sets `TFEW_PATH`.
+In the engine's and any decoder's or [encoder's](../serving/inference-services.md#the-encoder) pods, the admission webhook adds the `fine-tuned-adapter` init container, which downloads the weights. The runner container mounts them at `/opt/ml/model`, and must keep its default name, `ome-container`. For a Cohere T-Few adapter, with `vendor: cohere` and `strategy: tfew`, they mount under `/opt/ml/tfew`, and OME sets `TFEW_PATH`.
 
 OME also labels and annotates the pods, as [Labels and annotations](../../reference/api/labels-and-annotations.md) lists.
 

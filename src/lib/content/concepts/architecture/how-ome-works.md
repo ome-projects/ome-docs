@@ -49,13 +49,13 @@ On each node that a [BaseModel or ClusterBaseModel](../models/base-models.md) se
 2. Reads the model's config files. From them, OME fills in the model's architecture, size and other fields that runtime selection uses.
 3. Labels its node with the model's state there: `Updating`, then `Ready` or `Failed`. The label key names the model, such as `models.ome.io/clusterbasemodel.qwen2-5-7b-instruct`.
 
-OME gives the engine and decoder pods a node selector on that label with the value `Ready`, so they run only on nodes that have the model. Until a node does, they stay `Pending`. Each pod mounts the model's directory read-only, and OME sets the `MODEL_PATH` environment variable to it. See [Base models](../models/base-models.md#how-weights-reach-the-nodes).
+OME gives the engine, decoder and [encoder](../serving/inference-services.md#the-encoder) pods a node selector on that label with the value `Ready`, so they run only on nodes that have the model. Until a node does, they stay `Pending`. Each of these pods mounts the model's directory read-only, and OME sets the `MODEL_PATH` environment variable to it. The router's pods route to the model rather than run it, so they get none of this. See [Base models](../models/base-models.md#how-weights-reach-the-nodes).
 
 Since v1.3, the `ome-resources` chart installs the model agent only when you set `modelAgent.enabled: true`, as [Install OME](../../getting-started/install.md) does. Without it, every model except a `pvc://` model stays `In_Transit`, and the pods that serve it stay `Pending`.
 
 A `pvc://` model stays on its PersistentVolumeClaim, and the serving pods mount the claim. See [Serve models from a PVC](../../guides/deploy-models/serve-models-from-pvc.md).
 
-A [fine-tuned weight](../models/fine-tuned-weights.md) downloads into the engine and decoder pods, through an init container that runs ome-agent.
+A [fine-tuned weight](../models/fine-tuned-weights.md) downloads into the engine, decoder and encoder pods, through an init container that runs ome-agent.
 
 Since v1.3, an InferenceService can skip this path and name only a runtime, which [loads the weights itself](../serving/inference-services.md#the-runtime).
 
