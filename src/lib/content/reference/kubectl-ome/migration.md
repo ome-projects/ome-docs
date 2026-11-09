@@ -16,7 +16,7 @@ kubectl ome migration SUBCOMMAND INFERENCESERVICE [flags]
 | [`history`](#history) | Adds older migrations from the service's audit ConfigMap. |
 | [`start`](#start) | Alpha. Asks OME to move one Instance to another node. |
 
-Each subcommand takes the name of one InferenceService. `status` and `history` read only the InferenceReplicas the service owns, as [Which replicas `status` and `history` read](#which-replicas-status-and-history-read) describes. They print a table, or the whole report with `-o json` or `-o yaml`, as [Output formats](overview.md#output-formats) describes. [Required RBAC](overview.md#required-rbac) lists the permissions each command needs, and `start` also needs the patch rule in [Guarded actions](guarded-actions.md#required-rbac).
+Each subcommand takes the name of one InferenceService. `status` and `history` read only the InferenceReplicas the service owns, and show only the engine's, the decoder's and the router's, as [Which replicas `status` and `history` read](#which-replicas-status-and-history-read) describes. They print a table, or the whole report with `-o json` or `-o yaml`, as [Output formats](overview.md#output-formats) describes. [Required RBAC](overview.md#required-rbac) lists the permissions each command needs, and `start` also needs the patch rule in [Guarded actions](guarded-actions.md#required-rbac).
 
 [Alfred](../../concepts/scheduling/alfred.md), OME's alpha GPU cluster caretaker, recommends Instance moves when free GPUs fragment or a node turns unhealthy and, when you [let it](../../guides/scheduling/let-alfred-migrate-instances.md), asks OMENative to carry them out. It sends the same request as `start`, so `status` and `history` show its migrations too. While any migration request waits or runs in the cluster, yours included, Alfred sends none of its own. [Global limits](../../concepts/scheduling/alfred-policies.md#global-limits) lists its other limits.
 
@@ -34,7 +34,11 @@ error: collect migration status: get InferenceService: inferenceservices.ome.io 
 
 `history` fails the same way. [`kubectl ome logs`](logs.md#standalone-and-fronted-replicas) takes a standalone replica's name, because it selects pods purely by label; the migration commands never do.
 
-The commands then keep only the InferenceReplicas that claim the InferenceService: the `ome.io/inferenceservice` label carries its name, `spec.parentRef` names it, and the service is the replica's one controller owner reference. OME writes all three on every InferenceReplica it creates for a service, so those appear. A replica that claims none of them isn't read and raises no issue, whatever its name. Only a replica that claims the service but fails a check is reported: its freshness is `Invalid`, its records stay hidden, and the `Source*` [issue codes](#status-output-fields) say what failed. `history` applies the same rule to its `AUTH` source, and reads the [audit ConfigMap](#history) only when the service is its controller owner too.
+The commands then keep only the InferenceReplicas that claim the InferenceService: the `ome.io/inferenceservice` label carries its name, `spec.parentRef` names it, and the service is the replica's one controller owner reference. OME writes all three on every InferenceReplica it creates for a service. A replica that claims none of them isn't read and raises no issue, whatever its name. A replica that claims the service but fails a check is reported: its freshness is `Invalid`, its records stay hidden, and the `Source*` [issue codes](#status-output-fields) say what failed. `history` applies the same rule to its `AUTH` source, and reads the [audit ConfigMap](#history) only when the service is its controller owner too.
+
+One check fails even on a healthy replica: the component. The commands read only the engine, the decoder and the router, and the [encoder](../../concepts/serving/inference-services.md#the-encoder) isn't one of them. The encoder runs on OMENative, as the webhook requires, and OME migrates and relocates its Instances like any other component's, so its InferenceReplica records migrations in `status.migrations` — but the commands never show them. `status` reports the encoder's InferenceReplica, which claims the service like the others, with freshness `Invalid` and the issue `SourceComponentInvalid`, and hides its records, so without a component filter, an encoder service's report is `Partial` as soon as OME creates the encoder's InferenceReplica. The issue row's SUBJECT/COMP shows `~` and a hash in place of the replica's name, such as `chat-encoder` — always longer than eight characters — and `-` for the component.
+
+You can't filter for the encoder either: `--component encoder` fails with `component must be engine, decoder, or router`, on `status` and `history` alike. Filtering by another component skips the encoder's InferenceReplica before the component check, so `--component engine` shows the engine and raises no encoder issue. In `history`, the encoder's hidden replica surfaces as a `RecordInvalid` issue, and its [audit ConfigMap](#history) entries do show — each with `?` as its component initial, `unknown` in `-o json` and `-o yaml`, and the issue `ComponentInvalid`. To see the encoder's migrations, read the replica itself, with `kubectl get inferencereplica chat-encoder -n prod -o yaml`.
 
 An InferenceService whose [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) fronts standalone replicas writes nothing on them, so they don't claim it, and it has no InferenceReplicas of its own. On such a service, `status` always reports `Empty`, even while the fronted pools serve behind its route:
 
@@ -57,7 +61,7 @@ Anything a pool records in its own `status.migrations` never shows: read the rep
 kubectl ome migration status INFERENCESERVICE [flags]
 ```
 
-`status` shows the migrations recorded in `status.migrations` of the [InferenceReplicas the service owns](#which-replicas-status-and-history-read): those running, and those that ended within the audit window. The ome-resources chart sets that window to one hour, in `ome.controller.lifecycle.audit.window`. A request shows up once OME accepts it. For older migrations, use [`history`](#history).
+`status` shows the migrations recorded in `status.migrations` of the engine, decoder and router [InferenceReplicas the service owns](#which-replicas-status-and-history-read): those running, and those that ended within the audit window. The ome-resources chart sets that window to one hour, in `ome.controller.lifecycle.audit.window`. A request shows up once OME accepts it. For older migrations, use [`history`](#history).
 
 ### Flags {#status-flags}
 
@@ -67,6 +71,8 @@ kubectl ome migration status INFERENCESERVICE [flags]
 | `-o`, `--output` | `table` | Output format: table, json or yaml |
 
 Plus the standard kubeconfig flags, such as `-n` and `--context`.
+
+`--component` takes only the three components the command reads: `encoder` fails with `component must be engine, decoder, or router`, as [Which replicas `status` and `history` read](#which-replicas-status-and-history-read) explains.
 
 ### Output fields {#status-output-fields}
 
@@ -103,7 +109,7 @@ The freshness says whether the InferenceReplica's status has caught up with its 
 | `Current` | The status is up to date. |
 | `Stale` | OME hasn't caught up with a recent change. The records show, each with the issue `SourceGenerationStale`. |
 | `Unobserved` | OME hasn't reported on the InferenceReplica yet, so its records stay hidden. |
-| `Invalid` | The InferenceReplica is malformed or doesn't belong to the service. Its issue codes say how. |
+| `Invalid` | The InferenceReplica is malformed, doesn't belong to the service, or is the encoder's, which the command doesn't read. Its issue codes say how. |
 
 `-o json` and `-o yaml` print a `MigrationStatusReport`:
 
@@ -122,7 +128,8 @@ The issue codes are:
 | Code | Meaning |
 | --- | --- |
 | `SourceGenerationStale`, `SourceGenerationUnobserved`, `SourceGenerationInvalid` | An InferenceReplica's freshness is `Stale`, `Unobserved` or `Invalid`. |
-| `SourceIdentityInvalid`, `SourceLabelMismatch`, `SourceParentMismatch`, `SourceOwnerMismatch`, `SourceComponentInvalid`, `SourceComponentDuplicate` | An InferenceReplica is malformed or doesn't belong to the service, or two claim the same component. |
+| `SourceIdentityInvalid`, `SourceLabelMismatch`, `SourceParentMismatch`, `SourceOwnerMismatch` | An InferenceReplica is malformed or doesn't belong to the service. |
+| `SourceComponentInvalid`, `SourceComponentDuplicate` | An InferenceReplica's component isn't engine, decoder or router — the encoder's always raises this — or two InferenceReplicas claim the same component. |
 | `RequestIDInvalid`, `RequestIDDuplicate`, `TriggerInvalid`, `PhaseInvalid`, `TriggerPhaseConflict`, `SourceIndexInvalid`, `SurgeIndexInvalid`, `AllocationInvalid`, `AttemptInvalid`, `TimestampInvalid`, `TerminalShapeInvalid`, `SucceededInvalid`, `NodeHintInvalid` | A record has a missing or invalid field, a field that doesn't fit its trigger or phase, or another record's request ID. |
 | `NodeHintsTruncated`, `RecordsTruncated`, `SourcesTruncated` | A record or the report holds more than the CLI shows. |
 
@@ -180,6 +187,8 @@ Only `AUTH` records are authoritative. An `AUDIT` entry that's still `Started` d
 
 Plus the standard kubeconfig flags, such as `-n` and `--context`.
 
+`--component` refuses `encoder`, as on [`status`](#status-flags). A filter also drops the encoder's `AUDIT` entries, which only show unfiltered, as [Which replicas `status` and `history` read](#which-replicas-status-and-history-read) explains.
+
 ### Output fields {#history-output-fields}
 
 The table has a row for each record, and a row for each issue:
@@ -187,7 +196,7 @@ The table has a row for each record, and a row for each issue:
 | Column | What it shows |
 | --- | --- |
 | EVID | `AUTH`, `PARENT` or `AUDIT`. An issue row shows the source it concerns, or `REPORT`. |
-| REQUEST/COMP | The first eight characters of the request ID, then the component's initial: `E`, `D` or `R`. |
+| REQUEST/COMP | The first eight characters of the request ID, then the component's initial: `E`, `D` or `R`, or `?` when the record's component isn't one of those three, as on the encoder's `AUDIT` entries. |
 | PHASE/STATE | The phase, then `A` for active, `T` for terminal or `!` for an invalid record. An issue row shows the report's state. |
 | WHEN | The record's latest time, in UTC, as `MM-DDTHH:MMZ`. |
 | DETAIL | The record's first issue code, or the start of its message. An issue row shows its code. |
@@ -204,7 +213,7 @@ The issue codes are:
 | --- | --- |
 | `AuthoritativeUnavailable`, `AuditUnavailable` | The CLI couldn't read the InferenceReplicas or the audit ConfigMap, often for lack of permission. |
 | `AuditIdentityInvalid`, `AuditMalformed`, `AuditPayloadTooLarge` | The audit ConfigMap isn't owned by the service, fails to parse, or is too large to read. |
-| `RecordInvalid`, `RequestIDInvalid`, `ComponentUnavailable`, `ComponentInvalid`, `InstanceInvalid`, `ReplacementInvalid`, `ModeInvalid`, `PhaseInvalid`, `TimestampInvalid`, `EventInvalid`, `NodeInvalid`, `DuplicateWithinSource` | A record lacks a field, has one the CLI can't use, or appears twice in one source. |
+| `RecordInvalid`, `RequestIDInvalid`, `ComponentUnavailable`, `ComponentInvalid`, `InstanceInvalid`, `ReplacementInvalid`, `ModeInvalid`, `PhaseInvalid`, `TimestampInvalid`, `EventInvalid`, `NodeInvalid`, `DuplicateWithinSource` | A record lacks a field, has one the CLI can't use, or appears twice in one source. `RecordInvalid` also stands in for an `AUTH` issue [`status`](#status) would report, such as the encoder's `SourceComponentInvalid`. |
 | `CrossSourceIdentityConflict`, `ChronologyConflict`, `TerminalOutcomeConflict` | Two sources disagree about the same request. |
 | `AuthoritativeTruncated`, `ParentHistoryTruncated`, `AuditHistoryTruncated`, `OutputTruncated`, `EventsTruncated`, `NodeHintsTruncated` | A source, a record or the report holds more than the CLI shows. |
 
