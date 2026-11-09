@@ -280,8 +280,20 @@ inferenceservice.ome.io/chat annotated
 | --- | --- |
 | `action refused: no applicable active rollout or lifecycle work was observed` | The canary already completed or rolled back, or hasn't started. |
 | `action refused: globally paused canary cannot consume a request` | The rollout is paused. [Resume it](pause-and-resume-a-rollout.md) first. |
-| `action refused: controller safety evidence is stale or inconsistent` | OME is still catching up with a recent change: wait, run `status`, and retry. More than one canary group always causes it. |
+| `action refused: controller safety evidence is stale or inconsistent` | OME is still catching up with a recent change: wait, run `status`, and retry. More than one canary group always causes it, and so does a service that declares `spec.encoder`, where no retry helps: see below. |
 | `guarded annotation patch rejected; refresh rollout status and retry explicitly` | The InferenceService changed after the command read it. Check `status`, and run the command again. It exits `3`. |
+
+On a service that declares [`spec.encoder`](../../concepts/serving/inference-services.md#the-encoder), every `promote` and `rollback` refuses with the stale message: the replica evidence the commands read knows the engine, the decoder and the router, and the encoder's replica fails the check, as [How the actions run](../../reference/kubectl-ome/rollout.md#how-the-actions-run) explains. The annotations the commands set still work when you set them yourself, though you give up the commands' guards: no preview, no refusal checks, no UID and resourceVersion test. Pass a manual gate with `ome.io/rollout-promote` set to the canary revision hash, as [The canary holds after the repin](repin-a-drifted-rollout-plan.md#what-the-controller-does-next) shows, or roll the canary back:
+
+```bash
+kubectl annotate inferenceservice chat -n prod ome.io/rollout-rollback=true
+```
+
+```output
+inferenceservice.ome.io/chat annotated
+```
+
+`rollout resume` and `repin` read no replica evidence, so the encoder doesn't stop them.
 
 If the command fails after it sent the patch, as with a timeout, the request may have been stored. Run `status` before you run the command again, as [When the outcome is unknown](../../reference/kubectl-ome/guarded-actions.md#when-the-outcome-is-unknown) explains.
 
