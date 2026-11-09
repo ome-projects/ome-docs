@@ -207,7 +207,7 @@ The table has one row for each value: Live rows first, then Active rows, then Se
 | `Live`, `Active` | RUNTIME | The runtime, as `CSR/<name>` or `SR/<namespace>/<name>`. |
 | `Active` | REVISION | The revision the InferenceService is pinned to. |
 | `Live`, `Active` | HASH | The short hash of the view's runtime spec. |
-| `Live`, `Active` | ENGINE, DECODER, ROUTER | Each component's deployment mode and where it comes from, as `MODE (SOURCE)`. |
+| `Live`, `Active` | ENGINE, DECODER, ROUTER | The engine's, the decoder's and the router's deployment mode and where it comes from, as `MODE (SOURCE)`. The encoder gets no row. |
 | `Service` | PIN | The pin mode and its state, as `<mode>/<state>`. |
 | `Service` | SYNC | The state of the runtime sync request. |
 | `Service` | STATUS | How `status.observedGeneration` compares with the InferenceService's generation. |
@@ -227,7 +227,7 @@ REASON is one of:
 | `UnsupportedAPI` | The API server doesn't serve the resource. |
 | `Unreadable` | The read failed for another reason. |
 
-The component rows show each component the InferenceService has. The modes are `RawDeployment`, `OMENative`, `VirtualDeployment` and `MultiNode` (deprecated; [move to OMENative](../../guides/omenative/move-from-leaderworkerset.md)). The source says where the mode comes from, in the order OME checks them, as [How OME resolves the mode](../../concepts/architecture/deployment-modes.md#how-ome-resolves-the-mode) describes:
+The component rows show the engine, the decoder and the router, when the InferenceService has them. A declared [`encoder`](../../concepts/serving/inference-services.md#the-encoder) gets no row — not in this table, `-o wide`, `-o json` or `-o yaml` — because the report covers only those three components, although the runtime's [`encoderConfig`](../../concepts/runtimes/serving-runtimes.md#the-encoder) merges into `spec.encoder` like any other piece. The missing row never hides another mode: a service with an encoder runs it, and every other component, as OMENative. The modes are `RawDeployment`, `OMENative`, `VirtualDeployment` and `MultiNode` (deprecated; [move to OMENative](../../guides/omenative/move-from-leaderworkerset.md)). The source says where the mode comes from, in the order OME checks them, as [How OME resolves the mode](../../concepts/architecture/deployment-modes.md#how-ome-resolves-the-mode) describes:
 
 | Source | Where the mode comes from |
 | --- | --- |
