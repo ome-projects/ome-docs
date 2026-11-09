@@ -220,7 +220,7 @@ OME stores [runtime revisions](../../concepts/runtimes/runtime-revisions.md) as 
 | --- | --- | --- | --- |
 | `ome.io/created-by` | `ome-controller` | Set by the controller. Read by the admission webhook, the controller and kubectl ome | On runtime revisions. The webhook blocks changes only to revisions that carry it, and garbage collection handles only those. |
 | `ome.io/gc-eligible-since` | An RFC 3339 time | Set and read by the controller | On a runtime revision that OME no longer keeps: no InferenceService uses it, and it isn't among the newest revisions with its runtime's name, ten by default. OME deletes the revision once the grace period, 24h by default, has passed, and removes the annotation if it keeps the revision again before that. See [Garbage collection](../../concepts/runtimes/runtime-revisions.md#garbage-collection). |
-| `ome.io/pairing-protocol` | A token, such as `nixl-v2`, of at most 63 characters | Set and read by the controller | On the revisions of OMENative engines and decoders, from `spec.rollout.pairingProtocol`. An engine revision and a decoder revision pair only when their tokens are equal, and an empty token pairs with any. Since v1.3. |
+| `ome.io/pairing-protocol` | A token, such as `nixl-v2`, of at most 63 characters | Set and read by the controller | On the revisions of OMENative engines, decoders and encoders, from `spec.rollout.pairingProtocol`. An engine revision and a decoder revision pair only when their tokens are equal, and an empty token pairs with any. An encoder's revisions carry the token, but nothing pairs on them, so [the token may only stay or be cleared while an encoder is declared](../../concepts/rollouts-and-traffic/rollout-groups.md#while-an-encoder-is-declared). Since v1.3. |
 
 ### AutoscalerPolicy and RolloutPolicy {#policy-annotations}
 
@@ -286,7 +286,7 @@ OME sets these on the pods of OMENative components. See [Pod labels and environm
 | `ome.io/runner` | `default`, `leader` or `worker` | Set and read by the controller | The pod's [runner](../../concepts/omenative/instances.md#runners). Since v1.3. |
 | `ome.io/pod-ordinal` | A whole number | Set and read by the controller | The pod's place in its Instance: from 0 to the Instance's size minus 1 in a multi-pod Instance. A single-pod Instance's pod is `0` or `1`, alternating each time OME replaces the pod by surging before it drains. Since v1.3. |
 | `ome.io/revision-hash` | A revision hash | Set and read by the controller | The hash of the pod's revision. Since v1.3. |
-| `ome.io/pairing-protocol` | The component's `spec.rollout.pairingProtocol` | Set by the controller | On engine and decoder pods, and on their per-revision routing Services, for information. Since v1.3. |
+| `ome.io/pairing-protocol` | The component's `spec.rollout.pairingProtocol` | Set by the controller | On engine, decoder and encoder pods, and on their per-revision routing Services, for information. Since v1.3. |
 | `scheduling.x-k8s.io/pod-group` | The PodGroup's name | Set by the controller. Read by the OME scheduler | On the pods of a multi-pod Instance only. See [One PodGroup per multi-pod Instance](../../concepts/serving/gang-scheduling.md#one-podgroup-per-multi-pod-instance). Since v1.3. |
 
 ### Nodes {#node-labels}
