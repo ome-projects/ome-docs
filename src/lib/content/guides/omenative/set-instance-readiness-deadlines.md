@@ -29,7 +29,7 @@ The `ome-resources` chart sets all three limits by default. You'll give one comp
 
 A component's value in the InferenceService wins over the runtime's, and either wins over the cluster's. The same timeout sets the deadline of an [Instance migration](../../concepts/omenative/migration-and-transient-scale.md#deadline), and a [drain](recover-stuck-deletions.md) that runs past it raises `DrainOverdue`. OME also derives a multi-pod Instance's [gang schedule timeout](../../concepts/serving/gang-scheduling.md#bound-the-gang-schedule-timeout) from it.
 
-The clock stops while an attempt waits on something outside the Instance: a scheduling gate, a quota refusal, an admission webhook the API server can't reach, an unschedulable pod, an unreachable node or a [paused rollout](../roll-out-changes/pause-and-resume-a-rollout.md#what-a-pause-holds). When the wait ends, the attempt gets a full timeout again. A changed timeout applies to new attempts, and to running ones that have no deadline yet. A changed grace period applies at once. [Operations](../../concepts/omenative/instances.md#operations) has the details.
+The clock stops while an attempt waits on something outside the Instance: a scheduling gate, a quota refusal, an admission webhook the API server can't reach, an unschedulable pod, a pod withheld until its [TPU slice](provision-tpu-slices.md) is ready, an unreachable node or a [paused rollout](../roll-out-changes/pause-and-resume-a-rollout.md#what-a-pause-holds). When the wait ends, the attempt gets a full timeout again. A changed timeout applies to new attempts, and to running ones that have no deadline yet. A changed grace period applies at once. [Operations](../../concepts/omenative/instances.md#operations) has the details.
 
 ## Step 1: Give a component more time
 
@@ -212,7 +212,7 @@ An Instance stays in `Creating`, or another phase, past its deadline. Check its 
 
 | What you see | What to do |
 | --- | --- |
-| `operation deadline` is `-`, with an `op hold` row | Clear the wait it names: free quota or capacity, bring back the node, or resume the rollout. An unschedulable pod fails the attempt after `unschedulableGracePeriod`. |
+| `operation deadline` is `-`, with an `op hold` row | Clear the wait it names: free quota or capacity, bring back the node, or resume the rollout. An unschedulable pod fails the attempt after `unschedulableGracePeriod`. An `op hold` of `waiting=Unknown` whose `failure reason` row reads `CapacityProvisioning` is a pod [waiting for its TPU slice](provision-tpu-slices.md#pods-wait-for-a-slice). |
 | `operation deadline` is `-`, and `admitted` is `false` | A pod still has scheduling gates. The clock starts when Kueue, or whichever controller added them, removes them. |
 | `operation deadline` is `-`, with no `op hold` row, and `admitted` is `true` | Check the condition, as in [Step 1](#step-1-give-a-component-more-time). If it names a timeout, the rollout is paused, which stops every Instance's clock until you [resume it](../roll-out-changes/pause-and-resume-a-rollout.md#step-3-resume-the-rollout). |
 | `operation surge index` shows a number | The wait can be on the Instance at that index. Check its `op hold` and `admitted` rows. |
