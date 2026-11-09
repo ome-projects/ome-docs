@@ -27,6 +27,8 @@ Turning ingress creation on deletes the external Service, so move clients in the
 
 The Ingress and HTTPRoutes send requests to the Services that OME creates for the InferenceService's [components](../serving/inference-services.md#components): `<name>-engine`, `<name>-decoder` and `<name>-router`. So they work the same for [OMENative](../omenative/overview.md) components as for `RawDeployment` ones. They also work the same when the InferenceService fronts standalone replicas with `spec.replicaRefs`; the Services then select the replicas' pods, as [Referenced replicas](#referenced-replicas) describes. Keep InferenceService names to 56 characters, or 55 with a decoder. With longer names, the routes point at Services that don't exist.
 
+A declared [encoder](../serving/inference-services.md#the-encoder) stays out of external access: it gets no Ingress rule and no HTTPRoute, and `IngressReady` doesn't wait for it, as [Routes](#routes) and [When IngressReady is True](#when-ingressready-is-true) describe.
+
 ## The external Service
 
 With ingress creation off, OME puts a `ClusterIP` Service named after the InferenceService in front of its router, or its engine when there's no router. [Cluster-local](#cluster-local-services) InferenceServices don't get one. The Service listens on the runtime's port, 8080 for `llama-chat`.
@@ -101,6 +103,8 @@ For `llama-chat`, OME creates up to four HTTPRoutes, all with the hostname `llm.
 | `llama-chat-decoder` | `/llama-demo/llama-chat-decoder/` | `llama-chat-decoder`, with a decoder |
 
 Clients use the top-level route, `llama-chat`. The other routes each reach one component, bypassing the router. OME creates a component's route once the component is ready. For an OMENative component, a [serving Instance](../omenative/instances.md#readiness-and-availability) is enough: OME creates and updates the route even while the component's `EngineReady`, `RouterReady` or `DecoderReady` condition is `False`, as long as the component's [lifecycle](../architecture/deployment-modes.md#lifecycle-status) reports `readyReplicas` and `servingReplicas` above `0`. So a component whose [condition](../architecture/deployment-modes.md#conditions) turns `False` with the reason `InsufficientAvailable` keeps its route, and `IngressReady` can stay `True`, while OME restores the Instances.
+
+An [encoder](../serving/inference-services.md#the-encoder) backs no route: the table above is complete for an InferenceService with `spec.encoder`, so `kubectl get httproutes` lists no `llama-chat-encoder`, and no request through the Gateway reaches the encoder. The encoder serves its peers inside the cluster instead: OME creates its Service, `llama-chat-encoder`, and tells the engine's pods its address in `OME_ENCODER_ENDPOINT`; the runtime moves the embeddings between the two. Outside the cluster, nothing routes to the encoder.
 
 Each route rewrites its path prefix to `/`, so a request for `/llama-demo/llama-chat/v1/models` reaches the model server as `/v1/models`. It also sets the headers `OMe-Isvc-Name` and `OME-Isvc-Namespace` to the InferenceService's name and namespace.
 
@@ -203,7 +207,9 @@ The InferenceService is `Ready` only when `IngressReady` is `True`, as [Status](
 | --- | --- |
 | The external Service | Always, with the reason `IngressDisabled`. |
 | A Kubernetes Ingress | OME has created the Ingress. It waits for the router, or the decoder when there's no router, or else the engine. It doesn't check your ingress controller. |
-| HTTPRoutes | Every declared or [referenced](#referenced-replicas) component is ready, or is an OMENative component with a serving Instance. Every Gateway on every HTTPRoute has accepted the route's current generation, with no `False` condition at that generation: see [Route edits and gateway acceptance](#route-edits-and-gateway-acceptance). The Gateway can reject the default BackendTrafficPolicy without changing `IngressReady`. |
+| HTTPRoutes | Every component that backs a route — the engine, and a declared or [referenced](#referenced-replicas) router and decoder, never an encoder — is ready, or is an OMENative component with a serving Instance. Every Gateway on every HTTPRoute has accepted the route's current generation, with no `False` condition at that generation: see [Route edits and gateway acceptance](#route-edits-and-gateway-acceptance). The Gateway can reject the default BackendTrafficPolicy without changing `IngressReady`. |
+
+An encoder never joins the wait, with an Ingress or with HTTPRoutes: `IngressReady` follows the components that back routes, so on an InferenceService with `spec.encoder` it turns `True` — and `Ready` with it, when `EngineReady` is `True` too — while the encoder is still starting. Watch `EncoderReady`, which stays outside `Ready`, for the encoder itself: see [Status](../serving/inference-services.md#status) on the InferenceServices page.
 
 When `IngressReady` is `False`, its reason and message say why:
 
