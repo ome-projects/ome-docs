@@ -180,7 +180,7 @@ Otherwise, look for these causes in order, and fix the first that applies. The f
 2. A `ModelReconcileError` Warning event, such as `specified base model qwen2-5-7b is disabled`. Fix the model that it names.
 3. A Normal `ModelNotReady` event, which the status report leaves out: the model is Sharded, which can't be served in this release. List these events with `kubectl get events -n demo --field-selector reason=ModelNotReady`. See [Distribution](../../concepts/models/base-models.md#distribution).
 4. A `RuntimeNotFound` Warning event: no runtime supports the model. See [Troubleshoot runtime selection](../deploy-models/troubleshoot-runtime-selection.md). An InferenceService that was already serving keeps its pods.
-5. An `AcceleratorClassError` Warning event, or the `BestFit` accelerator policy. See [The InferenceService has an AcceleratorClassError event](../deploy-models/select-accelerators.md#the-inferenceservice-has-an-acceleratorclasserror-event) and [BestFit doesn't create or update the workload](../deploy-models/select-accelerators.md#bestfit-doesnt-create-or-update-the-workload).
+5. An `AcceleratorClassError` Warning event. See [The InferenceService has an AcceleratorClassError event](../deploy-models/select-accelerators.md#the-inferenceservice-has-an-acceleratorclasserror-event).
 6. The InferenceService lacks an `engine` section, so OME creates no engine. Add one: a section that sets only `minReplicas` is enough.
 
 Otherwise, read the controller's logs, as in [Step 4](#step-4-read-the-logs).
