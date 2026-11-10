@@ -50,7 +50,7 @@ In a healthy report, Ready and each component row start with `True / Valid`, eve
 - Traffic shows `Unavailable` when the service declares no traffic behavior.
 - Runtime active and Accelerator show `AutoSelectionNotProbed` when the service names a model but no runtime.
 
-And a service that fronts standalone replicas through `spec.replicaRefs` counts zero pods and has no component rows when healthy: see [Pods and components](#pods-and-components).
+And a service that fronts standalone replicas through `spec.replicaRefs` counts zero pods and has no component rows when healthy: see [Pods and components](#pods-and-components). A service with an [encoder](../../concepts/serving/inference-services.md#the-encoder) shows a `Partial` Pod observation and an `UnsupportedComponent` issue even when healthy, because the CLI reads the encoder's pods but doesn't count them: that section covers it too.
 
 The report marks how the CLI got each value with an evidence level:
 
@@ -98,7 +98,7 @@ Condition inspection is `Complete` when every condition checks out, `Partial` wh
 
 ### Pods and components
 
-The CLI counts the pods labelled `ome.io/inferenceservice=<name>` in the service's namespace that have a `component` label of `engine`, `decoder` or `router`. An `Issue` row names each reason it left a pod out (see [Warning events and issues](#warning-events-and-issues)).
+The CLI counts the pods labelled `ome.io/inferenceservice=<name>` in the service's namespace that have a `component` label of `engine`, `decoder` or `router`. It reads a pod with any other `component` label, such as an encoder's, but leaves it out. An `Issue` row names each reason it left a pod out (see [Warning events and issues](#warning-events-and-issues)).
 
 | Row | What it shows |
 | --- | --- |
@@ -116,6 +116,8 @@ The CLI counts the pods labelled `ome.io/inferenceservice=<name>` in the service
 A component's `<ready> / <validity>` comes from its `EngineReady`, `DecoderReady` or `RouterReady` condition, which the CLI checks the same way as Ready, so it takes the same values. It's `NotRecorded / Unavailable` until the controller sets the condition.
 
 For a component on [OMENative](../../concepts/omenative/overview.md), these rows count pods, not [Instances](../../concepts/omenative/instances.md). An Instance can be a leader pod and its workers. [`kubectl ome instance list`](instance.md#list) shows each Instance with its phase, pods and revision.
+
+An [encoder](../../concepts/serving/inference-services.md#the-encoder) runs only on OMENative, and its pods carry `component=encoder`, a label the CLI doesn't count. So once the encoder's pods exist, a service with `spec.encoder` always reports the same shape, healthy or not: Pod observation reads `Partial`, with reason `MalformedPayload` when no read failed; its count includes the encoder's pods, which the CLI read but left out; an `Issue` row reads `UnsupportedComponent`; and no `encoder` component row appears, though the controller records an [`EncoderReady`](../../concepts/serving/inference-services.md#status) condition. That marks the CLI's limit, not a problem with your pods: the `engine`, `decoder` and `router` rows still count as usual. The encoder's Warning events stay out of the report too, because the CLI reads events only for the pods it counts. To look closer, read `EncoderReady` on the InferenceService, and the encoder's pods with the selectors in [The encoder](logs.md#the-encoder) on the logs page. [Autoscaling](#autoscaling) marks the same limit in its own rows.
 
 An InferenceService whose [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) fronts standalone replicas has no pods of its own: the pools' pods carry each pool's name in `ome.io/inferenceservice`, not the service's, and the webhook rejects `spec.engine`, `spec.decoder` and `spec.router` next to `spec.replicaRefs`. So on a healthy fronting service, Pod observation reads `Reported count=0 truncated=false` and no component row appears, even while the fronted pools serve behind its route. Ready still reports, because the controller mirrors each fronted replica's status onto the service's conditions. To look closer, use each pool's own name: [`kubectl ome get ir`](get.md#inferencereplicas-columns) lists the pools, with `-` in PARENT, and [`kubectl ome logs`](logs.md#standalone-and-fronted-replicas) reads a pool's pods. No [`kubectl ome instance`](instance.md#which-replicas-the-command-reads) subcommand shows a fronted pool's Instances.
 
@@ -137,7 +139,7 @@ Pod observation and Event observation show one of these states:
 | `Timeout` | A request ran out of time. |
 | `Unavailable` | The API server was throttling requests or unavailable. |
 | `Unreadable` | Any other error. |
-| `MalformedPayload` | Pods only. The CLI left out some pods, and no request failed. |
+| `MalformedPayload` | Pods only. The CLI left out some pods, and no request failed. Every service whose encoder's pods exist shows it. |
 
 ### Rollout
 
@@ -298,7 +300,7 @@ An issue about a pod or an event means the CLI left it out of the report. The is
 | `PodIdentityRejected` | A pod doesn't match what the CLI asked for, or two pods share a name or UID. |
 | `PodMalformed` | A pod's status is malformed. |
 | `RolloutUnavailable` | The rollout status is too large to read, so the report skips it. |
-| `UnsupportedComponent` | A pod labelled for the service has no `component` label, or one other than `engine`, `decoder` or `router`. |
+| `UnsupportedComponent` | A pod labelled for the service has no `component` label, or one other than `engine`, `decoder` or `router` — as an encoder's pods always have: see [Pods and components](#pods-and-components). |
 
 ### Detail rows
 
