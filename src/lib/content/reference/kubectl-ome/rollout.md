@@ -44,7 +44,7 @@ Plus the standard kubeconfig flags, such as `-n` and `--context`.
 
 ### Output fields {#status-output-fields}
 
-The table has a SERVICE column for the whole InferenceService, then a column for each component: ENGINE, DECODER and ROUTER. The first rows describe the service:
+The table has a SERVICE column for the whole InferenceService, then a column for each component: ENGINE, DECODER and ROUTER — the only components the report knows. [The encoder](../../concepts/serving/inference-services.md#the-encoder) never gets a column, as the warning below explains. The first rows describe the service:
 
 | Row | What it shows |
 | --- | --- |
@@ -57,6 +57,9 @@ The table has a SERVICE column for the whole InferenceService, then a column for
 A service with rollout groups, or with rollout phases or revisions in its status, shows STATE `Unknown`. The CLI can't tie that status to the current generation, so EVIDENCE shows `Reported`, EPOCH shows `Unverifiable`, and ISSUES lists `EpochUnverifiable`. Read REPORTED for the state the status records.
 
 `Staged` means a group finished rolling out up to the [`rollingUpdate.partition`](../../concepts/architecture/omenative-update-strategies.md#pacing-with-rollingupdate) its components set, which holds that many instances on the old revision. `NotConfigured` means the service doesn't use rollouts.
+
+!!! warning "A rollout group with the encoder reads as malformed"
+    The report refuses what it doesn't know rather than guess. A rollout group that lists the encoder gets `SpecMalformed(group=N)`, in the SERVICE column, and the group's `components` in the JSON report leave the encoder out. Once the controller writes the encoder's `status.components` entry, `StatusMalformed` joins it; the report's own `components` never get an encoder entry. Admission accepts what the report refuses: an encoder [requires rollout groups](../../concepts/serving/inference-services.md#the-encoder), and a group [may list it](../../concepts/rollouts-and-traffic/rollout-groups.md), so there is nothing in the spec to fix. With either issue present, REPORTED shows `Unknown` in place of the state the status adds up to. To see where an encoder service's rollout is, read `status.components` and `status.rollout` yourself, with `kubectl get inferenceservice chat -n prod -o yaml`. The same projection degrades [`explain`](#explain-output-fields).
 
 A component row appears only when a component has a value for it:
 
@@ -117,8 +120,8 @@ The last row, ISSUES, lists issue codes for the service and for each component, 
 | `GroupStatusMissing` | A rollout group has no status yet. |
 | `GroupStatusUnexpected` | The rollout coordination status names a group that the spec doesn't have. |
 | `RevisionNameInvalid` | A revision name in the status is empty or invalid. |
-| `SpecMalformed` | The rollout part of the spec is malformed. |
-| `StatusMalformed` | The rollout status is malformed or contradicts the spec. |
+| `SpecMalformed` | The rollout part of the spec is malformed, or beyond what the report reads: a group that lists the encoder, a plan of four groups, or a group of four components — all shapes admission accepts. |
+| `StatusMalformed` | The rollout status is malformed or contradicts the spec — including a `status.components` entry the report doesn't know, such as the encoder's. |
 | `TrafficInvalid` | A traffic weight in the status is outside 0 to 100. |
 
 `-o wide` prints a row per component, with every field but COORDINATION as a column.
@@ -269,6 +272,8 @@ The source in a GROUP row is one of:
 | `Policy` | A rollout policy supplies the progression. The CLI can't read its steps outside the pinned plan, so the `Live` view, and `Effective` without an active run, list `PolicyBodyUnavailable` in ISSUES. |
 | `Defaulted` | The group names no progression or policy, so it rolls out blue-green. The pinned plan records it as `Inline`, with CONFIG `origin=Unknown`. |
 | `Unknown` | The pinned plan records another source, so ISSUES lists `ActiveRunMalformed`. |
+
+Like [`status`](#status-output-fields), `explain` knows three components: engine, decoder and router. A group that lists [the encoder](../../concepts/serving/inference-services.md#the-encoder) shows its strategy as `Unknown` with `origin=Unknown`, leaves the encoder out of its components, and adds the view's issue to ISSUES: `DeclaredPlanMalformed`, `LivePlanMalformed` or `EffectivePlanMalformed` — or `ActiveRunMalformed` for a group an active run pinned. A plan of four groups, which the API allows, shows the first three, and ISSUES lists `PlanTruncated`.
 
 CONFIG lists a group's settings by key:
 
@@ -432,6 +437,8 @@ OVERALL is `Invalid` when any check is, otherwise `Unverifiable` when any check 
 | SCALING-POLICY | The alpha `spec.scalingPolicy`. |
 | AUTOSCALER-SPEC | The autoscaling settings: one row for the service, then one per component. |
 | AUTOSCALER-RESOLVE | For a component with an `autoscalerPolicyRef` to an alpha AutoscalerPolicy, whether its AutoscalerResolved condition is `True` for the current generation. |
+
+ROLLOUT-PLAN is narrower than admission in one way: the API takes [up to four groups of up to four components](../../concepts/rollouts-and-traffic/rollout-groups.md), and the check calls a fourth group, or a fourth component in a group, `Invalid`. An admission-accepted plan — such as one blue-green group over all four roles of a service with [an encoder](../../concepts/serving/inference-services.md#the-encoder) — then makes OVERALL `Invalid`, prints `error: rollout validation found invalid configuration` and exits `2`. The encoder's name isn't what fails: a group of the encoder and at most two other roles passes ROLLOUT-PLAN, even though [`status`](#status-output-fields) and [`explain`](#explain-output-fields) report that group malformed.
 
 AUTOSCALER-SPEC's service row checks the `ome.io/autoscalerClass`, `ome.io/metrics` and `ome.io/targetUtilizationPercentage` annotations. Each component's row checks its `autoscaler` block, its replica bounds and its `autoscalerPolicyRef`. [Rollout groups](../../concepts/rollouts-and-traffic/rollout-groups.md#what-admission-rejects), [Canary progression](../rollouts/canary-progression.md#what-admission-rejects) and [Component autoscaling](../../concepts/serving/component-autoscaling.md#what-admission-rejects) list what admission rejects in these fields.
 
