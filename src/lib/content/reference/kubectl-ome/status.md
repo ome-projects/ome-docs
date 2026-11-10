@@ -139,7 +139,7 @@ Pod observation and Event observation show one of these states:
 | `Timeout` | A request ran out of time. |
 | `Unavailable` | The API server was throttling requests or unavailable. |
 | `Unreadable` | Any other error. |
-| `MalformedPayload` | Pods only. The CLI left out some pods, and no request failed. Every service whose encoder's pods exist shows it. |
+| `MalformedPayload` | Pods only. The CLI left out some pods, and no request failed. Every service whose encoder's pods exist shows it, unless a failed request sets the reason instead. |
 
 ### Rollout
 
