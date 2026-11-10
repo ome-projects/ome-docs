@@ -135,15 +135,23 @@ While something outside the Instance holds an operation, such as a scheduling ga
 | `QuotaExceeded` | The API server refused the pods for lack of ResourceQuota. |
 | `AdmissionUnavailable` | The API server couldn't reach an admission webhook when OME created or patched the pods. |
 | `CapacityProvisioning` | OME withholds a pod until the capacity a provisioner readies for it, such as its [TPU slice](../../guides/omenative/provision-tpu-slices.md), is ready. |
-| `Unschedulable` | The scheduler can't place a pod. |
+| `Unschedulable` | The scheduler can't place a pod. One of the two [placement waits](#placement-waits). |
 | `PodGroupTerminating` | The Instance's PodGroup from an earlier attempt is still being deleted. |
-| `NodeUnknown` | A pod that OME must replace is on a node that stopped reporting. |
+| `NodeUnknown` | A pod that OME must replace is on a node that stopped reporting. One of the two [placement waits](#placement-waits). |
 | `Paused` | The rollout is [paused](../../guides/roll-out-changes/pause-and-resume-a-rollout.md). |
 | `SourceUnrouted` | Nothing: during a surge, the old Instance left rotation before OME drained it. The clock keeps running. |
 
 An `AdmissionUnavailable` hold isn't a failure: the attempt keeps its phase and its operation, and OME keeps retrying the write until one goes through admission again, which ends the hold. OME records the wait in the Instance's `lastFailure` under the same `AdmissionUnavailable` reason, with the refused pod and the API server's own message, which names the webhook it couldn't reach, and one `InstanceAdmissionUnavailable` warning event per episode carries that message. The wait blames no revision — no revision can reach a webhook the API server can't — so it never counts toward a [revision hold](#what-ome-does-with-a-failed-instance).
 
 A `CapacityProvisioning` hold withholds the pod itself: OME creates it only once the capacity is ready, so neither the scheduler nor `kubectl get pods` sees it. An Instance's pods start together, so one withheld pod holds the creates of all of them. The Instance's `lastFailure` records the hold under the same `CapacityProvisioning` reason, naming the withheld pod and the provisioner's explanation of what the capacity waits for, which changes only when the state of the capacity does. This wait blames no revision either — a provisioner outside the Instance readies the capacity — so it never counts toward a revision hold. [Provision TPU slices](../../guides/omenative/provision-tpu-slices.md#step-3-watch-the-slice-and-the-pod) watches the wait on a live Instance.
+
+### Placement waits
+
+`Unschedulable` and `NodeUnknown` are the two placement waits: the attempt can't go on until every pod it asks for runs on a node that reports. One attempt can pass through both as a single wait. When a pod's node stops reporting, the attempt waits under `NodeUnknown` while the dead node holds the pod's name; once the name is freed and the member rebuilt, the same attempt waits under `Unschedulable` when the scheduler can't place the new pod.
+
+The operation records when that wait began in `operation.placementWaitSince`. OME sets it when a pod name the attempt needs is held by a node that stopped reporting — to that moment or, when another of the attempt's pods is already waiting on the scheduler, to that pod's earlier wait start — and keeps it while the attempt waits for placement, even as the waiting pod changes. A scheduler wait alone records nothing. OME clears the field once every pod the attempt asks for is bound to a node that reports, or when the attempt ends.
+
+OME measures `unschedulableGracePeriod`, and the shorter window of a [gang held to a full domain](../serving/gang-scheduling.md#a-gang-held-to-a-full-domain-can-fail-sooner), from `placementWaitSince` when it's earlier than the unplaceable pod's own wait, which starts at its `PodScheduled` condition's last transition. The wait belongs to the attempt and spans the members of a gang — a member placed and another then unplaceable is one wait, not two — so the attempt can fail with the reason `Unschedulable` before the pod now refused has waited the grace period on its own. With no `placementWaitSince` recorded, the grace runs from the pod's own transition, as for a pod that was never placed. A failed attempt takes its start with it: the member the next attempt rebuilds waits on its own clock.
 
 ### Changing the pod template mid-create
 
@@ -177,7 +185,7 @@ OME moves an Instance to `Failed` when an operation can't finish. The chart sets
 | --- | --- | --- |
 | Stuck pod | A container waits in a state such as `CrashLoopBackOff` or `ImagePullBackOff`, and its pod is older than the grace period. | `stuckPodGracePeriod` (`60s`) |
 | Deadline | The deadline passes before the Instance is ready, as when a large image pulls slowly or the server never passes its readiness checks. | `instanceReadyTimeout` (`30m`) |
-| No room | The scheduler can't place a pod for longer than the grace period. OME treats this as a problem with the cluster, not the revision. | `unschedulableGracePeriod` (`15m`) |
+| No room | The scheduler can't place a pod, and the attempt has waited for placement longer than the grace period — from `operation.placementWaitSince` when the attempt first waited on a node that stopped reporting, else from the pod's own wait: see [Placement waits](#placement-waits). OME treats this as a problem with the cluster, not the revision. | `unschedulableGracePeriod` (`15m`) |
 | Rejected pods | The API server rejects the pods as invalid, or because the namespace is being deleted. | None |
 | PodGroup name in use | Another controller holds the PodGroup name the Instance needs. | None |
 
