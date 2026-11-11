@@ -60,7 +60,7 @@ The key is `ome.io/migration-request-v1-` followed by a request UUID, and the va
 
 | Field | Meaning |
 | --- | --- |
-| `schemaVersion` | `v1`, the only version OME understands. A request with any other value is rejected with its own `UnsupportedSchemaVersion` event. |
+| `schemaVersion` | `v1`, the only version OME understands. The webhook rejects any other value; a request that reaches the controller anyway gets its own `UnsupportedSchemaVersion` event. |
 | `component` | `engine`, `decoder` or `router`. |
 | `instance` | The index of the Instance to move. |
 | `from_node` | The node to leave. When the Instance no longer runs there, OME moves it off the node it does occupy: see [When a request waits or fails](#what-refuses-a-migration-request). |
