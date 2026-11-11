@@ -92,7 +92,10 @@ kubectl ome wait INFERENCESERVICE --for=rollout=stable|failed|rolled-back [--tim
 
 Waits for the rollout state that [`kubectl ome rollout status`](rollout.md#status-output-fields) shows as REPORTED: `stable` waits for `Succeeded`, `failed` for `Failed` and `rolled-back` for `RolledBack`. Any other state keeps the wait going. So `rollout=stable` runs until its timeout after a rollout fails, and a canary waiting at a gate keeps it waiting. A service without rollouts reports `NotConfigured`, which never matches: wait for `condition=Ready` instead.
 
-`EpochUnverifiable` and `AnalysisInconclusive` show as Rollout issue rows but don't block a match. `EpochUnverifiable` shows for any service with rollout groups.
+A match also needs Rollout validity `Valid`, which the [Rollout issue rows](#rollout-fields) can take away. `EpochUnverifiable` and `AnalysisInconclusive` are the only issues a match tolerates. `GroupStatusMissing`, `ComponentStatusMissing` and `CanaryStatusMissing` turn the validity `Unavailable`, with reason `RolloutNotRecorded` and the warning `MissingRolloutEvidence`, until the controller writes the missing status. Any other issue turns it `Invalid`, with reason `InvalidRollout` and the warning `InvalidRolloutRecord`. `EpochUnverifiable` shows for any service with rollout groups.
+
+!!! warning "An encoder service never matches a rollout predicate"
+    The wait projects the same report as `rollout status`, which [doesn't know the encoder](rollout.md#status-output-fields): a rollout group that lists [the encoder](../../concepts/serving/inference-services.md#the-encoder) reads as `SpecMalformed`, and the encoder's `status.components` entry, which the controller writes when it reconciles the service, as `StatusMalformed`. Either issue turns Rollout validity `Invalid`, so every check reports `InvalidRollout` with the warning `InvalidRolloutRecord`, Reported rollout shows `Unknown`, and `rollout=stable`, `failed` and `rolled-back` all run to `TimedOut`, exit `2`. An encoder service must declare rollout groups (`EncoderRequiresRolloutGroups`), so there's nothing in the spec to fix. Gate on [`condition=Ready`](#condition-ready) instead, which reads the InferenceService itself. `Ready` follows the engine and the ingress, not the encoder, so to cover the encoder too, block on its own condition with `kubectl wait inferenceservice/chat -n prod --for=condition=EncoderReady --timeout=30m`.
 
 ### `migration=terminal` {#migration-terminal}
 
@@ -239,7 +242,7 @@ Reported rollout, Rollout state, Rollout epoch and Coordination Ready show REPOR
 | `RolloutMatched` | The rollout is valid and reports the requested state. |
 | `RolloutNotMatched` | The rollout is valid and reports another state. |
 | `RolloutNotRecorded` | Status the rollout needs is missing. |
-| `InvalidRollout` | The rollout record is invalid. |
+| `InvalidRollout` | The rollout record is invalid: malformed status, or a Rollout issue the match neither tolerates nor waits out, such as the `SpecMalformed` and `StatusMalformed` an [encoder service](#rollout) always shows. |
 
 `-o wide` adds counts of what the CLI inspected, then Cancellation.
 
