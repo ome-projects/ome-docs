@@ -805,7 +805,7 @@ Besides the refusals [every action shares](guarded-actions.md#target-checks), `r
 | --- | --- |
 | `rollout repin refused: no active pinned run` | No run is active. |
 | `rollout repin refused: empty live plans are not supported by this command` | `spec.rollout` is gone, or has no groups. To close the run instead, [set the annotation yourself](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#close-the-run). |
-| `rollout repin refused: controller plan evidence is missing, stale or inconsistent` | The run, READY or DRIFT doesn't show a pinned, drifted plan the CLI can check, or the live spec fails validation. |
+| `rollout repin refused: controller plan evidence is missing, stale or inconsistent` | The run, READY or DRIFT doesn't show a pinned, drifted plan the CLI can check, or the live spec fails validation. The command also bounds the plan more tightly than the API: a plan of more than 3 groups, or a group of more than 3 components, never passes this check, though `spec.rollout` allows 4 of each. To repin such a plan, [set the annotation yourself](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#repin-by-annotation): the controller re-renders the plan and checks only its digest. |
 | `rollout repin refused: the current plan is already pinned` | DRIFT is `False/InSync`, or the live plan has the pinned digest. |
 | `rollout repin refused: live and pinned rollout topology differ` | The groups changed shape. |
 | `rollout repin refused: this command supports at most one canary group` | The live spec has more than one canary group. |

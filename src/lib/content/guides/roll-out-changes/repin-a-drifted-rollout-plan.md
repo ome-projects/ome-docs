@@ -109,7 +109,7 @@ If DRIFT is still `True`, see [DRIFT stays True after the repin](#drift-stays-tr
 
 ## Repin by annotation
 
-Without the plugin, set the `ome.io/rollout-repin` annotation yourself, to the digest of the current plan. Only the controller's digest check guards this path. First check that DRIFT is `True`, the groups kept [their shape](#what-a-repin-can-change), and no promote or rollback waits. With more than one canary group, the controller fits only the first to its new steps, so another group's traffic weight can rise without a hold.
+Without the plugin, or when the command refuses a plan of more than three groups or a group of more than three components, set the `ome.io/rollout-repin` annotation yourself, to the digest of the current plan. The controller re-renders the plan with no size bound, and only its digest check guards this path. First check that DRIFT is `True`, the groups kept [their shape](#what-a-repin-can-change), and no promote or rollback waits. With more than one canary group, the controller fits only the first to its new steps, so another group's traffic weight can rise without a hold.
 
 Get the digest the controller reports for each group, after the group's index:
 
@@ -176,7 +176,7 @@ A refused `repin` changes nothing and exits `1`, and a conflict exits `3`. [Refu
 
 | Message | Cause | Fix |
 | --- | --- | --- |
-| `rollout repin refused: controller plan evidence is missing, stale or inconsistent` | The controller hasn't reported your edit yet. | Wait a few seconds and retry. If the refusal stays, check the group's rollout policy, the spec, and your computer's clock against the cluster's. |
+| `rollout repin refused: controller plan evidence is missing, stale or inconsistent` | The controller hasn't reported your edit yet — or the plan is larger than the command supports: more than three groups, or a group of more than three components, though the API allows four of each. | Within those bounds, wait a few seconds and retry; if the refusal stays, check the group's rollout policy, the spec, and your computer's clock against the cluster's. A larger plan never passes, however long you wait: [repin by annotation](#repin-by-annotation) instead. |
 | `rollout repin refused: live and pinned rollout topology differ` | The edit changed [the groups' shape](#what-a-repin-can-change). | Undo those changes to repin the rest now, or let the edit wait for the next run. |
 | `rollout repin refused: a rollout action mailbox is already present` | A repin, promote or rollback annotation is on the InferenceService. | Wait for the controller to act on a repin or promote, and retry. Remove a rollback annotation yourself before you apply a fix, as [Roll back the canary](promote-or-roll-back-a-canary.md#roll-back-the-canary) shows. |
 | `rollout repin refused: the current plan is already pinned` | The run already follows the current plan. | If DRIFT is `True`, see [DRIFT stays True after the repin](#drift-stays-true-after-the-repin). |
