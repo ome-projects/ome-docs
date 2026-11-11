@@ -62,15 +62,15 @@ The table has these rows, in this order:
 | --- | --- | --- |
 | `v1` | `pods`, `events`, `configmaps` | None |
 | `apps/v1` | `deployments` | `controllerrevisions` |
-| `ome.io/v1beta1` | `inferenceservices`, `basemodels`, `servingruntimes`, `clusterbasemodels`, `clusterservingruntimes` | `inferencereplicas`, `autoscalerpolicies`, `trafficmaps`, `benchmarkjobs`, `finetunedweights`, `acceleratorclasses`, `acceleratorquotas`, `workloadclusters` |
+| `ome.io/v1beta1` | `inferenceservices`, `basemodels`, `servingruntimes`, `clusterbasemodels`, `clusterservingruntimes` | `inferencereplicas`, `autoscalerpolicies`, `rolloutpolicies`, `trafficmaps`, `benchmarkjobs`, `finetunedweights`, `acceleratorclasses`, `acceleratorquotas`, `workloadclusters` |
 | `autoscaling/v2` | None | `horizontalpodautoscalers` |
 | `keda.sh/v1alpha1` | None | `scaledobjects` |
 | `gateway.networking.k8s.io/v1` | None | `httproutes`, `gateways`, `gatewayclasses` |
-| `kueue.x-k8s.io/v1beta1` | None | `workloads`, `localqueues`, `clusterqueues` |
+| `kueue.x-k8s.io/v1beta2` | None | `workloads`, `localqueues`, `clusterqueues` |
 
 A missing optional API matters only when you use the feature that needs it, such as KEDA for [scale to zero](../../guides/scale-and-migrate/scale-to-zero-with-keda.md) or the Gateway API for [ingress through HTTPRoutes](../../guides/networking/configure-ingress.md).
 
-The output shows only the resource, so `workloads` is Kueue's Workload API. InferenceReplica, AutoscalerPolicy, TrafficMap, AcceleratorQuota and WorkloadCluster are new in v1.3, so a v1.2.2 installation shows them as `NotDiscoverableAtVersion`. AutoscalerPolicy, TrafficMap and WorkloadCluster are alpha, and TrafficMap and WorkloadCluster belong to multi-cluster routing, which is still in development. The `ome-crd` chart installs AutoscalerPolicy only when you set `ome.autoscalerPolicy.enabled`.
+The output shows only the resource, so `workloads` is Kueue's Workload API. `doctor` probes Kueue only at `kueue.x-k8s.io/v1beta2`: an installation that serves only `v1beta1` shows `workloads`, `localqueues` and `clusterqueues` as `NotDiscoverableAtVersion` with the reason `NotFound`, like a cluster without Kueue. InferenceReplica, AutoscalerPolicy, TrafficMap, AcceleratorQuota and WorkloadCluster are new in v1.3, so a v1.2.2 installation shows them as `NotDiscoverableAtVersion`. AutoscalerPolicy, [RolloutPolicy](../../concepts/rollouts-and-traffic/rollout-policy.md), TrafficMap and WorkloadCluster are alpha, and TrafficMap and WorkloadCluster belong to multi-cluster routing, which is still in development. The `ome-crd` chart installs AutoscalerPolicy only when you set `ome.autoscalerPolicy.enabled`, and RolloutPolicy only when you set `ome.rolloutPolicy.enabled`.
 
 An API's availability is one of these:
 
@@ -174,6 +174,7 @@ clusterservingruntimes     Available             Required
 finetunedweights           Available             Optional
 inferencereplicas          Available             Optional
 inferenceservices          Available             Required
+rolloutpolicies            NotDiscoverableA...   Optional
 servingruntimes            Available             Required
 trafficmaps                Available             Optional
 workloadclusters           Available             Optional
@@ -199,7 +200,7 @@ ScaleTarget                NotSelected           Generation unverifiable
 Traffic                    NotSelected           Generation unverifiable
 ```
 
-Every required API is `Available`, so the command exits `0`. KEDA, Gateway API and Kueue aren't installed, so their APIs are `NotDiscoverableAtVersion` with the reason `NotFound`. The `ome-crd` chart doesn't install AutoscalerPolicy by default, so `autoscalerpolicies` is missing too, with no reason.
+Every required API is `Available`, so the command exits `0`. KEDA, Gateway API and Kueue aren't installed, so their APIs are `NotDiscoverableAtVersion` with the reason `NotFound`. The `ome-crd` chart doesn't install AutoscalerPolicy or RolloutPolicy by default, so `autoscalerpolicies` and `rolloutpolicies` are missing too, with no reason.
 
 Print only the summary of the report:
 
@@ -211,7 +212,7 @@ kubectl ome admin doctor --context prod-east -n team-a -o json | jq .content.sum
 {
   "state": "Incomplete",
   "requiredAPIViolations": 0,
-  "unavailableEvidence": 21
+  "unavailableEvidence": 22
 }
 ```
 
@@ -249,6 +250,7 @@ clusterservingruntimes     NotDiscoverableA...   Required NotFound
 finetunedweights           NotDiscoverableA...   Optional NotFound
 inferencereplicas          NotDiscoverableA...   Optional NotFound
 inferenceservices          NotDiscoverableA...   Required NotFound
+rolloutpolicies            NotDiscoverableA...   Optional NotFound
 servingruntimes            NotDiscoverableA...   Required NotFound
 trafficmaps                NotDiscoverableA...   Optional NotFound
 workloadclusters           NotDiscoverableA...   Optional NotFound
