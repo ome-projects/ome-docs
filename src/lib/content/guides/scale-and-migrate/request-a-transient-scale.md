@@ -9,6 +9,7 @@ since: v1.3
 <div class="prerequisites" markdown>
 
 - An InferenceService with a component on OMENative and no rollout, migration or other Instance change in progress on it. [Deployment modes](../../concepts/architecture/deployment-modes.md#opt-in-to-omenative) shows how to opt in.
+- No `spec.encoder` on the service: `scale` refuses every request on a service that declares an [encoder](../../concepts/serving/inference-services.md#the-encoder), whatever the component. See [The service declares an encoder](#the-service-declares-an-encoder).
 - The kubectl-ome plugin. See [kubectl-ome overview and install](../../reference/kubectl-ome/overview.md). If OME runs in a namespace other than `ome`, pass it with `--ome-namespace`.
 - Permission to patch `inferencereplicas/scale` in the `ome.io` API group, and the read access that [Required RBAC](../../reference/kubectl-ome/guarded-actions.md#required-rbac) lists. A rule that names only `inferencereplicas` doesn't include the subresource.
 
@@ -132,7 +133,16 @@ These errors mean the CLI couldn't confirm who owns the count, or that something
 - `error: action refused: controller safety evidence is stale or inconsistent`
 - `error: manual scale source changed; inspect current status and prepare a new request`
 
-Usually the controller is still catching up with a recent change: wait, check LIVE-EVIDENCE in `kubectl ome autoscale status chat -n prod --live-scale`, and run the dry run again. Also check that the component exists and runs on OMENative.
+Usually the controller is still catching up with a recent change: wait, check LIVE-EVIDENCE in `kubectl ome autoscale status chat -n prod --live-scale`, and run the dry run again. Also check that the component exists and runs on OMENative. But on a service that declares `spec.encoder`, the stale refusal isn't the controller catching up, and it never clears: see [The service declares an encoder](#the-service-declares-an-encoder).
+
+### The service declares an encoder
+
+On a service that declares [`spec.encoder`](../../concepts/serving/inference-services.md#the-encoder), which is alpha, `scale` refuses every request, in every dry-run mode:
+
+- `--component encoder` fails the argument check with `error: invalid scale arguments; require one service, component engine|decoder|router, positive base-10 --replicas, supported output/dry-run and valid namespace/context/timeout`. The command scales only those three components.
+- The engine, the decoder and the router refuse with `error: action refused: controller safety evidence is stale or inconsistent`. The safety check knows the same three components, so the encoder's entry in the service's `status.components` always reads as an issue, which [`kubectl ome rollout status`](../../reference/kubectl-ome/rollout.md#status) shows as `StatusMalformed`. Nothing is stale, and the refusal never clears, however long you wait or how often you rerun the dry run.
+
+To change a component's count on such a service, set its `minReplicas` and `maxReplicas` — the encoder takes them too — in the InferenceService or its runtime, as [Component autoscaling](../../concepts/serving/component-autoscaling.md) describes. [Services with an encoder](../../reference/kubectl-ome/scale.md#services-with-an-encoder) covers both refusals.
 
 ### A promote or rollback request is present
 

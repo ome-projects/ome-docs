@@ -17,7 +17,7 @@ Every request needs `--component`, `--replicas`, `--override-autoscaler` and `--
 
 ## What the request changes
 
-The command sets `spec.replicas` through the `/scale` subresource of the component's InferenceReplica, which is named `<service>-<component>`, such as `chat-engine`. It operates only a replica the service projects and owns: [Standalone and fronted replicas](#standalone-and-fronted-replicas) covers the ones it refuses. It leaves the InferenceService, its runtime, its autoscaler and the other components as they are. The component's autoscaler class decides who sets the count next, as [Component autoscaling](../../concepts/serving/component-autoscaling.md) describes:
+The command sets `spec.replicas` through the `/scale` subresource of the component's InferenceReplica, which is named `<service>-<component>`, such as `chat-engine`. It operates only a replica the service projects and owns: [Standalone and fronted replicas](#standalone-and-fronted-replicas) covers the ones it refuses, and [Services with an encoder](#services-with-an-encoder) the services it refuses outright. It leaves the InferenceService, its runtime, its autoscaler and the other components as they are. The component's autoscaler class decides who sets the count next, as [Component autoscaling](../../concepts/serving/component-autoscaling.md) describes:
 
 | Class | What happens to the request |
 | --- | --- |
@@ -63,6 +63,15 @@ inferencereplica.ome.io/llama-pool scaled
 
 Unlike a request through this command, the count isn't transient: OME doesn't write a standalone replica's `spec.replicas`, so it holds until you change it again, or until an `External` autoscaler you point at the subresource does. OME creates no scaler for a standalone replica, and the webhook rejects the `HPA` and `KEDA` autoscaler classes on one.
 
+### Services with an encoder {#services-with-an-encoder}
+
+`scale` and its safety checks know three components: the engine, the decoder and the router. A service that declares [`spec.encoder`](../../concepts/serving/inference-services.md#the-encoder), which is alpha, is out of the command's reach entirely, in every dry-run mode:
+
+- `--component encoder` fails the argument check with `invalid scale arguments; require one service, component engine|decoder|router, positive base-10 --replicas, supported output/dry-run and valid namespace/context/timeout`, before the command reads anything.
+- A request for the engine, the decoder or the router [refuses](#refusals) with `action refused: controller safety evidence is stale or inconsistent`, before the preview. The command projects the service's rollout status — the same report that [`kubectl ome rollout status`](rollout.md#status) prints — and refuses on a service-wide issue other than `EpochUnverifiable` or `AnalysisInconclusive`. On a service with an encoder there always is one: the controller records the encoder under `status.components`, a key the projection doesn't know, so it reports the service-wide issue `StatusMalformed`. An encoder in a `spec.rollout` group adds a `SpecMalformed` issue the same way.
+
+Despite the message, nothing is stale: the refusal holds as long as the service declares the encoder, and running the dry run again doesn't clear it. To run a component of such a service at a different count, set its `minReplicas` and `maxReplicas` — the encoder takes them too — in the InferenceService or its runtime, as [Component autoscaling](../../concepts/serving/component-autoscaling.md) describes. The change is lasting, where a `scale` request is transient.
+
 ## Flags
 
 | Flag | Default | Description |
@@ -97,7 +106,7 @@ A refusal changes nothing and exits `1`. [Troubleshooting](../../guides/scale-an
 
 | Message | Cause |
 | --- | --- |
-| `invalid scale arguments; require one service, component engine\|decoder\|router, positive base-10 --replicas, supported output/dry-run and valid namespace/context/timeout` | A missing or malformed argument: not exactly one InferenceService name, a `--component` other than `engine`, `decoder` or `router`, a `--replicas` that isn't a plain number of 1 or more, `--override-autoscaler` without `--yes`, or an invalid flag value. |
+| `invalid scale arguments; require one service, component engine\|decoder\|router, positive base-10 --replicas, supported output/dry-run and valid namespace/context/timeout` | A missing or malformed argument: not exactly one InferenceService name, a `--component` other than `engine`, `decoder` or `router` — the [encoder](#services-with-an-encoder) included — a `--replicas` that isn't a plain number of 1 or more, `--override-autoscaler` without `--yes`, or an invalid flag value. |
 | `required Kubernetes API request failed; check access and connectivity` | The kubeconfig couldn't be loaded, or a read failed, as when the InferenceService doesn't exist or you can't read it. |
 | `scale namespace is unavailable or invalid` | Without `-n`, the kubeconfig context gives an empty or invalid namespace. |
 | `scale context is unavailable or unsafe` | The kubeconfig context name can't be read or shown safely. |
@@ -109,7 +118,7 @@ A refusal changes nothing and exits `1`. [Troubleshooting](../../guides/scale-an
 | `manual scale source evidence is unavailable or inconsistent` | The command couldn't verify where the component's count and bounds come from. The usual causes: a runtime sync is pending, the live runtime drifted, the alpha `spec.scalingPolicy.mode` isn't `Independent`, or the component doesn't exist or doesn't run on OMENative. |
 | `manual scale requires locally verifiable autoscaling; winning policy resolution is unavailable` | The component gets its autoscaling from an alpha AutoscalerPolicy, through `autoscalerPolicyRef`, with no inline `autoscaler`. |
 | `manual scale requires complete current selected replica and Scale evidence` | The InferenceReplica's count is unset or 0, it doesn't match the component, or it changed between the command's reads. |
-| `action refused: controller safety evidence is stale or inconsistent` | OME hasn't caught up with a recent change, something changed after the preview, or [`kubectl ome rollout status`](rollout.md#status) shows an issue other than `EpochUnverifiable` or `AnalysisInconclusive`. |
+| `action refused: controller safety evidence is stale or inconsistent` | OME hasn't caught up with a recent change, something changed after the preview, or [`kubectl ome rollout status`](rollout.md#status) shows an issue other than `EpochUnverifiable` or `AnalysisInconclusive` — as it always does on a service that declares `spec.encoder`, which `scale` [refuses permanently](#services-with-an-encoder). |
 | `manual scale refused: selected lifecycle, migration or rollout work is active` | A rollout, rollback, migration or Instance operation is in progress on the component, or its rollout group isn't `Stable`. |
 | `manual scale is transient and requires --override-autoscaler --yes for every ownership class` | `--override-autoscaler` is missing. |
 | `manual scale replicas must be positive and within verified bounds and partitions` | `--replicas` is outside the component's [bounds](#bounds), or below the partition of its rolling update. |
