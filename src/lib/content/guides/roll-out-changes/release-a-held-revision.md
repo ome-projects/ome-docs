@@ -179,7 +179,7 @@ If the revision fails again for a reason that counts, OME starts a new block, wi
 
 ## Release by annotation
 
-Without the plugin, set the annotation yourself:
+Without the plugin — or on an InferenceService with an [encoder](../../concepts/serving/inference-services.md#the-encoder), where the command [refuses every release](#the-command-refuses-the-release) — set the annotation yourself. OME answers it on the component's InferenceReplica alone, whether or not the service has an encoder:
 
 ```bash
 kubectl annotate inferencereplica chat-engine -n prod \
@@ -202,7 +202,7 @@ A refusal sends nothing. These are the refusals you're most likely to see:
 
 | Message | What to do |
 | --- | --- |
-| `action refused: no exact current valid Held retry block is releasable` | Pass the full name from [Step 1](#step-1-find-the-held-revision), or its hash, and check that `retry-blocks` shows the block as `HELD`. On a `STATUS_STALE` or `PARENT_STALE` row, wait for OME to catch up, then try again. |
+| `action refused: no exact current valid Held retry block is releasable` | Pass the full name from [Step 1](#step-1-find-the-held-revision), or its hash, and check that `retry-blocks` shows the block as `HELD`. On a `STATUS_STALE` or `PARENT_STALE` row, wait for OME to catch up, then try again. On an InferenceService with an [encoder](../../concepts/serving/inference-services.md#the-encoder), the command refuses every release, whatever `--component` names and however long you wait: [release the revision by annotation](#release-by-annotation) instead. |
 | `action refused: a release-held mailbox is already present; inspect instance retry-blocks` | An earlier request is waiting. See [A release request is already waiting](#a-release-request-is-already-waiting). |
 | `action refused: active runtime is unavailable, inconsistent or unbound` | The command can't confirm the runtime that the InferenceService runs. Check that the runtime exists and is enabled, that you can read it, and that `--ome-namespace` names OME's namespace. |
 | `action refused: controller safety evidence is stale or inconsistent` | The InferenceReplica changed while the command read it. Run the command again. |
