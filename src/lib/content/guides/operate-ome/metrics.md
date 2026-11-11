@@ -347,7 +347,7 @@ When an InferenceService is deleted, the manager drops its series from all of th
 
 ## Watch placement in the controller's metrics
 
-When your InferenceServices set [`spec.placement`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-PlacementSpec), the control-plane cluster's controller manager also reports each service's multi-cluster placement, on the same metrics endpoint. Multi-cluster placement is alpha, still in development and off by default: [Turn on routing](../../concepts/rollouts-and-traffic/traffic-map.md#turn-on-routing) shows the values that make a cluster the control plane. Ten gauges report each service's phase, its winning cluster and each candidate cluster's replicas, so you can dashboard and alert on placement fleet-wide instead of reading each service's `status.placement`. Only the leader records them, so filter by its `pod` label.
+When your InferenceServices set [`spec.placement`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-PlacementSpec), the control-plane cluster's controller manager also reports each service's multi-cluster placement, on the same metrics endpoint. Multi-cluster placement is alpha, still in development and off by default: [Turn on routing](../../concepts/rollouts-and-traffic/traffic-map.md#turn-on-routing) shows the values that make a cluster the control plane. Thirteen gauges report each service's phase, its winning cluster, each candidate cluster's replicas and the capacity its accepted plan asks for, so you can dashboard and alert on placement fleet-wide instead of reading each service's `status.placement`. Only the leader records them, so filter by its `pod` label.
 
 | Metric | Labels | What it shows |
 | --- | --- | --- |
@@ -361,16 +361,31 @@ When your InferenceServices set [`spec.placement`](../../reference/api/ome.v1bet
 | `ome_isvc_placement_policy_info` | `namespace`, `isvc`, `policy`, `mode` | Always 1 per service that sets `spec.placement`, labeled with the declared `policy` and `mode`: what was asked for, next to the candidate series that show where it landed. |
 | `ome_isvc_placement_split_replicas` | `namespace`, `isvc` | The fleet-wide replica total from `spec.placement.split.replicas`, when the field is set. |
 | `ome_isvc_placement_split_max_replicas_per_cluster` | `namespace`, `isvc` | The per-cluster cap of the primary component — the engine, or the decoder when the service declares no engine — for a service with a `split` block, resolved from `spec.placement.split.maxPerCluster`: the component's own key, else `default`, else `0`. `0` means the primary component is uncapped; a cap that names only another component, such as `router`, still reads `0`. |
+| `ome_isvc_placement_total_desired_replicas` | `namespace`, `isvc` | The replicas the accepted [placement plan](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-PlacementPlanStatus) asks for in total: `requestedReplicas` of `status.placement.plan`, counted in replicas of the primary component, including demand not yet assigned to any cluster. |
+| `ome_isvc_placement_candidate_desired_replicas` | `namespace`, `isvc`, `cluster` | The replicas the accepted plan assigns to this cluster: `desiredReplicas` of the candidate's [allocation](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CandidateAllocationStatus). A draining or retired cluster reads `0`, and unassigned demand appears in the total only. |
+| `ome_isvc_placement_capacity_observation_known` | `namespace`, `isvc` | `1` when the accepted plan is current and every cluster that still holds capacity has a current observation, `0` otherwise: one series per service, saying whether the desired-replica series and the ready counts can be trusted right now. |
 
 The gauges follow `status.placement`: the manager records them only after the status write lands, so they never advertise a placement the API server rejected. Before each write, it removes the service's stale series — a re-placement doesn't leave the old winner at 1 next to the new one, a phase change doesn't keep the old phase's series, and a cluster dropped from placement stops reporting. When the service is deleted, or stops being a placement source, all its series go. So `phase` holds one value per service, and `ome_isvc_placement_phase{phase="Failed"} == 1` matches exactly the services whose placement failed for good. During a rolling upgrade of the manager, the legacy phase values can still appear: `Racing` for the service's `Admitting`, and `Placed` for a candidate's `Admitting`.
 
 The two observation series say whether to trust a candidate's ready count. When the control plane's reads of a candidate cluster fail, `ome_isvc_placement_candidate_observation_known` turns `0` and the failing-since series records when they started failing. For the configured [observation grace](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CandidatePlacement) from that time, the ready count stays at the last successful read, so a blip doesn't zero the cluster's traffic weight; a cluster still unreadable after the grace drops to 0 ready replicas. A successful read turns the known series back to `1` and the failing-since series back to `0`.
+
+The three plan series publish only what the saved plan proves. The total reports while the plan in `status.placement.plan` is the current service's — accepted for its UID at its current generation — so after a spec change, the series goes away until a plan for the new generation is accepted, instead of carrying the old target forward. The per-cluster series report only when the saved candidates add up to that plan: every cluster named once, each with an allocation, the assignments summing to the plan's `assignedReplicas` and the total equal to assigned plus unassigned demand. A candidate set that doesn't add up publishes no per-cluster rows at all, never a partial target; an unknown observation, though, erases nothing — through observation grace, a cluster keeps its desired row, so the target doesn't flap with observability.
+
+`ome_isvc_placement_capacity_observation_known` says whether to trust all of that at once. It reads `1` only when the total publishes, the candidate set adds up and every cluster that still holds capacity — a positive desired or current count, or a retained home policy — has a current observation. One unreadable cluster turns it `0` for the whole service, and the per-cluster known series names which one. A cluster fully retired from the plan may stay unknown without turning it `0`, since it owes no capacity; but a current observation that still reports ready replicas on a retired allocation does turn it `0`, because the evidence contradicts the plan. `ome_isvc_placement_capacity_observation_known == 0` flags the services whose desired-versus-ready comparison can't be trusted right now.
 
 As with the deploy series, an InferenceService's namespace is in the label `exported_namespace` in queries. This one lists the placements whose admitted replicas, summed across clusters, are under the floor their `split` block asks for:
 
 ```text
 sum by (exported_namespace, isvc) (ome_isvc_placement_candidate_admitted_replicas)
   < sum by (exported_namespace, isvc) (ome_isvc_placement_split_replicas)
+```
+
+And this one the services short of their accepted plan — every observation current, yet the ready replicas, summed across clusters, under the total the plan asks for:
+
+```text
+(sum by (exported_namespace, isvc) (ome_isvc_placement_candidate_ready_replicas)
+    < sum by (exported_namespace, isvc) (ome_isvc_placement_total_desired_replicas))
+  and sum by (exported_namespace, isvc) (ome_isvc_placement_capacity_observation_known) == 1
 ```
 
 To look into one service that the series flag, read its `status.placement`, or run [`kubectl ome placement`](../../reference/kubectl-ome/placement.md) against the control plane.
