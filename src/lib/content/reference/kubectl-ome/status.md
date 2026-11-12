@@ -47,7 +47,7 @@ The report's sections come in this order. When one looks wrong, run the command 
 In a healthy report, Ready and each component row start with `True / Valid`, every pod is Ready, and no `Issue` row appears. Some rows read `Unknown` or `Unavailable` on a healthy service too:
 
 - Rollout shows `Unknown` on most services, with the rollout state in `reported=`.
-- Traffic shows `Unavailable` when the service declares no traffic behavior.
+- Traffic shows `Unavailable` when the service declares no traffic behavior — though a service with an encoder shows `Invalid` instead, traffic behavior or not: see [Traffic](#traffic).
 - Runtime active and Accelerator show `AutoSelectionNotProbed` when the service names a model but no runtime.
 
 And a service that fronts standalone replicas through `spec.replicaRefs` counts zero pods and has no component rows when healthy: see [Pods and components](#pods-and-components). A service with an [encoder](../../concepts/serving/inference-services.md#the-encoder) shows a `Partial` Pod observation and an `UnsupportedComponent` issue even when healthy, because the CLI reads the encoder's pods but doesn't count them: that section covers it too.
@@ -227,12 +227,14 @@ The traffic state is:
 | `Pending` | The gateway hasn't accepted or rejected the current policy yet. |
 | `Degraded` | The gateway rejected the policy, or OME has no translator for your gateway. |
 | `Partial` | The traffic status is from an older generation, or part of it is missing. |
-| `Invalid` | The traffic status is malformed. |
+| `Invalid` | The traffic status is malformed, or `status.components` has a key the CLI doesn't know, as it always does on a service with an encoder. |
 | `Unavailable` | The traffic status is missing, lacks a `BackendPolicyReady` condition, or is too large to read. It's missing for a service that declares no traffic behavior. |
 
 On Envoy Gateway, Traffic stays `Pending` even after the gateway accepts the policy. To see the gateway's verdict, follow [Read the traffic status](../../concepts/rollouts-and-traffic/traffic-policy.md#read-the-traffic-status). This is a known bug.
 
 In Traffic policy Ready, the freshness is `Current` for the current generation and `Stale` for an older one. It's `Unverifiable` when the condition records no generation or a newer one, and `Unavailable` when the CLI couldn't read it.
+
+The controller also records an [encoder](../../concepts/serving/inference-services.md#the-encoder)'s status, under `status.components.encoder`, a key the CLI doesn't read. So once that entry exists, a service with `spec.encoder` always shows Traffic as `Invalid / Reported parent status`, whether or not it declares traffic behavior. That marks the CLI's limit, not a problem the controller found. [`kubectl ome traffic status`](traffic.md#status-output-fields) shows the issue behind it, `UnknownComponentStatus`, and [Autoscaling](#autoscaling) marks the same limit in its own rows.
 
 ### Runtime and accelerator
 

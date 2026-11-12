@@ -82,7 +82,7 @@ STATE is the first of these that applies:
 
 `Pending` and `Reported` become `Partial` when part of the evidence is missing or cut: UNSUPPORTED is `Present`, a condition is stale, or the report cut a list.
 
-A service that declares no traffic behavior has no `status.traffic`, as [Defaults when you declare nothing](../../concepts/rollouts-and-traffic/traffic-policy.md#defaults-when-you-declare-nothing) describes. For it, STATE is `Unavailable` and ISSUE lists `TrafficStatusMissing`, but the endpoints, canaries and revision weights from the rest of the status still appear.
+A service that declares no traffic behavior has no `status.traffic`, as [Defaults when you declare nothing](../../concepts/rollouts-and-traffic/traffic-policy.md#defaults-when-you-declare-nothing) describes. For it, STATE is `Unavailable` and ISSUE lists `TrafficStatusMissing`, but the endpoints, canaries and revision weights from the rest of the status still appear. On a service with an [encoder](../../concepts/serving/inference-services.md#the-encoder), STATE is `Invalid` instead: the invalid issue `UnknownComponentStatus` always applies there, as the warning after the issue table explains, and ISSUE lists both.
 
 The rows after the summary list what the status holds:
 
@@ -130,8 +130,11 @@ The report keeps at most 4 routes, 16 endpoints and 8 revision weights in each c
 | `CanaryInvalid` | Yes | The canary record doesn't add up: `status.canary` is set without a canary group in the spec, there are more than 3 canary groups, a group's plan is invalid or has more than 20 steps, a rolling-out component has no canary record, or the record contradicts itself or the spec, such as a recorded weight that isn't the current step's `traffic`, or revision weights that don't match it. |
 | `AllocationInvalid` | Yes | A revision weight names a revision of another InferenceService or component, is outside 0 to 100, or a component's weights don't add up to 100, or its stable revision is missing or ambiguous. |
 | `AllocationConflict` | Yes | A component lists the same revision twice. |
-| `UnknownComponentStatus` | Yes | `status.components` has a key other than `engine`, `decoder` and `router`. |
+| `UnknownComponentStatus` | Yes | `status.components` has a key other than `engine`, `decoder` and `router`, as it always does on a service with an encoder, whose entry the CLI doesn't read. |
 | `StatusCombinationInvalid` | Yes | The status lists HTTPRoutes or reports the policy accepted without naming a policy, or names a policy and says OME has no translator. |
+
+!!! warning "A service with an encoder always reports `Invalid`"
+    The CLI knows only the engine, decoder and router. The controller also records an encoder's status, under `status.components.encoder`, a key the CLI rejects. So once that entry exists, a service with `spec.encoder` reports STATE `Invalid` on every read, with an ISSUE row `UnknownComponentStatus` and `-` in COMP, whether or not the service declares traffic behavior. The `Invalid` marks the CLI's limit, not a problem the controller found: the ROUTES, ENDPOINTS, CANARY and WEIGHT rows still report as usual. [`explain`](#explain) renders the same report, and so does the Traffic row of [`kubectl ome status`](status.md#traffic). To read the encoder's entry, run `kubectl get inferenceservice chat -n prod -o yaml` and look under `status.components.encoder`.
 
 `-o json` and `-o yaml` print a `TrafficStatusReport`. Its `sources` lists the InferenceService the CLI read, with its UID and generation, and `content` holds every value with its `source`. `warnings` lists `PartialData` when the report has an invalid issue or partial evidence, `StaleEvidence` when a condition is stale, and `Truncated` when the report cut a list. It's empty when none applies. The tables don't show warnings.
 
@@ -250,6 +253,8 @@ SUPPORT is the first of these that applies:
 | `Rejected` | BackendPolicyReady is `False`: the gateway rejected the policy, or OME has no translator for your gateway. |
 
 REALIZE is `Invalid` when the status has one of the issues `RouteInvalid`, `EndpointInvalid`, `CanaryInvalid`, `AllocationInvalid`, `AllocationConflict` and `UnknownComponentStatus`. Otherwise it's `Unavailable` when the status lists no routes, endpoints, revision weights or canaries, `Partial` when the report cut a list, and `Reported` when it lists some.
+
+On a service with an encoder, the `status` report always carries `UnknownComponentStatus`, so every `explain` reads the same way: REALIZE is `Invalid`, SUMMARY is `Invalid` — even when the service declares no traffic behavior, where `NoIntent` would otherwise apply — and ISSUE lists `ReportedEvidenceInvalid`. That's the CLI's limit, not a disagreement it found between the spec and the status: the warning in [`status`'s output fields](#status-output-fields) covers it.
 
 The checks compare the declared behavior with the status, not with requests:
 
