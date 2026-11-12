@@ -328,8 +328,9 @@ These come after it reads the cluster, and exit `1`:
 
 `start` also refuses a target that's being deleted, has an unsafe identity or is too large to check safely. It refuses one that takes part in multi-cluster placement too, which is alpha, still in development, and off by default. [Target checks](guarded-actions.md#target-checks) lists these messages.
 
-`migration precondition conflicts or is stale; inspect migration status and retry explicitly` means the state of the service doesn't allow the migration now, and the command exits `3`. The causes, the most likely first:
+`migration precondition conflicts or is stale; inspect migration status and retry explicitly` means the state of the service doesn't allow the migration now, and the command exits `3`. The causes — first the one that never clears, then the rest, the most likely first:
 
+- The service declares `spec.encoder`. This cause never clears, whatever component you name: the paragraph after this list explains it, and the hand-written request that still works.
 - The service is paused with `ome.io/rollout-paused`, or its InferenceReplica is paused. See [`kubectl ome rollout`](rollout.md#pause-and-resume).
 - The service has the `ome.io/rollout-promote` or `ome.io/rollout-rollback` annotation. The rollback annotation stays after a rollback until a different target revision appears, as [`promote` and `rollback`](rollout.md#promote-and-rollback) describes.
 - The Instance doesn't exist, isn't `Ready`, has an operation in progress, or a rollout is moving it to a new revision. [`kubectl ome instance`](instance.md) shows its state.
@@ -343,6 +344,8 @@ These come after it reads the cluster, and exit `1`:
 - A hint names the node the CLI took as the source.
 - With `--request-id`, the request's annotation isn't on the service, or its values differ from your flags.
 - The InferenceReplica, the Instance's pods or its ControllerRevision changed after the CLI first read them.
+
+The refusal is permanent on a service that declares [`spec.encoder`](../../concepts/serving/inference-services.md#the-encoder). Such a service always projects an encoder InferenceReplica, since an encoder requires OMENative on every component, and `start` checks every InferenceReplica that claims the service with the evidence that [Instance status decoding](guarded-actions.md#instance-status-decoding) describes, which knows the engine, the decoder and the router. The encoder's replica claims the service like the others, as [Which replicas `status` and `history` read](#which-replicas-status-and-history-read) explains, and always fails the component check, so `start` refuses the engine, the decoder and the router alike, on every run: in every `--dry-run` mode, on a `--request-id` lookup, and however long you wait. Nothing is stale, and the message's advice to retry never resolves it. OME itself still migrates and relocates the service's Instances like any other's, so to move the Instance, [write the migration request annotation yourself](../../concepts/omenative/migration-and-transient-scale.md#migration-requests): OME consumes a hand-written request like the command's, and its intake never reads the sibling components' InferenceReplicas. You give up the checks `start` runs first and its preview, and the request UUID in the annotation's key is yours to generate. Follow the request with [`status`](#status) and `--component`, which skips the encoder's replica and raises no issue.
 
 `guarded migration rejected; inspect migration status using preview UUID` means the InferenceService changed after the CLI read it, often through a status update. Nothing changed, and the command exits `3`. Run it again: it reads the service again, and generates a new request ID.
 
