@@ -371,7 +371,7 @@ OME records an event on the InferenceService when a group enters these phases �
 | `CoordinationGroupShifting` | Normal | The group enters `Shifting`. |
 | `CoordinationGroupCompleted` | Normal | The group returns to `Idle`. |
 
-Each message is the group and its status message, as in `coordination group 0 surging: creating new-revision pods`. Entering `Failed` records the `CoordinationGroupFailed` Warning that [Choose a progression](#choose-a-progression) describes; entering `Waiting`, `ScalingDown`, `Staged` or `Paused` records nothing. A group first observed already in one of these phases records that event; one first observed at rest records nothing. A sequence's base phase returns to `Idle` after each member, so `CoordinationGroupSurging` and `CoordinationGroupCompleted` fire once per member.
+Each message is the group and its status message, as in `coordination group 0 surging: creating new-revision pods`. Entering `Failed` records the `CoordinationGroupFailed` Warning that [Choose a progression](#choose-a-progression) describes; entering `Waiting`, `ScalingDown`, `Staged` or `Paused` records nothing. A group first observed already in one of these phases records that event; one first observed at rest records nothing. In a sequence, `CoordinationGroupSurging` fires once per member. `CoordinationGroupCompleted` fires when the base phase returns to `Idle`: between members while the sequence waits — out a [`soak`](#roll-components-one-at-a-time), or for a change to the next member — and when the sequence finishes. With no wait, the base phase moves straight from a finished member to the next member's `Surging`, with no `CoordinationGroupCompleted` between them.
 
 ## What admission rejects
 
