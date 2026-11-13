@@ -233,7 +233,9 @@ The lock files are empty, and hold no lock once their operation ends. Deleting a
 
 ### TensorRT-LLM models
 
-For an `oci://` model with `modelFormat.name: tensorrtllm`, the agent downloads only the objects built for its node's GPU, whose names contain `/{gpu}/`, such as `/H100/`. It finds the GPU name by looking up the node's `node.kubernetes.io/instance-type` label in the ConfigMap `model-agent-config-map`, and uses an unlisted instance type as it is. When no object matches, the model fails on the node.
+For an `oci://` model with `modelFormat.name: tensorrtllm` whose type is `Serving` — the default — the agent downloads only the objects built for its node's GPU, whose names contain `/{gpu}/`, such as `/H100/`. It finds the GPU name by looking up the node's `node.kubernetes.io/instance-type` label in the ConfigMap `model-agent-config-map`, and uses an unlisted instance type as it is. When no object matches, the model fails on the node.
+
+The type is `Serving` unless `additionalMetadata.type` in the model's spec sets another value, and the agent filters only when it's exactly `Serving`. With any other value, such as `additionalMetadata.type: Base`, there's no filter: every node the model selects downloads every object under the URI's prefix — the builds for all GPUs — and the model can't fail with `no suitable objects found for shape`, even when no object matches its node's GPU. So leave `additionalMetadata.type` unset on a TensorRT-LLM model that should download only its node's objects. [Sharing](shared-hf-artifacts.md#how-sharing-works) reads the type the same way: only a serving TensorRT-LLM model keeps a copy of its own instead of sharing a Hugging Face snapshot.
 
 Since v1.3, `modelAgent.instanceTypeMap` doesn't change the ConfigMap, and the map lacks `BM.GPU.B300.8`, so a model with objects under `/B300/` fails on B300 nodes. This is a known bug. Edit the ConfigMap's `instance-type-map` key instead, and run `kubectl rollout restart daemonset/ome-model-agent-daemonset -n ome`. After each `helm upgrade`, check the key, and do both again if your entry is gone. On v1.2.2, add the instance type to `modelAgent.instanceTypeMap`.
 
