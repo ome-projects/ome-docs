@@ -254,7 +254,12 @@ By default every run re-copies everything. On OCI targets, `target_artifact_reus
 - `.ome-artifact-complete` — written after every file has uploaded.
 - `.ome-artifact-upload.lock` — held while a run uploads.
 
-With reuse on, a run first inspects the target. When the completion marker and at least one weight object are present, it skips the copy and succeeds. Otherwise it creates the lock — atomically, so only one run can hold it — deletes any old completion marker, copies, writes the marker, and releases the lock. A run that finds another run's lock polls the target every 30 seconds until the marker appears (it skips and succeeds), the lock disappears (it acquires), or the lock's age passes `artifact_upload_lock_timeout` (it deletes the stale lock and acquires). When none of that happens within `artifact_upload_lock_timeout` of the run's start, the run fails with `timed out waiting for target artifact completion marker`. Neither sentinel is ever copied as model content when the target later serves as a source.
+With reuse on, a run first inspects the target. When the completion marker and at least one weight object are present, it skips the copy and succeeds. Otherwise it creates the lock — atomically, so only one run can hold it — deletes any old completion marker, copies, writes the marker, and releases the lock. A run that finds another run's lock polls the target every 30 seconds until the marker appears (it skips and succeeds), the lock disappears (it acquires), or the lock's age passes `artifact_upload_lock_timeout` (it deletes the stale lock and acquires). When none of that happens within `artifact_upload_lock_timeout` of the run's start, the run fails with `timed out waiting for target artifact completion marker`.
+
+A reuse-on run leaves its completion marker in the bucket: an ordinary object next to the weights, there until something deletes it. Whether the sentinels stay behind the scenes depends on what later reads the prefix:
+
+- A replication run that reads the prefix as its `oci://` source skips both sentinels: it never copies them to its target, and they don't count toward its size check.
+- The [model agent](model-agent.md) skips them only for an `oci://` model that [mirrors a Hugging Face snapshot](shared-hf-artifacts.md#share-oci-mirrors-of-hugging-face-snapshots). A plain `oci://` BaseModel or ClusterBaseModel downloads every object under the prefix, so the marker lands as a `.ome-artifact-complete` file at the top of the model's `path` on every node that downloads it — and the upload lock lands there too, when one is in the bucket at download time. That's expected. To keep the marker out of the nodes' copies, delete the marker object from the bucket — the next reuse-on run then re-copies everything before it writes a new one — or, when the prefix really mirrors a snapshot, use the mirror annotations.
 
 A killed attempt leaves its lock behind. Set `artifact_upload_lock_owner_id` so that retries of the same replication adopt that leftover lock instead of waiting for it to go stale:
 
@@ -324,7 +329,7 @@ The copied weights stay in the bucket. To remove them too, delete the objects un
 
 ## Next steps
 
-- [Base models](../../concepts/models/base-models.md): point a BaseModel or ClusterBaseModel at the copied weights with an `oci://` or `pvc://` storage URI.
+- [Base models](../../concepts/models/base-models.md): point a BaseModel or ClusterBaseModel at the copied weights with an `oci://` or `pvc://` storage URI. A plain `oci://` model downloads a reuse-on run's sentinels along with the weights: see [Idempotent reruns](#idempotent-reruns-artifact-reuse-and-the-upload-lock).
 - [Serve models from a PVC](../deploy-models/serve-models-from-pvc.md): serve the weights that a replication put on a claim.
 - [Run the model agent](model-agent.md): the DaemonSet that downloads models onto nodes for serving.
 - [Share Hugging Face artifacts](shared-hf-artifacts.md): share one downloaded snapshot per node instead of copying between storage systems.
