@@ -32,6 +32,8 @@ Both settings take whole seconds from 0 to 99999. The routes of `qwen3-0-6b` tak
 | `qwen3-0-6b-router` | `spec.router.timeoutSeconds`, with a router |
 | `qwen3-0-6b-decoder` | `spec.decoder.timeoutSeconds`, with a decoder |
 
+A declared [encoder](../../concepts/serving/inference-services.md#the-encoder) adds no route to the table: it backs [no HTTPRoute](../../concepts/rollouts-and-traffic/ingress.md#routes), so there's nothing to carry a timeout. The schema accepts `spec.encoder.timeoutSeconds`, like every component's, but setting it changes nothing: OME reads no encoder timeout, and no webhook, event or condition flags the unused field. The gateway still counts the whole request against its route's timeout, the time the engine spends waiting on the encoder included.
+
 `0` turns the timeout off, while leaving both settings unset gives the gateway's default. The `ome-resources` chart sets `defaultRouteTimeoutSeconds` to `0`, so after a Helm install, the timeout is off unless a component sets its own. The ConfigMap in the kustomize manifests leaves the setting out, so the gateway's default applies.
 
 Turn the timeout off for long generations and streamed responses whose length you can't predict, or keep a limit longer than your longest request. With `0`, OME writes `0s` on the route, which Gateway API asks implementations to treat as no timeout, or as the longest one they support.
