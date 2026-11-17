@@ -79,7 +79,7 @@ An Instance's phase says what it's doing. In `Creating`, `Updating`, `Migrating`
 | `Updating` | OME is moving the Instance to a new revision, as its [update strategy](../architecture/omenative-update-strategies.md) says. | `Ready` on the new revision, or `Failed` |
 | `Restarting` | With an operation: OME is recreating all the pods at the next incarnation, after a crash loop or, under `RecreateInstanceOnPodRestart`, when a pod restarts, fails or goes missing. See [Instance restart policy](instance-restart-policy.md). With none: a `Ready` Instance's pods stopped serving, and they're coming back without OME's help: see [The phase follows the pods](#the-phase-follows-the-pods). | `Ready`, or `Failed` |
 | `Migrating` | The Instance keeps serving while its replacement starts on other nodes. See [Migration and transient scale](migration-and-transient-scale.md). | Removed once the replacement is `Ready`. If the migration fails, `Ready`, or `Failed` when its pods aren't all ready. |
-| `Pending` | A `Ready` Instance lost all its pods. OME uses this phase only under the `None` restart policy, the default for single-pod Instances. | `Creating` |
+| `Pending` | A `Ready` Instance lost all its pods: see [Demotion to Pending](#demotion-to-pending). Under `RecreateInstanceOnPodRestart`, an Instance rests here only during a `freeze` pause. | `Creating` or, under `RecreateInstanceOnPodRestart`, `Restarting` |
 | `Failed` | An operation on the Instance failed: see [When an Instance fails](#when-an-instance-fails). | `Creating`, `Ready` or `Updating`: see [What OME does with a failed Instance](#what-ome-does-with-a-failed-instance). |
 | `Deleting` | The component is scaling down, and OME is draining and deleting the pods. | Removed once its pods are gone |
 
@@ -89,10 +89,31 @@ A `Deleting` Instance whose drain runs past its deadline doesn't fail. OME sets 
 
 OME reads the published phase of a `Ready` Instance, and of one whose update failed, against the pods of the same pass, so the phase never contradicts the pod counts beside it — in both directions:
 
-- **`Restarting`, with no operation.** A `Ready` Instance with nothing in flight shows `Restarting` when it still has pods but they stop serving as a set: fewer than its desired number of pods are live, or a live pod is short of the bar the Instance passed to enter `Ready` — every container ready, with the `ome.io/serving` gate `True`. The set is down, and the kubelet or the [restart policy](instance-restart-policy.md) is bringing it back, so there's nothing to retry or reset. The Instance keeps its `runningRevision` and `readySince`, and shows `Ready` again on its own once the set serves — as soon as every pod's containers are ready with the gate `True`, even before the kubelet folds the gate into the pods' `Ready` conditions. A multi-pod Instance reads as its whole set: one crashed worker is enough, even while the leader keeps serving. With no pods left at all, the Instance shows `Pending` instead, as the table says.
+- **`Restarting`, with no operation.** A `Ready` Instance with nothing in flight shows `Restarting` when it still has pods but they stop serving as a set: fewer than its desired number of pods are live, or a live pod is short of the bar the Instance passed to enter `Ready` — every container ready, with the `ome.io/serving` gate `True`. The set is down, and the kubelet or the [restart policy](instance-restart-policy.md) is bringing it back, so there's nothing to retry or reset. The Instance keeps its `runningRevision` and `readySince`, and shows `Ready` again on its own once the set serves — as soon as every pod's containers are ready with the gate `True`, even before the kubelet folds the gate into the pods' `Ready` conditions. A multi-pod Instance reads as its whole set: one crashed worker is enough, even while the leader keeps serving. With no pods left at all, the Instance shows `Pending` instead: see [Demotion to Pending](#demotion-to-pending).
 - **`Ready`, after a failed update.** An Instance whose update to a new revision failed shows `Ready` while the pods of the revision it runs all keep serving: the replacement failed, the Instance didn't. Only the pods on its own revision are read, so a crash-looping replacement beside them changes nothing. The failed attempt stays on the row — `lastFailure`, the `targetRevision` it was for and the [retry backoff](#what-ome-does-with-a-failed-instance) — and the source of a failed multi-pod surge shows `Ready` this way with its `Update` operation still recorded while OME removes the replacement. The Instance shows `Failed` again once the pods it runs stop serving.
 
 These phases describe the pods; they change nothing about what OME does next. The restart policy, the retry backoff and a revision hold act as if the phase hadn't moved, and while a rollout is stuck on the failure, `lastFailure` and the `RolloutStalled` condition keep it visible. The InferenceReplica's `Ready` condition reads the phases as published, so a failed update whose old pods keep serving doesn't set it `False` with `InstanceFailed`.
+
+### Demotion to Pending
+
+A `Ready` Instance whose pods are all gone can't keep claiming `Ready`, so OME writes it `Pending`. Only the phase changes: the Instance keeps its counters, its revisions and its [incarnation](#incarnation), and the running revision it keeps is the one the rebuild uses. An Instance with an [operation](#operations) in flight is never demoted: the operation owns its phase. The [restart policy](instance-restart-policy.md) decides what brings the Instance back:
+
+- Under `None`, the default for single-pod Instances, an Instance that loses all its pods shows `Pending`, and the next create rebuilds its pods. While the rollout is [paused](../../guides/roll-out-changes/pause-and-resume-a-rollout.md#what-a-pause-holds), at either depth, no create starts, so the Instance stays `Pending` until you resume.
+- Under `RecreateInstanceOnPodRestart`, the loss is the restart pass's to repair, so the Instance shows `Restarting`, not `Pending` — during a plain pause too, since repairs go on at `true`. Only a `freeze` pause suspends repairs, so under one the Instance is demoted and waits. Once you lower the pause to `true` or resume, the restart pass reads the demoted Instance as it reads a `Ready` one and rebuilds it at the revision it kept. The rebuild recovers lost capacity, so it doesn't wait for the update strategy's `maxUnavailable`.
+
+While nothing is paused, the pass that rebuilds the Instance acts on the loss right away, and no event marks the transition. A pause holds that pass, so there OME proves the loss and announces it: it screens the Instance's pods on its cache and confirms against the API server — cache lag can never demote an Instance whose pods still run — and records one `InstanceDemoted` warning event on the InferenceService. A terminating pod still backs its Instance: it leaves on its own, so the demotion waits until the loss is settled. For the example's Instance 0, whose pod a node drain deleted during a pause:
+
+```bash
+kubectl get events -n qwen3-0-6b --field-selector reason=InstanceDemoted \
+  -o custom-columns=TYPE:.type,MESSAGE:.message
+```
+
+```output
+TYPE      MESSAGE
+Warning   Instance 0 (component=engine) demoted Ready→Pending: no live pods back the Ready phase
+```
+
+A pod in a terminal phase backs nothing, though it still exists: the kubelet leaves a pod it evicts for node pressure in `Failed`, and such a pod never goes away on its own. The Instance is demoted over it, and the reason names it, with the phase and the reason the kubelet recorded: `no live pods back the Ready phase; terminal pod qwen3-0-6b-engine-0-default-0 (Failed/Evicted) still hold the Instance's pod names`. The rebuild deletes those pods before it creates its own.
 
 ## Readiness and availability
 
