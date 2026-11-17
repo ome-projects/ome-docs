@@ -785,10 +785,9 @@ absent limit as unbounded.
 Borrowing is cluster-local, so setting it turns nominal from a ceiling
 into a floor plus overage, and the relaxed ceiling is reported in status.
 
-WARNING: overage is not currently reclaimable. This plane sets no
-preemption policy, so a borrower holds what it took until its own work
-finishes -- a leaf that bursts can leave a sibling waiting for the share
-that sibling was guaranteed. Leaves only.
+An owner&#39;s preemption.reclaimWithinCohort policy controls whether it can
+evict borrowers to recover its share. Without reclamation, an owner may
+wait until borrowed workloads finish. Leaves only.
 
 </td></tr>
 <tr><td><code>lendingLimit</code></td>
@@ -1623,6 +1622,38 @@ Latency metrics
 </tbody>
 </table>
 
+### `AcceleratorQuotaBorrowWithinCohort` {#ome-io-v1beta1-AcceleratorQuotaBorrowWithinCohort}
+
+Used by [`AcceleratorQuotaPreemption`](#ome-io-v1beta1-AcceleratorQuotaPreemption).
+
+AcceleratorQuotaBorrowWithinCohort configures preemption when an incoming
+workload needs borrowed quota rather than its queue&#39;s own entitlement.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>policy</code></td>
+<td><a href="#ome-io-v1beta1-AcceleratorQuotaPreemptionPolicy"><code>AcceleratorQuotaPreemptionPolicy</code></a></td>
+<td>
+
+Policy permits eviction of lower-priority borrowers when LowerPriority.
+Unset keeps Kueue&#39;s Never default.
+
+Allowed values: `Never`, `LowerPriority`.
+
+</td></tr>
+<tr><td><code>maxPriorityThreshold</code></td>
+<td><code>int32</code></td>
+<td>
+
+MaxPriorityThreshold limits borrowing-driven preemption to workloads whose
+priority is at most this value. It has no effect when Policy is Never.
+Unset adds no threshold beyond the policy&#39;s priority comparison.
+
+</td></tr>
+</tbody>
+</table>
+
 ### `AcceleratorQuotaClusterStatus` {#ome-io-v1beta1-AcceleratorQuotaClusterStatus}
 
 Used by [`AcceleratorQuotaStatus`](#ome-io-v1beta1-AcceleratorQuotaStatus).
@@ -1784,6 +1815,63 @@ Maximum length: `253`. Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z
 </tbody>
 </table>
 
+### `AcceleratorQuotaPreemption` {#ome-io-v1beta1-AcceleratorQuotaPreemption}
+
+Used by [`AcceleratorQuotaSpec`](#ome-io-v1beta1-AcceleratorQuotaSpec).
+
+AcceleratorQuotaPreemption configures Kueue preemption for one ClusterQueue.
+These policies authorize evictions for incoming workloads in this queue.
+They do not protect its running workloads from another queue&#39;s reclamation.
+
+
+Validation: borrowWithinCohort.policy LowerPriority requires reclaimWithinCohort Any or LowerPriority.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>reclaimWithinCohort</code></td>
+<td><a href="#ome-io-v1beta1-AcceleratorQuotaPreemptionPolicy"><code>AcceleratorQuotaPreemptionPolicy</code></a></td>
+<td>
+
+ReclaimWithinCohort permits eviction of eligible borrowers to recover
+this queue&#39;s entitlement. Any ignores the selected workload&#39;s priority;
+LowerPriority requires a lower-priority workload. Unset keeps Kueue&#39;s Never default.
+
+Allowed values: `Never`, `LowerPriority`, `Any`.
+
+</td></tr>
+<tr><td><code>withinClusterQueue</code></td>
+<td><a href="#ome-io-v1beta1-AcceleratorQuotaPreemptionPolicy"><code>AcceleratorQuotaPreemptionPolicy</code></a></td>
+<td>
+
+WithinClusterQueue permits eviction inside this queue. LowerPriority
+requires a lower-priority workload; LowerOrNewerEqualPriority also permits
+newer equal-priority workloads. Unset keeps Kueue&#39;s Never default.
+
+Allowed values: `Never`, `LowerPriority`, `LowerOrNewerEqualPriority`.
+
+</td></tr>
+<tr><td><code>borrowWithinCohort</code></td>
+<td><a href="#ome-io-v1beta1-AcceleratorQuotaBorrowWithinCohort"><code>AcceleratorQuotaBorrowWithinCohort</code></a></td>
+<td>
+
+BorrowWithinCohort permits eviction to obtain borrowed quota. Ordinary
+borrowing of idle quota does not require this. Kueue does not support
+borrowing-driven preemption with Fair Sharing enabled.
+
+</td></tr>
+</tbody>
+</table>
+
+### `AcceleratorQuotaPreemptionPolicy` {#ome-io-v1beta1-AcceleratorQuotaPreemptionPolicy}
+
+Used by [`AcceleratorQuotaBorrowWithinCohort`](#ome-io-v1beta1-AcceleratorQuotaBorrowWithinCohort), [`AcceleratorQuotaPreemption`](#ome-io-v1beta1-AcceleratorQuotaPreemption).
+
+AcceleratorQuotaPreemptionPolicy selects which workloads a pending workload
+may preempt. Each field accepts only the policies meaningful for that scope.
+
+Underlying type: `string`.
+
 ### `AcceleratorQuotaRole` {#ome-io-v1beta1-AcceleratorQuotaRole}
 
 Used by [`AcceleratorQuotaSpec`](#ome-io-v1beta1-AcceleratorQuotaSpec).
@@ -1814,6 +1902,8 @@ variant, so they are convenience, never the durable tier.
 Validation: a ClusterQueue node must set parentRef; only the reserved root node is parent-less.
 
 Validation: a Cohort node must not set priorityTier or distribution; no workload binds to a grouping.
+
+Validation: only a ClusterQueue node may set preemption.
 
 Validation: a Cohort node&#39;s budgets carry only resourceName, resourceFlavor, and nominal.
 
@@ -1857,6 +1947,15 @@ OME references the class and does not create it. Capped at
 AcceleratorQuotaMaxNameLength because it is stamped into a label value.
 
 Maximum length: `63`. Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`.
+
+</td></tr>
+<tr><td><code>preemption</code></td>
+<td><a href="#ome-io-v1beta1-AcceleratorQuotaPreemption"><code>AcceleratorQuotaPreemption</code></a></td>
+<td>
+
+Preemption controls when this leaf&#39;s pending workloads may evict other
+workloads. The settings apply to its ClusterQueue on every member.
+Unset fields keep Kueue&#39;s defaults, which disable preemption.
 
 </td></tr>
 <tr><td><code>distribution</code></td>
@@ -2907,9 +3006,9 @@ CanaryFailure is why and when a canary parked.
 <td><a href="#ome-io-v1beta1-CanaryFailureReason"><code>CanaryFailureReason</code></a></td>
 <td>
 
-Reason names the gate that gave up.
+Reason names the gate that gave up, or the write that stopped the unit.
 
-Allowed values: `CapacityTimeout`, `AnalysisStalled`, `StableRevisionMissing`.
+Allowed values: `CapacityTimeout`, `AnalysisStalled`, `StableRevisionMissing`, `PhaseWritten`.
 
 </td></tr>
 <tr><td><code>time</code></td>
@@ -2997,7 +3096,9 @@ Pause.Duration from this timestamp.
 
 ObservedTrafficWeight is the external traffic weight currently programmed
 for the canary revision (mirrors the active step&#39;s TrafficWeight once
-applied).
+applied). It is the weight written to the Component&#39;s traffic targets;
+whether the gateway has accepted the route carrying it is reported by
+the IngressReady condition.
 
 </td></tr>
 <tr><td><code>promotedThrough</code></td>
@@ -3094,6 +3195,22 @@ CapacityWaitSince is when the current step&#39;s capacity gate became unmet.
 The ready timeout is measured from here and never from the step&#39;s soak
 anchor, so a long soak cannot spend the capacity budget and a capacity
 dip cannot restart the soak. Cleared once the step&#39;s capacity is met.
+
+</td></tr>
+<tr><td><code>stableSideShortSince</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta"><code>Time</code></a></td>
+<td>
+
+StableSideShortSince is when the executor first read the stable side
+short under the split the current step serves: a member runs fewer
+Ready Instances on its stable revision than the step keeps there, at
+least one, so the canary revision carries a larger share of the Ready
+capacity than the split&#39;s weight. The event CanaryStableSideShort is
+recorded on the pass that sets it, not on every pass it stands.
+Cleared when every member&#39;s stable side is whole again, when no Ready
+Instance is left on a stable side (the split itself moves then), and
+when the split moves on: a step advance, the cutover, a hold, a stop,
+a rollback, a start toward a new target.
 
 </td></tr>
 <tr><td><code>failed</code></td>
@@ -3220,7 +3337,7 @@ Minimum: `0`.
 <td>
 
 MaxWeight is the primary component&#39;s summed max ratio. It is set only
-when the source uses the *Replicas ratio form.
+when the affinity terms set weights.
 
 Minimum: `0`.
 
@@ -3657,12 +3774,11 @@ Validation: a cluster affinity term must contain a requirement.
 <td><a href="#ome-io-v1beta1-ClusterAffinityWeights"><code>ClusterAffinityWeights</code></a></td>
 <td>
 
-Weights sets each component&#39;s replica weight on the clusters this term
-matches, and is permitted only for static Split. If any term gives a
-component a weight, the weights of matching terms add and a term that
-gives none contributes one. Weights are ratios, so they have no upper bound.
-With no weights on any term, every matched cluster weighs one and routers
-are divided, as a default weight of one on every term would.
+Weights sets each component&#39;s replica ratio on the clusters this term
+matches, and is permitted only for static Split without a split block.
+If any term gives a component a ratio, the ratios of matching terms add
+and a term that gives none contributes {min: 1, max: 1}. With no weights
+on any term, every matched cluster weighs one and routers are divided.
 
 </td></tr>
 <tr><td><code>matchExpressions</code></td>
@@ -3691,85 +3807,46 @@ Maximum items: `64`.
 
 Used by [`ClusterAffinityTerm`](#ome-io-v1beta1-ClusterAffinityTerm).
 
-ClusterAffinityWeights holds one term&#39;s weight per component. The engine
-takes engine, then default. The decoder takes decoder, then default, then
-the engine&#39;s weight. The router takes router, then default, then the
-engine&#39;s weight. Routers are divided across clusters unless the terms set
-weights that name only the engine or decoder; then every cluster runs the
-full router policy. The integer keys and the *Replicas ratio keys are two
-forms of the same weights; one placement uses only one form.
+ClusterAffinityWeights holds one term&#39;s replica ratio per component. The
+engine takes engine, then default. The decoder takes decoder, then default,
+then the engine&#39;s ratio. The router takes router, then default, then the
+engine&#39;s ratio. Routers are divided across clusters unless the terms name
+only the engine or decoder; then every cluster runs the full router policy.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
 <tr><td><code>default</code></td>
-<td><code>int32</code></td>
+<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
 <td>
 
-Default is the weight of every component this term does not name.
+Default is the ratio of every component this term does not name.
 Setting it on any term divides router.minReplicas across the clusters,
 as router does.
 
-Minimum: `1`.
-
 </td></tr>
 <tr><td><code>engine</code></td>
-<td><code>int32</code></td>
+<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
 <td>
 
-Engine is the engine&#39;s weight.
-
-Minimum: `1`.
+Engine is the engine&#39;s ratio.
 
 </td></tr>
 <tr><td><code>decoder</code></td>
-<td><code>int32</code></td>
+<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
 <td>
 
-Decoder is the decoder&#39;s weight.
-
-Minimum: `1`.
+Decoder is the decoder&#39;s ratio.
 
 </td></tr>
 <tr><td><code>router</code></td>
-<td><code>int32</code></td>
+<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
 <td>
 
-Router is the router&#39;s weight. Setting it or default on any term divides
+Router is the router&#39;s ratio. Setting it or default on any term divides
 router.minReplicas across the clusters, as setting no weights does;
-weights that name only the engine or decoder keep the full router policy
+ratios that name only the engine or decoder keep the full router policy
 on every cluster.
-
-Minimum: `1`.
-
-</td></tr>
-<tr><td><code>defaultReplicas</code></td>
-<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
-<td>
-
-DefaultReplicas is the ratio form of default. It applies to every
-component this term does not name.
-
-</td></tr>
-<tr><td><code>engineReplicas</code></td>
-<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
-<td>
-
-EngineReplicas is the ratio form of engine.
-
-</td></tr>
-<tr><td><code>decoderReplicas</code></td>
-<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
-<td>
-
-DecoderReplicas is the ratio form of decoder.
-
-</td></tr>
-<tr><td><code>routerReplicas</code></td>
-<td><a href="#ome-io-v1beta1-ReplicaRatio"><code>ReplicaRatio</code></a></td>
-<td>
-
-RouterReplicas is the ratio form of router.
 
 </td></tr>
 </tbody>
@@ -3917,7 +3994,7 @@ Minimum: `0`.
 <td>
 
 MaxWeight is the component&#39;s summed max ratio. It is set only when the
-source uses the *Replicas ratio form.
+affinity terms set weights.
 
 Minimum: `0`.
 
@@ -4329,10 +4406,14 @@ partial rollbacks.
 <td>
 
 Since v1.3.
-Traffic reports per-revision traffic weights for this
-Component. Each entry corresponds to one revision currently
-receiving traffic. The HTTPRoute builder reads this to
-emit weighted backendRefs.
+Traffic reports per-revision traffic weights for this Component: one
+entry per revision currently receiving traffic, naming its
+per-revision Service. On the Gateway API HTTPRoutes OME renders, the
+entries are programmed as weighted backendRefs on those Services, so
+these percentages and the weights the gateway applies are one value.
+A Kubernetes Ingress cannot express backend weights, and a route OME
+does not render is programmed by whoever owns it; under those
+providers the entries are the contract that router consumes.
 
 </td></tr>
 <tr><td><code>canary</code></td>
@@ -4392,7 +4473,7 @@ ComponentTrafficTarget describes the percentage of traffic routed to
 one revision of one Component. RevisionName is the per-revision
 Service name produced by OMENative&#39;s coordination layer (e.g.
 `llama-engine-rev-abc123`), which the HTTPRoute builder
-consumes directly as a backend reference.
+consumes directly as a weighted backend reference.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -4637,7 +4718,11 @@ setting this explicitly. Ignored unless TopologySpread is set.
 <td><a href="#ome-io-v1beta1-AcceleratorSelector"><code>AcceleratorSelector</code></a></td>
 <td>
 
-AcceleratorOverride allows overriding the global accelerator selection for this component
+AcceleratorOverride allows overriding the global accelerator selection for this component.
+Each field set here, the class name, the policy or the constraints block,
+replaces the same field of spec.acceleratorSelector; a field left unset is
+read from spec.acceleratorSelector. An empty constraints block clears the
+service&#39;s constraints for this component.
 
 </td></tr>
 </tbody>
@@ -4829,7 +4914,11 @@ TopologySpread is set.
 <td><a href="#ome-io-v1beta1-AcceleratorSelector"><code>AcceleratorSelector</code></a></td>
 <td>
 
-AcceleratorOverride allows overriding the global accelerator selection for this component
+AcceleratorOverride allows overriding the global accelerator selection for this component.
+Each field set here, the class name, the policy or the constraints block,
+replaces the same field of spec.acceleratorSelector; a field left unset is
+read from spec.acceleratorSelector. An empty constraints block clears the
+service&#39;s constraints for this component.
 
 </td></tr>
 </tbody>
@@ -5065,7 +5154,11 @@ setting this explicitly. Ignored unless TopologySpread is set.
 <td><a href="#ome-io-v1beta1-AcceleratorSelector"><code>AcceleratorSelector</code></a></td>
 <td>
 
-AcceleratorOverride allows overriding the global accelerator selection for this component
+AcceleratorOverride allows overriding the global accelerator selection for this component.
+Each field set here, the class name, the policy or the constraints block,
+replaces the same field of spec.acceleratorSelector; a field left unset is
+read from spec.acceleratorSelector. An empty constraints block clears the
+service&#39;s constraints for this component.
 
 </td></tr>
 </tbody>
@@ -5273,6 +5366,17 @@ Current is the follower&#39;s desired count after this pass.
 
 Clamped is true when the follower&#39;s minReplicas or a declared
 maxReplicas moved the target; the Ready condition names the bound.
+
+</td></tr>
+<tr><td><code>released</code></td>
+<td><code>bool</code></td>
+<td>
+
+Released is true for a Component that stopped following and declares
+autoscaler class None: Current is the count it keeps and Target the
+count its minReplicas names. The record ends when that minReplicas is
+edited, an autoscaler takes the count, or a policy names the Component
+again.
 
 </td></tr>
 </tbody>
@@ -6718,6 +6822,13 @@ are in canonical value order: bytewise for phases and revisions, signed
 numeric for incarnations and counts. A member absent from every group of
 an optional column takes that column&#39;s documented default.
 
+The time an Instance became Ready is stored once per Instance either way:
+as an offset in whole seconds from one base time, in readySinceBase,
+readySinceIndexes and readySinceOffsets, or, in a payload without those
+three, as the readySince of the Instance&#39;s entry.
+
+Validation: readySinceBase, readySinceIndexes and readySinceOffsets are present together or not at all.
+
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
 <tbody>
@@ -6831,14 +6942,58 @@ activeOrdinal is 1. Absent means every activeOrdinal is 0.
 Minimum length: `1`. Pattern: `^(0|[1-9][0-9]*)(-(0|[1-9][0-9]*))?(,(0|[1-9][0-9]*)(-(0|[1-9][0-9]*))?)*$`.
 
 </td></tr>
+<tr><td><code>readySinceBase</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta"><code>Time</code></a></td>
+<td>
+
+ReadySinceBase is the earliest readySince among the Instances of
+readySinceIndexes. Each of those Instances became Ready at this time
+plus its value of readySinceOffsets. Present exactly when
+readySinceIndexes and readySinceOffsets are present. A manager whose
+served schema lacks any of the three columns stores each readySince
+in its Instance&#39;s entry instead, and no time is lost. A manager built
+without the three readySince columns reads every Instance as having
+no readySince and removes the columns on its first status write; the
+validation rule accepts that write, so the apiserver cannot refuse
+it. A rollback to such a build keeps the times only by writing every
+object as DenseV1 first, the rule the representation union follows.
+
+</td></tr>
+<tr><td><code>readySinceIndexes</code></td>
+<td><code>string</code></td>
+<td>
+
+ReadySinceIndexes is the index set of the Instances whose readySince
+the three readySince columns carry. When the columns are present, a
+member outside this set has no readySince and no entry carries one.
+A manager built without the three columns removes them on its first
+status write, and no validation rule refuses it; see readySinceBase.
+
+Minimum length: `1`. Pattern: `^(0|[1-9][0-9]*)(-(0|[1-9][0-9]*))?(,(0|[1-9][0-9]*)(-(0|[1-9][0-9]*))?)*$`.
+
+</td></tr>
+<tr><td><code>readySinceOffsets</code></td>
+<td><code>[]int32</code></td>
+<td>
+
+ReadySinceOffsets lists, for the Instances of readySinceIndexes in
+ascending index order, the whole seconds from readySinceBase to the
+time each became Ready. The earliest Instance&#39;s offset is 0. A
+manager built without the three columns removes them on its first
+status write, and no validation rule refuses it; see readySinceBase.
+
+Minimum items: `1`. Minimum per item: `0`.
+
+</td></tr>
 <tr><td><code>entries</code></td>
 <td><a href="#ome-io-v1beta1-InstanceStatusEntry"><code>[]InstanceStatusEntry</code></a></td>
 <td>
 
-Entries carries the per-Instance records that are not grouped:
-conditions, readySince, operation, and lastFailure. At most one entry
-per member, in ascending index order, each carrying at least one of
-those records. A member without an entry has none of them.
+Entries carries the per-Instance records that have no column of their
+own and, in a payload without the readySince columns, each Instance&#39;s
+readySince. At most one entry per member, in ascending index order,
+each carrying at least one of those records. A member without an entry
+has none of them.
 
 Minimum items: `1`.
 
@@ -6922,7 +7077,9 @@ Minimum items: `1`.
 <td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta"><code>Time</code></a></td>
 <td>
 
-ReadySince is the Instance&#39;s readySince.
+ReadySince is the Instance&#39;s readySince in a payload without the
+readySince columns. A payload with those columns carries every
+readySince there, and no entry carries one.
 
 </td></tr>
 <tr><td><code>operation</code></td>
@@ -8617,13 +8774,13 @@ readiness from Pods and does not persist this field.
 <td><code>int32</code></td>
 <td>
 
-ServingPodCount is the number of pods that are BOTH ContainersReady
-AND have serving=True on the controller-managed readiness gate —
-i.e., pods actually in the load balancer rotation. Diverges from
-ReadyPodCount whenever the controller flips the serving gate
-(in-place updates, drain steps, etc.). MaxUnavailable budgets are
-computed against the serving count, not the ready count, so that
-&#34;missing from traffic&#34; reflects reality.
+ServingPodCount is the number of this Instance&#39;s pods whose Ready
+condition is True and whose controller-managed readiness gate reads
+serving=True. On a gang it counts every such pod, workers included,
+although only the leader is routed; it is 0 when no routed pod serves,
+however many workers keep the gate. The rollout gates and budgets read
+an Instance as serving only when this count reaches its pod count, so
+an Instance short one pod is unavailable to them.
 
 </td></tr>
 <tr><td><code>availablePodCount</code></td>
@@ -9300,9 +9457,7 @@ PlacementSpec declares explicit multi-cluster matching and allocation intent.
 
 Validation: replacementTimeout requires Single placement.
 
-Validation: clusterAffinity weights use either default/engine/decoder/router or the *Replicas ratios, not both.
-
-Validation: *Replicas ratios are allowed only in Split and replace spec.placement.split; remove split.
+Validation: clusterAffinity weights are allowed only in Split and replace spec.placement.split; remove split.
 
 <table class="doc-api-fields">
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -9984,7 +10139,11 @@ anchor replicas (rounded up). Components not listed scale independently.
 A follower&#39;s minReplicas is a floor on the count it is given. Its
 maxReplicas, when set, is a ceiling; a follower that sets none has no
 ceiling of its own, and the anchor&#39;s bounds cap its count. The status
-reports a follower as clamped when either bound moved its target.
+reports a follower as clamped when either bound moved its target. A
+follower taken out of the ratios, or every follower when the policy is
+removed, keeps the count it carries: its own autoscaler owns the count
+when it has one; with autoscaler class None the status reports it as
+released and the count stands until its minReplicas is edited.
 
 </td></tr>
 </tbody>
@@ -11279,7 +11438,9 @@ Component&#39;s target changing mid-run is a retarget: the run closes
 <td>
 
 Plan is the effective groups list, frozen for this run. Executors index
-it — never the live spec — while the run is open.
+it — never the live spec — while the run is open; the coordination
+gates read a group&#39;s ratio rule, a rolling group&#39;s budgets and the
+group&#39;s presence from the live spec.
 
 </td></tr>
 </tbody>
@@ -11419,6 +11580,15 @@ RolloutRunRecord is the bounded record of a closed run.
 
 
 </td></tr>
+<tr><td><code>runID</code></td>
+<td><code>string</code></td>
+<td>
+
+RunID is the id the run carried while it was open. The next run folds
+it into its own id, so two runs of one service never share an id even
+when one closes and the next opens within the same second.
+
+</td></tr>
 <tr><td><code>openedAt</code></td>
 <td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta"><code>Time</code></a></td>
 <td>
@@ -11554,10 +11724,11 @@ on their pods and per-revision Services, and is published on each traffic
 target so routing pairs only engine and decoder revisions whose values
 are equal. Empty or unset pairs with anything, so setting or clearing the
 token is upgrade-neutral. Changing it between two non-empty values
-requires engine and decoder to roll as one blueGreen or canary group.
-While the service declares an encoder, whose revisions carry the token
-too, and in the edit that removes it, the value may only stay the same
-or be cleared.
+requires one rollout group listing both engine and decoder (rollingUpdate,
+blueGreen or canary), so the two sides roll together and a pairable pair
+keeps serving through the transition. While the service declares an
+encoder, whose revisions carry the token too, and in the edit that
+removes it, the value may only stay the same or be cleared.
 
 Maximum length: `63`. Pattern: `^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$`.
 
