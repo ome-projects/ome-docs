@@ -20,7 +20,7 @@ OME creates a Service for each component of an [InferenceService](../../concepts
 
 ## How OME names Service ports
 
-For each component that runs pods, OME creates a Service named after the InferenceService and the component. This guide's InferenceService gets `llama-3-1-8b-instruct-engine` and `llama-3-1-8b-instruct-router`. A decoder gets `llama-3-1-8b-instruct-decoder`.
+For each component that runs pods, OME creates a Service named after the InferenceService and the component. This guide's InferenceService gets `llama-3-1-8b-instruct-engine` and `llama-3-1-8b-instruct-router`. A decoder gets `llama-3-1-8b-instruct-decoder`, and an [encoder](../../concepts/serving/inference-services.md#the-encoder) gets `llama-3-1-8b-instruct-encoder`. The encoder is alpha, and only an InferenceService that runs every component on OMENative can have one; its Service gets its ports and their `appProtocol` values the same way as the other components'.
 
 Each Service takes its ports from the first container of the component's pods:
 
@@ -92,7 +92,7 @@ spec:
 
 The InferenceService uses a ClusterBaseModel, the default kind, so it doesn't set `spec.model.kind`. It names the runtime, which sets `autoSelect: false`, so OME never picks it on its own.
 
-`spec.engine`, `spec.decoder` and `spec.router` each take their own `servicePortAppProtocols`, and each map changes only that component's Service. The field is part of [`ComponentExtensionSpec`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-ComponentExtensionSpec).
+`spec.engine`, `spec.decoder`, `spec.encoder` and `spec.router` each take their own `servicePortAppProtocols`, and each map changes only that component's Service. The field is part of [`ComponentExtensionSpec`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-ComponentExtensionSpec), which every component embeds.
 
 You can change the map on a running InferenceService. OME updates the ports of the existing Service in place, so the Service keeps its ClusterIP. When you remove a key, OME clears that port's `appProtocol`, unless the runtime sets one for the port.
 
@@ -123,7 +123,7 @@ A port without an `appProtocol` prints its name alone. The router's Service does
 
 ## Set a default in the ServingRuntime
 
-A ServingRuntime or ClusterServingRuntime takes the same field in `engineConfig`, `decoderConfig` and `routerConfig`, so a runtime author can set the protocol once for every InferenceService that uses the runtime. This part of a runtime marks the engine's `grpc1` port:
+A ServingRuntime or ClusterServingRuntime takes the same field in `engineConfig`, `decoderConfig`, `encoderConfig` and `routerConfig`, so a runtime author can set the protocol once for every InferenceService that uses the runtime. This part of a runtime marks the engine's `grpc1` port:
 
 ```yaml
 spec:
@@ -142,7 +142,7 @@ The runtime's map and the InferenceService's map combine key by key:
 
 - The runtime's map is the base. A key that both set takes the InferenceService's value, and runtime keys that the InferenceService doesn't set still apply.
 - To leave a port unset that the runtime marks, set its key to `""` in the InferenceService.
-- A runtime's map applies only to components that the InferenceService has. For example, `routerConfig.servicePortAppProtocols` applies only when the InferenceService has a `spec.router` section, since OME creates no router without one.
+- A runtime's map applies only to components that the InferenceService has. For example, `routerConfig.servicePortAppProtocols` applies only when the InferenceService has a `spec.router` section, since OME creates no router without one. The same goes for `encoderConfig.servicePortAppProtocols` and `spec.encoder`.
 
 ## Troubleshooting
 
@@ -169,7 +169,7 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E 
 
 Each matching line names the Service and carries the API server's error. OME records no event for it. The API server rejects an `appProtocol` that doesn't follow label key syntax, such as one with a space, so the Service keeps its old ports, and OME retries. For a component that has no Service yet, the log says `Failed to create Service`, and the Service isn't created.
 
-Until you fix the value in the InferenceService or the runtime, each reconcile stops at that Service. OME reconciles the engine, then the decoder, then the router, so it doesn't create or update the components after the failing one, or the Ingress, HTTPRoutes and Service named after the InferenceService.
+Until you fix the value in the InferenceService or the runtime, each reconcile stops at that Service. OME reconciles the engine, then the decoder, then the encoder, then the router, so it doesn't create or update the components after the failing one, or the Ingress, HTTPRoutes and Service named after the InferenceService.
 
 ### The gateway still uses HTTP/1.1
 

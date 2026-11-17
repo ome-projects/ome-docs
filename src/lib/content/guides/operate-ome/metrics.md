@@ -59,7 +59,7 @@ The `ome-control-plane` job reads the same port and path annotations, and adds t
 | [Alfred](../../concepts/scheduling/alfred.md) (alpha) | Its pods in `ome`. | Its ServiceMonitor: see [Alfred metrics and events](../../reference/scheduling/alfred-metrics-and-events.md). |
 | [OME scheduler](../../concepts/scheduling/ome-scheduler.md) (alpha) | Nothing: its metrics need HTTPS and authorization. | Its ServiceMonitor: see [Metrics](ome-scheduler.md#metrics). |
 
-[Servers and metrics](../../reference/operate-ome/controller-manager-flags.md#servers-and-metrics) describes the controller's metrics endpoint. [Controller metrics](../../reference/rollouts/canary-analysis.md#controller-metrics) covers the canary metrics on it, [Watch deploys in the controller's metrics](#watch-deploys-in-the-controllers-metrics) its deploy-latency and status-write series, [Watch rollout groups in the controller's metrics](#watch-rollout-groups-in-the-controllers-metrics) its rollout-group series, and [Watch placement in the controller's metrics](#watch-placement-in-the-controllers-metrics) its multi-cluster placement series.
+[Servers and metrics](../../reference/operate-ome/controller-manager-flags.md#servers-and-metrics) describes the controller's metrics endpoint. [Controller metrics](../../reference/rollouts/canary-analysis.md#controller-metrics) covers the canary metrics on it, [Watch deploys in the controller's metrics](#watch-deploys-in-the-controllers-metrics) its deploy-latency and status-write series, [Watch rollout groups in the controller's metrics](#watch-rollout-groups-in-the-controllers-metrics) its rollout-group series, [Watch placement in the controller's metrics](#watch-placement-in-the-controllers-metrics) its multi-cluster placement series, and [Watch the TrafficMap in the controller's metrics](#watch-the-trafficmap-in-the-controllers-metrics) its saved routing weights.
 
 ## Step 1: Check the targets
 
@@ -389,6 +389,35 @@ And this one the services short of their accepted plan — every observation cur
 ```
 
 To look into one service that the series flag, read its `status.placement`, or run [`kubectl ome placement`](../../reference/kubectl-ome/placement.md) against the control plane.
+
+## Watch the TrafficMap in the controller's metrics
+
+When multi-cluster routing is on — alpha, like placement: [Turn on routing](../../concepts/rollouts-and-traffic/traffic-map.md#turn-on-routing) shows the values — the control-plane cluster's controller manager also reports each cluster's weight and health as saved in each service's [TrafficMap](../../concepts/rollouts-and-traffic/traffic-map.md), on the same metrics endpoint. Two gauges mirror the map's `spec.entries`, so you can dashboard and alert on a cluster losing its traffic share fleet-wide instead of reading each map. Only the leader records them, so filter by its `pod` label.
+
+| Metric | Labels | What it shows |
+| --- | --- | --- |
+| `ome_trafficmap_entry_weight` | `namespace`, `isvc`, `cluster` | The entry's saved `weight`: the cluster's share of the requests, relative to the service's other entries, from 0 through 1,000,000. |
+| `ome_trafficmap_entry_healthy` | `namespace`, `isvc`, `cluster` | The entry's saved `healthy` flag, `1` or `0`: `1` when the cluster can serve and no probe gates it. |
+
+The gauges follow the saved map, the way the placement gauges follow `status.placement`: the routing controller records them only after the TrafficMap write lands, from the spec it persisted, so a failed write can't advertise a routing plan that was never saved. Each write replaces the service's series with the saved entries, so a cluster dropped from the map stops reporting rather than holding its last weight, and a map saved with no entries reports none. All of a service's series go when the InferenceService is deleted, opts out of routing with `spec.routing.enabled: false`, or stops being a placement source.
+
+Saved is not applied. A [publisher](../multi-cluster/publish-a-global-endpoint.md) applies the saved weights verbatim, but these series don't report the weight the gateway applies, or how the gateway sees a cluster's health: whether the publisher wrote the route is the map's [`Published`](../../concepts/rollouts-and-traffic/traffic-map.md#published) condition, and whether the Gateway accepted it is the route's own status.
+
+As with the deploy series, an InferenceService's namespace is in the label `exported_namespace` in queries. This one lists the clusters saved unhealthy right now:
+
+```text
+ome_trafficmap_entry_healthy == 0
+```
+
+And this one each cluster's saved share of its service's requests, to alert on a falling share:
+
+```text
+ome_trafficmap_entry_weight
+  / ignoring(cluster) group_left
+    sum without (cluster) (ome_trafficmap_entry_weight)
+```
+
+A healthy entry can still be saved at weight 0 — a drain, or a placement move — and when every entry is 0 the shares divide by zero: [Why a cluster's weight is zero](../../concepts/rollouts-and-traffic/traffic-map.md#why-a-clusters-weight-is-zero) walks the entry's fields, and the map's [Routable](../../concepts/rollouts-and-traffic/traffic-map.md#routable) condition names the cause for the whole map.
 
 ## Key values
 
