@@ -12253,9 +12253,10 @@ Minimum: `1`.
 
 Template is the fully-rendered pod template for this Runner.
 Labels include ome.io/runner=&lt;name&gt;. The InferenceReplica
-controller stamps OME_RUNNER (leader|worker|default) and,
-for non-leader pods, OME_LEADER_ADDRESS (short-form DNS,
-matching LWS conventions) onto the rendered pod at create.
+controller stamps OME_RUNNER (leader|worker|default) and, for
+pods of a multi-pod Instance, OME_LEADER_ADDRESS (short-form
+DNS of the leader pod&#39;s per-incarnation hostname, matching LWS
+conventions) onto the rendered pod at create.
 
 </td></tr>
 </tbody>
