@@ -506,6 +506,76 @@ kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.multicl
 
 The `multicluster` entry is in [the list that needs a restart](#tune-the-config-cache): the manager reads it once, when it starts, so the upgrade's restart applies the change, and a `kubectl` edit to the ConfigMap needs one. At startup, a manager with multi-cluster on refuses a stated duration that doesn't parse or isn't positive — an empty value isn't an error, the fallback in the table applies — and stops with `invalid multi-cluster configuration`, whose rest names the value and the rule, such as `invalid multi-cluster configuration: placement.statusSafetyRequeue: "10" is not a duration (use forms like "30s", "5m")`: see [Troubleshooting](#the-manager-rollout-doesnt-finish).
 
+## Opt in to capacity-based placement
+
+An InferenceService whose [`spec.placement`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-PlacementSpec) sets `mode: SplitByCapacity` divides its replicas across the matched workload clusters by measured accelerator capacity: what each member's hardware reports say it can hold of this service. The mode is pending until you configure where the control plane reads those reports. Without the configuration, the service never places, and its `PlacementConverged` condition holds at `False` with reason `CapacityUnknown` and the message `capacity placement requires root name and positive freshness, stability, and refresh durations`. Nothing on the InferenceService clears that hold: the opt-in is this control-plane setting. Multi-cluster placement is alpha and off by default, as [Retry a failed member read within a placement pass](#retry-a-failed-member-read-within-a-placement-pass) says.
+
+Two settings under `ome.multicluster.config.placement`, which the chart writes into the `placement` block of the `multicluster` entry of the `inferenceservice-config` ConfigMap, turn the mode on:
+
+| Setting | Chart default | What it does |
+| --- | --- | --- |
+| `memberOperatorNamespace` | `""` | The namespace OME runs in on the workload clusters — one value for the whole fleet, `ome` with the standard install. The control plane reads each member's `inferenceservice-config` ConfigMap and pinned runtime revisions there, to work out what one replica of the service demands on that member. Required for capacity placement. Other placement modes read it only when a member must resolve a pinned runtime or an operator-default replica floor, and hold that resolution while it's empty. |
+| `capacity` | `null` | The opt-in block. `null` keeps `SplitByCapacity` pending, with the hold above. Set, all four of its fields are required — the manager has no default for any of them. |
+
+The four fields of `capacity`:
+
+| Field | What it does |
+| --- | --- |
+| `rootName` | The name of the root [AcceleratorQuota](accelerator-quota.md#how-quotas-work) — `root`, the one name OME accepts for it. The control plane reads the fleet's per-cluster capacity reports from the root on its own cluster, and resolves each member's demand against the member's own local root of the same name. |
+| `maxAge` | How old a member's capacity report may be and still count. A report `maxAge` old or older makes that member's capacity unknown, which holds the whole placement, so keep it well above the quota manager's report interval — about a minute by default: see [Check that capacity reporting is alive](accelerator-quota.md#check-that-capacity-reporting-is-alive). |
+| `stabilityWindow` | How long a changed hardware picture must hold before an existing placement re-plans on it, so hardware that flaps doesn't move replicas back and forth. The first plan doesn't wait, and a manager restart starts a running wait again. |
+| `refreshInterval` | How often a `SplitByCapacity` service re-checks capacity: every pass requeues within this interval, so even a converged placement re-reads the reports on this cadence. It must be shorter than `maxAge`. |
+
+Setting `capacity` also changes what the chart installs on a control plane (`ome.multicluster.enabled: true` and `ome.multicluster.role: control-plane`): the ClusterRole and ClusterRoleBinding `ome-placement-capacity-reader`, which grant the manager's ServiceAccount read-only access — `get`, `list` and `watch` — to AcceleratorQuotas. The watch matters: a capacity change on the root re-reconciles every `SplitByCapacity` service at once, and the `refreshInterval` cadence only backstops it. On each workload cluster, the credentials in the [WorkloadCluster](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-WorkloadCluster)'s kubeconfig must be able to read the member-side inputs — the local quota root, the Kueue ResourceFlavors, RuntimeClasses, runtimes and models, and the operator ConfigMap and pinned runtime revisions in `memberOperatorNamespace`. The ClusterRole `ome-multicluster-access`, which the workload cluster's `ome.multiclusterAccess.enabled: true` renders, grants exactly that.
+
+This example opts the fleet in, with the member operators in `ome`:
+
+```yaml title="values.yaml"
+ome:
+  multicluster:
+    config:
+      placement:
+        memberOperatorNamespace: "ome"
+        capacity:
+          rootName: "root"
+          maxAge: "5m"
+          stabilityWindow: "1m"
+          refreshInterval: "10s"
+```
+
+Upgrade with your values file, as in [Step 1](#with-a-helm-value), and check the rendered block:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.multicluster}' \
+  | jq '.placement | {memberOperatorNamespace, capacity}'
+```
+
+```output
+{
+  "memberOperatorNamespace": "ome",
+  "capacity": {
+    "rootName": "root",
+    "maxAge": "5m",
+    "stabilityWindow": "1m",
+    "refreshInterval": "10s"
+  }
+}
+```
+
+The `multicluster` entry is in [the list that needs a restart](#tune-the-config-cache): the manager reads it once, when it starts, so the upgrade's restart applies the change, and a `kubectl` edit to the ConfigMap needs one. At startup, a manager with multi-cluster on checks the block and stops with `invalid multi-cluster configuration` when it breaks a rule — see [Troubleshooting](#the-manager-rollout-doesnt-finish):
+
+- `placement.memberOperatorNamespace is required for capacity placement`: `capacity` is set while the namespace is empty. The namespace is a sibling of the block, not a field inside it — a `memberOperatorNamespace` nested in `capacity` counts for nothing.
+- `placement.capacity: rootName is required`: the block is set with an empty or blank `rootName`.
+- `placement.capacity.maxAge: must be an explicit positive duration`, and the same for `stabilityWindow` and `refreshInterval`: the field is missing, zero, negative, or isn't a duration such as `"5m"`.
+- `placement.capacity.refreshInterval: must be shorter than maxAge`: an interval equal to `maxAge` fails too — a re-check that comes no sooner than the reports expire would always read stale ones.
+
+With the block in place, a `SplitByCapacity` service places only once every matched member's capacity is known, and `PlacementConverged` says what's missing:
+
+- Reason `CapacityUnknown`: the pass couldn't establish every matched member's capacity, and the message names the first problem — a root the control plane can't read (`read fleet capacity: ...`), a root that isn't a live parent-less Cohort (`fleet capacity root is not an identified live root`), a member whose report row is missing or past `maxAge` (`cluster "cluster-a" capacity unknown: report for nvidia.com/gpu/a100 is missing a fresh observation time`), or a member whose demand doesn't resolve (`cluster "cluster-a" demand: ...`), such as a wrong `memberOperatorNamespace`. The service's `PlacementCapacityFresh` condition turns `False` with the same message. A partial answer never places: one unknown member holds the whole service, and the last accepted plan, when there is one, keeps serving as it stands.
+- Reason `CapacityStabilizing`, with `hardware change is waiting for the configured stability window`: the reports describe different hardware than the current plan was built on. The placement keeps serving and re-plans once the new picture has held for `stabilityWindow`.
+
+The plan the mode produces lands in `status.placement` like any split placement, and [the placement gauges](metrics.md#watch-placement-in-the-controllers-metrics) follow it.
+
 ## Recognize other accelerator resources
 
 The `acceleratorResources` entry of the `inferenceservice-config` ConfigMap lists the extended resource names that OME counts as accelerators when it reads a runner container's requests and limits. The count sets the `PARALLELISM_SIZE` environment variable in the engine's and the decoder's runner: the accelerators in each pod times the pods in each replica. The chart writes the entry from `ome.controller.acceleratorResources`, whose default lists only `nvidia.com/gpu`.
@@ -643,7 +713,7 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E 
 | --- | --- |
 | `Invalid leader election timing` | The lease values break a rule in [Lease timing](#lease-timing). The error gives the values and the rule. |
 | `invalid --multicluster-role` | Set `ome.multicluster.role` to `control-plane`, or leave it empty. |
-| `invalid multi-cluster configuration` | The `multicluster` entry of the `inferenceservice-config` ConfigMap breaks a rule, and the rest of the line says which. For `placement.memberReadRetry`, see [Retry a failed member read within a placement pass](#retry-a-failed-member-read-within-a-placement-pass); for a refused duration, such as the status pacing settings, see [Pace a placed service's status refresh](#pace-a-placed-services-status-refresh). |
+| `invalid multi-cluster configuration` | The `multicluster` entry of the `inferenceservice-config` ConfigMap breaks a rule, and the rest of the line says which. For `placement.memberReadRetry`, see [Retry a failed member read within a placement pass](#retry-a-failed-member-read-within-a-placement-pass); for a refused duration, such as the status pacing settings, see [Pace a placed service's status refresh](#pace-a-placed-services-status-refresh); for `placement.capacity` and `placement.memberOperatorNamespace`, see [Opt in to capacity-based placement](#opt-in-to-capacity-based-placement). |
 | `flag provided but not defined`, `invalid value` or `invalid boolean value` | A patched argument is misspelled, isn't in your OME version, or has a bad value, such as `3d` for a duration. |
 | `Failed to initialize deployment configuration`, or the same for another entry | That entry of the `inferenceservice-config` ConfigMap is invalid, and the rest of the line says why. For `replicas` in the `deploy` entry, see [Set replica defaults](set-replica-defaults.md). For `Failed to initialize event recorder configuration`, the `eventRecorder` entry breaks a rule in [Tune the per-object event budget](#tune-the-per-object-event-budget). For `Failed to initialize lifecycle scale configuration`, a scale setting in the `lifecycle` entry breaks a rule in [Pace OMENative scale-ups and scale-downs](#pace-omenative-scale-ups-and-scale-downs). |
 
