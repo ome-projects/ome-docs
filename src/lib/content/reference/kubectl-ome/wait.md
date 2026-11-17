@@ -30,7 +30,7 @@ kubectl ome wait INFERENCESERVICE --for=PREDICATE [flags]
 | [`runtime-sync=acknowledged`](#runtime-sync-acknowledged) | `--request-id` | OME acknowledged the runtime sync with that request ID. |
 | [`held-revision=unheld`](#held-revision-unheld) | `--component`, `--revision`, `--ir-name`, `--ir-uid` | The revision is no longer held on that InferenceReplica. |
 
-The migration, replica and held-revision predicates read a component's InferenceReplica (IR), which OME writes only for components that run on [OMENative](../../concepts/omenative/overview.md). They see only the replicas the service owns, so on a service that fronts pools through [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) they never match: see [Which replicas the predicates read](#which-replicas-the-predicates-read).
+The migration, replica and held-revision predicates read InferenceReplicas (IRs), which OME writes only for components that run on [OMENative](../../concepts/omenative/overview.md). `migration=terminal` matches only from a snapshot in which every IR the service owns is valid, so a service with an encoder [never matches](#migration-terminal). They see only the replicas the service owns, so on a service that fronts pools through [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) they never match: see [Which replicas the predicates read](#which-replicas-the-predicates-read).
 
 Each predicate takes only the flags in its row, and refuses others with an [error](#error-messages). The first check runs at once, so a state that already holds matches immediately. After that, `condition=Ready` and `rollout` watch the InferenceService, and the other predicates check every 5 seconds. Every wait ends with one of these outcomes:
 
@@ -103,6 +103,11 @@ kubectl ome wait INFERENCESERVICE --for=migration=terminal --request-id=UUID [--
 Waits for the end of one Instance migration, named by the request ID that the alpha [`kubectl ome migration start`](migration.md) prints. It matches when the request reaches `Completed`, `Failed` or `Relocated`, and all three exit `0`. To tell them apart, read the Migration outcome row, or `content.migration.migrationOutcome` in JSON.
 
 A request queues behind earlier migrations of the same component, including those from [Alfred](../../concepts/scheduling/alfred.md), which is alpha, and behind an update's surge Instance in flight on that component. It fails at its [deadline](../../concepts/omenative/migration-and-transient-scale.md#deadline), by default 30 minutes after OME accepts it. So give `--timeout` at least that, such as `--timeout=30m`, and more when a rollout may pause the migration.
+
+A terminal record alone isn't enough. Every check reads the InferenceService and every IR it owns into one snapshot, whichever component your migration runs on, and a flaw anywhere in it — an issue on any of those replicas, or one whose status isn't current — makes the check report `InvalidMigration`, without looking your record up. A flaw like a replica that lags its own spec clears when the replica catches up. One never clears:
+
+!!! warning "A service with an encoder never matches"
+    The command reads only the engine, the decoder and the router, and the [encoder](../../concepts/serving/inference-services.md#the-encoder)'s IR, which claims the service like the others, never counts as valid. So on a service with an encoder, every check reports `InvalidMigration`, with Migration validity `Invalid` and phase and outcome `Unknown`, and the wait runs to `TimedOut`, exit `2` — even after your migration ends. To see it end, use [`kubectl ome migration status`](migration.md#status), which [marks only the encoder's source](migration.md#which-replicas-status-and-history-read) `Invalid`, as `SourceComponentInvalid`, and still shows the other components' records.
 
 ### `replicas=ready` {#replicas-ready}
 
@@ -247,9 +252,9 @@ Reported rollout, Rollout state, Rollout epoch and Coordination Ready show REPOR
 
 | Row | What it shows |
 | --- | --- |
-| Migration phase | The phase in the request's record: `Accepted`, `SurgePending`, `SurgeReady`, `Draining`, `Completed`, `Failed` or `Relocated`. `Unknown` when the CLI found no record. |
-| Migration outcome | `InProgress` until the migration ends. Then `Completed`, `Failed`, or, for a relocation, `Relocated` or `RelocationConfirmed`. `Unknown` when the CLI found no record. |
-| Component | The component whose InferenceReplica holds the record: `engine`, `decoder` or `router`. |
+| Migration phase | The phase in the request's record: `Accepted`, `SurgePending`, `SurgeReady`, `Draining`, `Completed`, `Failed` or `Relocated`. `Unknown` when the CLI found no record, or skipped the lookup because the snapshot was invalid. |
+| Migration outcome | `InProgress` until the migration ends. Then `Completed`, `Failed`, or, for a relocation, `Relocated` or `RelocationConfirmed`. `Unknown` when the CLI found no record, or skipped the lookup because the snapshot was invalid. |
+| Component | The component whose InferenceReplica holds the record: `engine`, `decoder` or `router`, the only components the command reads. A sibling IR with another component, like the encoder's, [fails every check](#migration-terminal). |
 | Migration validity | `Valid`, `Unavailable` or `Invalid`. The Reason row says why. |
 | Attribution | `Exact request ID in live IR status` for a valid match. Other values say what the CLI couldn't verify. |
 
@@ -258,7 +263,7 @@ Reported rollout, Rollout state, Rollout epoch and Coordination Ready show REPOR
 | `MigrationMatched` | The record is valid and terminal. |
 | `MigrationInProgress` | The record is valid and still in progress. |
 | `MigrationNotRecorded` | The CLI found no record for the request ID on any [replica the service owns](#which-replicas-the-predicates-read), or the InferenceService was missing, deleted or replaced. |
-| `InvalidMigration` | The record or the snapshot is incomplete, stale or malformed. |
+| `InvalidMigration` | The record is duplicated or malformed, or the snapshot is invalid: an issue on any IR the service owns, or one whose status isn't current, fails every check. A service with an encoder [always reports this](#migration-terminal). |
 
 `-o wide` adds Inspected IR sources and Inspected records, counts of what the CLI read, then Cancellation.
 
