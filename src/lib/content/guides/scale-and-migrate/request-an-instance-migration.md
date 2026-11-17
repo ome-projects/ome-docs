@@ -196,7 +196,7 @@ A refusal prints `error:` and a message, changes nothing, and exits `1`, or `3` 
 | --- | --- |
 | `required Kubernetes API request failed; check access and connectivity` | A read failed, often for lack of a permission in [Before you begin](#before-you-begin). |
 | `action refused: active runtime is unavailable, inconsistent or unbound` | The service needs a component [on OMENative](../../concepts/architecture/deployment-modes.md#opt-in-to-omenative) and a serving runtime that the CLI can resolve. |
-| `migration precondition conflicts or is stale; inspect migration status and retry explicitly` | The state of the service blocks the move now: see the causes below. |
+| `migration precondition conflicts or is stale; inspect migration status and retry explicitly` | The state of the service blocks the move: see the causes below, one of which no retry resolves. |
 | `action not confirmed; noninteractive input requires --yes` | Answer `y` at the prompt, or pass `--yes` when the command runs without a terminal. |
 | `context deadline exceeded` | The command has 45 seconds in all, prompt included. Answer sooner, or pass `--yes`. |
 | `guarded migration rejected; inspect migration status using preview UUID` | The InferenceService changed after the CLI read it, often through a status update. Run the command again. |
@@ -204,6 +204,7 @@ A refusal prints `error:` and a message, changes nothing, and exits `1`, or `3` 
 The usual causes of the precondition conflict:
 
 - The InferenceReplica's status lags a recent change. Try again in a moment.
+- The service declares an [encoder](../../concepts/serving/inference-services.md#the-encoder). This looks like the lagging cause, but no wait resolves it: `start` checks every InferenceReplica the service projects, the encoder's always fails the check, and the command refuses the engine, the decoder and the router alike, in every `--dry-run` mode. [Refusals](../../reference/kubectl-ome/migration.md#start-refusals) explains why. To still move the Instance, [write the migration request annotation yourself](../../concepts/omenative/migration-and-transient-scale.md#migration-requests): OME carries out a hand-written request like the command's.
 - The service is paused. [Pause and resume a rollout](../roll-out-changes/pause-and-resume-a-rollout.md) shows how to resume.
 - The service has the `ome.io/rollout-promote` or `ome.io/rollout-rollback` annotation. The rollback annotation stays until a different target revision appears, as [`promote` and `rollback`](../../reference/kubectl-ome/rollout.md#promote-and-rollback) describes.
 - The Instance isn't `Ready`, has an operation in progress, or already has a request or a migration. [`kubectl ome instance list`](../../reference/kubectl-ome/instance.md) shows its state.
