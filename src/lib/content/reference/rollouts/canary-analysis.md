@@ -236,7 +236,7 @@ The controller exports these metrics on its metrics endpoint:
 | `ome_canary_sampler_queue_depth` | None | Samples waiting for a free [`maxConcurrency`](#controller-settings) slot. |
 | `ome_canary_sampler_starved_total` | None | Samples that had to wait for a slot. |
 
-`ome_canary_phase_total` counts passes, not phase changes: every reconcile pass of a canary — a parked one included — counts one on the `phase` it leaves in [`rolloutPhase`](canary-progression.md#phases), which `kubectl ome rollout status` shows as PHASE. OME keeps reconciling a canary that sits `Paused` or `Failed`, so those series keep rising while it sits, and a fleet-wide rate by `phase` finds the services parked there. Unlike the other per-service series, the counter has no `component` label: every [canary unit](#which-members-a-step-samples) of a service counts on the same series.
+`ome_canary_phase_total` counts passes, not phase changes: every reconcile pass of a canary — a parked one included — counts one on the `phase` it leaves in [`rolloutPhase`](canary-progression.md#phases), which `kubectl ome rollout status` shows as PHASE. OME keeps reconciling a canary that sits `Paused` or `Failed`, so those series keep rising while it sits, and a fleet-wide rate by `phase` finds the services parked there. Unlike the per-component canary series, the counter has no `component` label: every [canary unit](#which-members-a-step-samples) of a service counts on the same series.
 
 A judged sample publishes each [sampled member's](#which-members-a-step-samples) own result: when the decoder breached and the engine passed, `ome_canary_analysis_evaluations_total` counts `fail` under `component="decoder"` and `pass` under `component="engine"`, while the sample itself fails.
 
