@@ -119,7 +119,7 @@ A refusal changes nothing and exits `1`. [Troubleshooting](../../guides/scale-an
 | `manual scale requires locally verifiable autoscaling; winning policy resolution is unavailable` | The component gets its autoscaling from an alpha AutoscalerPolicy, through `autoscalerPolicyRef`, with no inline `autoscaler`. |
 | `manual scale requires complete current selected replica and Scale evidence` | The InferenceReplica's count is unset or 0, it doesn't match the component, or it changed between the command's reads. |
 | `action refused: controller safety evidence is stale or inconsistent` | OME hasn't caught up with a recent change, something changed after the preview, or [`kubectl ome rollout status`](rollout.md#status) shows an issue other than `EpochUnverifiable` or `AnalysisInconclusive` — as it always does on a service that declares `spec.encoder`, which `scale` [refuses permanently](#services-with-an-encoder). |
-| `manual scale refused: selected lifecycle, migration or rollout work is active` | A rollout, rollback, migration or Instance operation is in progress on the component, or its rollout group isn't `Stable`. |
+| `manual scale refused: selected lifecycle, migration or rollout work is active` | Lifecycle, migration or rollout work is unfinished on the component. Running work isn't required: a `Pending` Instance with no operation blocks too. [What blocks a scale](#what-blocks-a-scale) lists every condition. |
 | `manual scale is transient and requires --override-autoscaler --yes for every ownership class` | `--override-autoscaler` is missing. |
 | `manual scale replicas must be positive and within verified bounds and partitions` | `--replicas` is outside the component's [bounds](#bounds), or below the partition of its rolling update. |
 | `action refused: a rollout promote or rollback mailbox is present` | The InferenceService has the `ome.io/rollout-promote` or `ome.io/rollout-rollback` annotation. A rollback annotation stays until a different target revision appears: see [`promote` and `rollback`](rollout.md#promote-and-rollback). |
@@ -128,6 +128,17 @@ A refusal changes nothing and exits `1`. [Troubleshooting](../../guides/scale-an
 | `manual scale source changed; inspect current status and prepare a new request` | The InferenceService or its runtime changed after the preview, or couldn't be read again. |
 
 A runtime sync is pending while the InferenceService's `ome.io/runtime-sync` annotation differs from `status.lastRuntimeSyncToken`. It also stays pending if you remove the annotation after OME acted on it. To clear it without a sync, set the annotation to the value of `status.lastRuntimeSyncToken`, or remove the annotation when that field is empty. [Roll forward to the latest runtime](../../concepts/runtimes/runtime-revisions.md#roll-forward-to-the-latest-runtime) explains when a value waits.
+
+### What blocks a scale
+
+`manual scale refused: selected lifecycle, migration or rollout work is active` covers more than running work: a state that leaves lifecycle, migration or rollout work unfinished blocks a scale too, even when `kubectl ome instance list` shows no operation anywhere. The command refuses while any of these holds on the selected component:
+
+- An Instance is in any [phase](../../concepts/omenative/instances.md#instance-phases) but `Ready` and `Failed`, with or without an [operation](../../concepts/omenative/instances.md#operations). That includes an Instance sitting in `Pending` — a `Ready` Instance that [lost all its pods](../../concepts/omenative/instances.md#demotion-to-pending), with nothing in progress — which blocks every scale of the component until the rebuild makes it `Ready` again. A paused rollout holds the rebuild, and the refusal with it.
+- A `Failed` Instance carries a `Delete` operation or a failed `Update`. The failed `Create` or `Restart` attempt that a `Failed` Instance keeps for diagnosis doesn't count: with only that parked attempt, or no operation at all, a `Failed` Instance never blocks a scale.
+- The component's InferenceReplica is moving its Instances to a new revision: its `status.updateRevision` is set and differs from its `status.currentRevision`.
+- A migration record on the InferenceReplica hasn't finished: its phase is `Accepted`, `SurgePending`, `SurgeReady` or `Draining`, as [`kubectl ome migration status`](migration.md#status) shows them.
+- The InferenceReplica's `spec.pacing.rollbackToRevision` is set: a rollback hasn't finished.
+- In [`kubectl ome rollout status`](rollout.md#status), the component's PHASE is neither `Stable` nor `Unknown`, or the GROUP-PHASE of its rollout group isn't `Stable`.
 
 ## Output fields
 
