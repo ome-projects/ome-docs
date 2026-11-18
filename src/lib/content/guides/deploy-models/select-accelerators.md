@@ -248,7 +248,7 @@ A class can also set the pods' requests and limits: its `resources` replace the 
 
 ## Narrow the choice with constraints {#constraints}
 
-Constraints limit the classes that a policy picks from. Set them in `spec.acceleratorSelector.constraints`. They apply to every component's policy, and constraints in an `acceleratorOverride` have no effect. A named class skips them.
+Constraints limit the classes that a policy picks from. Set them in `spec.acceleratorSelector.constraints`, where they apply to every component's policy, or in a component's `acceleratorOverride`, whose `constraints` block replaces the service's for that component; see [Override the class for one component](#override-the-class-for-one-component). A named class skips them.
 
 | Field | A class passes when |
 | --- | --- |
@@ -264,7 +264,7 @@ Constraints limit the classes that a policy picks from. Set them in `spec.accele
 
 ## Override the class for one component
 
-Set `acceleratorOverride` on `spec.engine` or `spec.decoder` to give that component its own `acceleratorClass` or `policy`. The override wins over `spec.acceleratorSelector` for the same field.
+Set `acceleratorOverride` on `spec.engine` or `spec.decoder` to give that component its own `acceleratorClass`, `policy` or `constraints`. Each field the override sets replaces the same field of `spec.acceleratorSelector`, and a field it leaves unset comes from there: an override that sets only `constraints` keeps the service's policy, which then filters with the override's block.
 
 This InferenceService serves the model in prefill-decode mode. The engine, which runs prefill, gets the class that `Cheapest` picks. The decoder is pinned to `nvidia-h200`, for its higher memory bandwidth:
 
@@ -297,6 +297,11 @@ spec:
 To try it, apply the catalog runtime [`config/runtimes/srt/meta/llama-3-3-70b-instruct-pd-rt.yaml`](https://github.com/ome-projects/ome/blob/main/config/runtimes/srt/meta/llama-3-3-70b-instruct-pd-rt.yaml), and add both classes to its list, as in [Step 2](#step-2-check-the-runtimes-candidates). Its engine and decoder pods run privileged on the host network, and need RDMA networking with the profile `oci-roce`; see [PD mode](../../reference/operate-ome/ome-serving-values.md#pd-mode).
 
 A class name wins over any policy, so an override's `policy` has no effect while `spec.acceleratorSelector.acceleratorClass` is set. To give one component a policy, set the policy in `spec.acceleratorSelector`, and name classes in the other components' overrides, as this example does.
+
+An override's `constraints` govern its component's policy the same way: the policy filters the runtime's classes with the override's block in place of the service's, and scores with it too, so `BestFit` reads the override's `minMemory` and `MostCapable` its `preferredPrecisions`. With the classes from [Step 1](#step-1-create-the-acceleratorclasses), the decoder above could drop its `acceleratorClass` and set `constraints: {minMemory: 100}` instead: only `nvidia-h200` has at least 100 GiB, so `Cheapest` picks it for the decoder, while the engine still gets `nvidia-h100`, the cheapest without constraints.
+
+!!! warning "An empty constraints block clears the service's"
+    The override's block replaces `spec.acceleratorSelector.constraints` whole; OME doesn't merge the two. An empty `constraints: {}` counts as a block of its own, so the component's policy runs with no constraints at all. To keep the service's constraints for the component, leave `constraints` out of its override.
 
 ## Troubleshooting
 
@@ -336,7 +341,7 @@ The component got no class. OME records no event for this, so check that:
 
 - The runtime lists classes, as in [Step 2](#step-2-check-the-runtimes-candidates).
 - The InferenceService names a class or sets a policy. Constraints and the `ome.io/accelerator-class` annotation don't pick a class on their own.
-- At least one class passes the [constraints](#constraints). Compare each class's `memoryGB`, `computeCapability` and `features` with them.
+- At least one class passes the [constraints](#constraints) that govern the component: its `acceleratorOverride`'s block when it sets one, else `spec.acceleratorSelector.constraints`. Compare each class's `memoryGB`, `computeCapability` and `features` with them.
 - For `Cheapest`, when two or more classes pass the constraints, at least one of them sets `cost`. A lone passing class needs no `cost`; see [Policies](#policies).
 
 ### The pods stay Pending
