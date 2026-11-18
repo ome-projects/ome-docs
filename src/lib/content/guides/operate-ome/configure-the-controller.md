@@ -179,7 +179,10 @@ The manager reads these settings only when it starts, so a `kubectl` edit to one
 - `scaleUpPodBatchSize`, `scaleDownPodBatchSize`, `scaleDownRequeueInterval` and `repairBatchSize` in the `lifecycle` entry;
 - `maxConcurrency` and `cacheTTL` in the `canaryAnalysis` entry;
 - `maxPinnedPlanBytes` in the `rollout` entry;
-- `preflight` in the `autoscalerPolicy` entry.
+- `preflight` in the `autoscalerPolicy` entry;
+- `defaultRatioTolerancePercent` in the `coordination` entry — in the admission webhook only.
+
+The last item is one field with two readers. It fills `maintainRatio.tolerance` for a [rollout group](../../concepts/rollouts-and-traffic/rollout-groups.md) that omits its own, and the controllers that pace a roll read it through the config cache on every pass, so a `kubectl` edit re-paces a running roll within the TTL. The admission webhook reads it once, when the manager starts, and judges the [`RatioDrainInfeasible`](../../concepts/rollouts-and-traffic/rollout-groups.md#what-admission-rejects) check of every new create or update against that copy — and every replica serves the webhooks, each with the value from its own start. So after an edit, admission keeps judging InferenceServices by the old default until the pods restart, even while running rolls already pace by the new one.
 
 ### Set the cache TTL {since=v1.3}
 
@@ -318,7 +321,7 @@ kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.lifecyc
 }
 ```
 
-With the chart's defaults in place, the same command prints the block with its two fields, `"firstSide": "decoder"` and `"keepRatio": true`. The two settings aren't in [the list that needs a restart](#tune-the-config-cache): the manager reads them through its config cache, so even a `kubectl` edit takes effect within the cache's TTL — unlike the batch sizes in the same entry. A `firstSide` other than `engine`, `decoder` or empty doesn't stop the manager: it reads as empty, so both sides start their batches together while `keepRatio` stands as written, and the manager logs the bad value only at verbosity 1. So when the ordering doesn't apply, check the rendered entry for a typo.
+With the chart's defaults in place, the same command prints the block with its two fields, `"firstSide": "decoder"` and `"keepRatio": true`. The two settings aren't in [the list that needs a restart](#tune-the-config-cache): the manager reads them through its config cache, so even a `kubectl` edit takes effect within the cache's TTL — unlike the batch sizes in the same entry. The ratio-tolerance default that the `keepRatio` row names is cache-read the same way, but only for pacing: the admission webhook's copy of it is read once, at startup, as the list explains. A `firstSide` other than `engine`, `decoder` or empty doesn't stop the manager: it reads as empty, so both sides start their batches together while `keepRatio` stands as written, and the manager logs the bad value only at verbosity 1. So when the ordering doesn't apply, check the rendered entry for a typo.
 
 ## Pace canary re-checks
 
@@ -408,7 +411,7 @@ kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.coordin
 }
 ```
 
-The entry isn't in [the list that needs a restart](#tune-the-config-cache): the manager reads it through its config cache on every pass, so even a `kubectl` edit takes effect within the cache's TTL. The band gates only this pod-proportional writer. A component that a canary group drives gets its weights from the canary's recorded step, as [Traffic weight in status](../../reference/rollouts/canary-progression.md#traffic-split) describes, and the band never holds those back.
+The band isn't in [the list that needs a restart](#tune-the-config-cache): the manager reads it through its config cache on every pass, so even a `kubectl` edit takes effect within the cache's TTL. The entry's other field, `defaultRatioTolerancePercent`, is in the list: an edit reaches roll pacing through the same cache, but the admission webhook reads its copy once, at startup. The band gates only this pod-proportional writer. A component that a canary group drives gets its weights from the canary's recorded step, as [Traffic weight in status](../../reference/rollouts/canary-progression.md#traffic-split) describes, and the band never holds those back.
 
 ## Retry a failed member read within a placement pass
 
