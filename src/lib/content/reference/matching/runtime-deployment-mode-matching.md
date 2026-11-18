@@ -7,7 +7,7 @@ When an [InferenceService](../../concepts/serving/inference-services.md) doesn't
 
 ## The matching rule
 
-OME compares the modes of every component that runs the model: the engine's always, the decoder's when the InferenceService has a `spec.decoder`, and, since v1.3, [the alpha encoder's](../../concepts/serving/inference-services.md#the-encoder) when it has a `spec.encoder`. It doesn't compare the router. It rejects the runtime when both sides declare a mode for the same component and the modes differ. For the engine:
+OME compares the modes of every component that runs the model: the engine's always, the decoder's when the InferenceService has a `spec.decoder`, and [the alpha encoder's](../../concepts/serving/inference-services.md#the-encoder) when it has a `spec.encoder`. It doesn't compare the router. It rejects the runtime when both sides declare a mode for the same component and the modes differ. For the engine:
 
 | InferenceService's engine mode | Runtime's `engineConfig` mode | Result |
 |---|---|---|
@@ -29,10 +29,10 @@ Both sides use the `ome.io/deploymentMode` annotation, and an InferenceService c
 |---|---|
 | Runtime: `engineConfig.annotations` | Yes, for the engine |
 | Runtime: `decoderConfig.annotations` | Yes, for the decoder |
-| Runtime: `encoderConfig.annotations` (since v1.3) | Yes, for the encoder |
+| Runtime: `encoderConfig.annotations` | Yes, for the encoder |
 | Runtime: an annotation inherited from a [parent runtime](../../concepts/runtimes/runtime-inheritance.md#when-the-merged-spec-applies) | Only when the InferenceService names the runtime |
 | Runtime: `metadata.annotations`, `routerConfig.annotations`, or a `leader` and `worker` alone | No |
-| InferenceService: `spec.engine.annotations`, `spec.decoder.annotations` or, since v1.3, `spec.encoder.annotations` | Yes, ahead of `spec.deploymentMode` |
+| InferenceService: `spec.engine.annotations`, `spec.decoder.annotations` or `spec.encoder.annotations` | Yes, ahead of `spec.deploymentMode` |
 | InferenceService: `spec.deploymentMode` (since v1.3) | Yes, for each component whose annotation sets no mode. It takes only `OMENative` or `RawDeployment`, so `MultiNode` needs the annotation. |
 | InferenceService: `metadata.annotations` | No |
 
