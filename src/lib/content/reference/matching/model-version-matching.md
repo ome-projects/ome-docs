@@ -9,6 +9,8 @@ Each entry in a [serving runtime's](../../concepts/runtimes/serving-runtimes.md)
 - `GreaterThan` and `GreaterThanOrEqual` set an upper limit on the model's version, not a lower one.
 - A version with a suffix, such as the `.dev0` in `4.45.0.dev0`, matches only an equal version, whatever the operator.
 
+These rules decide whether an entry matches the model: whether the runtime [qualifies](runtime-selection-scoring.md#the-ranking-order) and what the [mismatch reasons](#mismatch-reasons) say. The runtime's [score](runtime-selection-scoring.md#how-the-score-is-computed) accepts more: a version that either side leaves unset passes there, so the entry that scores — and whose `acceleratorConfig` the pods get — can be one that doesn't match.
+
 The entry must also match the model's architecture, quantization and diffusion pipeline, and the runtime must pass the other checks that [Troubleshoot runtime selection](../../guides/deploy-models/troubleshoot-runtime-selection.md#step-3-read-the-exclusion-reasons) lists.
 
 ## Where versions and operators are declared
