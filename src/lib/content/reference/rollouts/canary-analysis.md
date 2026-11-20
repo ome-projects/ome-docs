@@ -160,7 +160,7 @@ At the last step, the canary completes on the first passing sample after [`scale
 
 The alpha `kubectl ome rollout promote --override-analysis --yes` passes an analysis gate during its warm-up, sampling or bake: see [Promote or roll back a canary](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#step-3-override-an-analysis-gate).
 
-An analysis rollback works like a [manual rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary): every instance returns to the stable revision, and the component stays there until a different target revision appears. OME records the rejected revision in `rolledBackRevisionHash`, and `promote` and `rollback` then refuse with `action refused: no applicable active rollout or lifecycle work was observed`. The analysis starts its rollback only when the stable revision still runs an Instance: when it doesn't, the canary parks `Failed` instead, as [When the stable revision runs no Instance](#when-the-stable-revision-runs-no-instance) describes.
+An analysis rollback works like a [manual rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary): every instance returns to the stable revision, and the component stays there until a different target revision appears. The Warning event [`CanaryAnalysisRolledBack`](#the-canaryanalysisrolledback-event) announces the decision, with the deciding sample's checks. OME records the rejected revision in `rolledBackRevisionHash`, and `promote` and `rollback` then refuse with `action refused: no applicable active rollout or lifecycle work was observed`. The analysis starts its rollback only when the stable revision still runs an Instance: when it doesn't, the canary parks `Failed` instead, as [When the stable revision runs no Instance](#when-the-stable-revision-runs-no-instance) describes.
 
 ## `onInconclusive`
 
@@ -176,13 +176,40 @@ The analysis stalls when its samples stay inconclusive for longer than the canar
 
 A `Failed` canary stays at its step, even after you fix the metrics source, and `promote --override-analysis` refuses there. A change that gives the component a revision other than the failed canary's and the stable one starts a fresh canary at step 1. You can also roll the canary back with the alpha `kubectl ome rollout rollback`, then apply your fix, as [When a step never becomes ready](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#when-a-step-never-becomes-ready) shows.
 
+## The `CanaryAnalysisRolledBack` event
+
+A rollback the analysis decides is announced on the InferenceService's events, not only in [status](#analysis-in-status): on the pass whose sample decides it, OME records the Warning event `CanaryAnalysisRolledBack`, once, naming the step, the cause and every failing or unread check of the deciding sample. A failing sample below `failureLimit` records no event — the step holds, and `analysisFailedChecks` alone counts it — and a [manual rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) never records one.
+
+The message is `<primary> canary step <N>: the metric gate decides a rollback, <cause>; failing checks: <checks>`. `<primary>` is the group's [primary member](#which-members-a-step-samples), `<N>` counts from 0, and after an inconclusive sample the list is labeled `unread checks` instead of `failing checks`. The cause tells the three decisions apart:
+
+| The deciding sample | The cause in the message |
+| --- | --- |
+| The failing sample that reaches `failureLimit` | `failing samples reached the limit (<count> of <limit>)` |
+| An inconclusive sample, with [`onInconclusive: Rollback`](#oninconclusive) | `the sample could not be read and onInconclusive is Rollback` |
+| The sample still inconclusive at the stall, with [`onInconclusive: RollbackOnStall`](#oninconclusive) | `no sample could be read for <timeout> and onInconclusive is RollbackOnStall`, where `<timeout>` is the canary's [ready timeout](canary-progression.md#readytimeout), such as `15m0s` |
+
+`<checks>` lists each check of the deciding sample that didn't pass — one that passed isn't listed — as `<member> <name>=<value> (threshold <operator> <threshold>)`, with the [sampled member's](#which-members-a-step-samples) component and the metric's own name: `decoder error-rate`, never `decoder/error-rate` as in `metricResults`. An unread check has no value, and carries its [`message`](#analysis-in-status) in place of the threshold, such as `decoder error-rate (no data)`.
+
+The third failing sample of [the example](#example) rolls its canary back with this event:
+
+```bash
+kubectl get events -n prod --field-selector reason=CanaryAnalysisRolledBack -o custom-columns=TYPE:.type,OBJECT:.involvedObject.name,MESSAGE:.message
+```
+
+```output
+TYPE     OBJECT   MESSAGE
+Warning  chat     engine canary step 0: the metric gate decides a rollback, failing samples reached the limit (3 of 3); failing checks: engine error-rate=0.03 (threshold LT 0.01)
+```
+
+The event is recorded whether or not the revert can start: a canary whose [stable revision runs no Instance](#when-the-stable-revision-runs-no-instance) records the gate's decision first, then `CanaryStableRevisionEmpty`, and parks `Failed`. When a revert does run and finishes, the Normal event `RolloutRunClosed` closes the run, as [Controller metrics](#controller-metrics) describes.
+
 ## When the stable revision runs no Instance
 
 A rollback returns every Instance to the stable revision, so a rollback the analysis decides — at `failureLimit`, on an inconclusive sample with `Rollback`, or at a stall with `RollbackOnStall` — needs that revision to still run. While a canary runs, each component with more than one desired Instance keeps one Instance on its stable revision, so the revision normally serves until the canary completes. When any such component in the group runs no live Instance on its stable revision, the fleet has left that revision, and OME doesn't rebuild every Instance onto it on its own:
 
 - The canary parks at `Failed` at its current step, and `status.components.<component>.canary.failed.reason` records `StableRevisionMissing`.
 - No revert starts: `rolledBackRevisionHash` stays empty, and the analysis stops sampling while the canary is parked.
-- OME emits the Warning event `CanaryStableRevisionEmpty` on the InferenceService, once: `<primary> is not rolled back on its own: <component> (stable revision <hash>) runs no live Instance to return to; parked Failed at step <N> until a rollback is requested (ome.io/rollout-rollback) or a new target appears`. `<primary>` is the group's `router`, or else its `engine`, `<component>` the component whose stable revision is empty, and the step counts from 0.
+- OME emits the Warning event `CanaryStableRevisionEmpty` on the InferenceService, once, after the [`CanaryAnalysisRolledBack`](#the-canaryanalysisrolledback-event) that announced the gate's decision: `<primary> is not rolled back on its own: <component> (stable revision <hash>) runs no live Instance to return to; parked Failed at step <N> until a rollback is requested (ome.io/rollout-rollback) or a new target appears`. `<primary>` is the group's `router`, or else its `engine`, `<component>` the component whose stable revision is empty, and the step counts from 0.
 - Traffic in status follows the pods that serve: a component whose stable revision runs no pod shows 100% for the canary revision, and a component whose stable revision serves keeps the step's split.
 
 The canary keeps its Instances, and the park holds until you act:
@@ -240,7 +267,7 @@ The controller exports these metrics on its metrics endpoint:
 
 A judged sample publishes each [sampled member's](#which-members-a-step-samples) own result: when the decoder breached and the engine passed, `ome_canary_analysis_evaluations_total` counts `fail` under `component="decoder"` and `pass` under `component="engine"`, while the sample itself fails.
 
-When a rollback finishes, OME records a Normal event with the reason `RolloutRunClosed` and the message `run <run ID> closed: RolledBack`. `ome_canary_rollback_total` tells analysis and manual rollbacks apart.
+When a rollback finishes, OME records a Normal event with the reason `RolloutRunClosed` and the message `run <run ID> closed: RolledBack`; an analysis rollback began with the Warning [`CanaryAnalysisRolledBack`](#the-canaryanalysisrolledback-event), which names the sample that decided it. `ome_canary_rollback_total` tells analysis and manual rollbacks apart.
 
 OME acts on an `ome.io/rollout-resume` request once and removes the annotation whether or not it resumed anything, so `ome_canary_resume_total` is what tells you how the requests ended. Its `component` is the [primary member](#which-members-a-step-samples) of the canary unit that handled the request. `applied` means a parked canary resumed, with the Normal event `RolloutResumed`. `rejected` means the request addressed a parked canary that OME couldn't resume: the hash isn't the parked revision, no member of the unit targets it any more, or a `Failed` hold has no rollout run pinned. `ignored` means the request addressed no canary, parked or in flight. A rejected or ignored request also records the Warning event `RolloutResumeRejected`, which [The resume annotation disappears and nothing resumes](../../guides/roll-out-changes/pause-and-resume-a-rollout.md#the-resume-annotation-disappears-and-nothing-resumes) explains, so you can alert on those outcomes instead of reading each service's events. A request that addresses a canary that isn't parked is removed with no count and no event.
 
