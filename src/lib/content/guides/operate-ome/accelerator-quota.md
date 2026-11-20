@@ -616,9 +616,13 @@ ome-quota-manager-6f8b9c7d54-plwdr_8a1f2c3d-4e5b-6a7c-8d9e-0f1a2b3c4d5e
 
 The part before the `_` is the leader's pod name.
 
-Three values in `quotaManager.leaderElection` time the election, and the chart passes them to the quota manager as its `--leader-elect-lease-duration`, `--leader-elect-renew-deadline` and `--leader-elect-retry-period` flags: a lease duration of 60 seconds, a renew deadline of 40 seconds and a retry period of 8 seconds by default.
+Three values in `quotaManager.leaderElection` time the election, and the chart passes them to the quota manager as its `--leader-elect-lease-duration`, `--leader-elect-renew-deadline` and `--leader-elect-retry-period` flags: a lease duration of 120 seconds, a renew deadline of 40 seconds and a retry period of 8 seconds by default.
 
-The leader renews the Lease every retry period. Each renewal request waits at most half the renew deadline, 20 seconds with the chart, so the deadline holds two attempts, and the leader survives one hung request: a routine API server stall costs the first attempt, and the second renews the Lease. A leader that can't renew within the deadline gives up, logs `problem running manager` with the error `leader election lost` and exits, and Kubernetes restarts the container. The standby takes over once the Lease has gone unrenewed for the lease duration, so after a leader dies, the work this page describes pauses for up to a minute. Admission doesn't pause with it: the webhook keeps serving from the standby.
+The leader renews the Lease every retry period. Each renewal request waits at most half the renew deadline, 20 seconds with the chart, so the deadline holds two attempts, and the leader survives one hung request: a routine API server stall costs the first attempt, and the second renews the Lease. A leader that can't renew within the deadline gives up, logs `problem running manager` with the error `leader election lost` and exits, and Kubernetes restarts the container.
+
+How soon the standby takes over depends on how the leader stopped. A leader stopped on purpose — a rollout, a node drain, a pod deletion — releases the Lease at the end of its stop, because `quotaManager.leaderElection.releaseOnCancel` is `true` by default and the chart passes it as the `--leader-elect-release-on-cancel` flag. The standby takes a released Lease at its next poll, within 2.2 retry periods: about 18 seconds with the chart's timing. A crash or a lost node releases nothing — and a leader that gave up on failed renewals can only try, against the API server that just failed them — so after those, the standby waits until the Lease has gone unrenewed for the lease duration: the work this page describes pauses for up to two minutes. Admission doesn't pause either way: the webhook keeps serving from the standby.
+
+The release comes after the stop, not instead of it: on SIGTERM the quota manager first stops its controllers and servers, waiting at most controller-runtime's 30-second stop timeout, and only then releases the Lease. That's why the chart sets the pod's `quotaManager.terminationGracePeriodSeconds` to 40: when the grace period runs out first, the kubelet's SIGKILL cuts the release off, and the Lease expires as usual. A healthy stop takes about a second and the pod exits as soon as it's done, so the 40 seconds are only a ceiling — but keep the value above 30.
 
 When the leader keeps restarting with `leader election lost` during API server slowdowns, raise the three values together, keeping the other values in the file:
 
@@ -630,7 +634,7 @@ quotaManager:
   image:
     tag: dev
   leaderElection:
-    leaseDuration: "90s"
+    leaseDuration: "180s"
     renewDeadline: "60s"
     retryPeriod: "12s"
   materialize:
@@ -645,7 +649,9 @@ helm upgrade ome-quota-manager ./charts/ome-quota-manager \
 
 Helm reports the upgrade, and the quota manager's pods restart with the new timing.
 
-Keep the lease duration longer than the renew deadline, and the renew deadline longer than 1.2 times the retry period. The quota manager checks the three values when it starts: when they break a rule, every new pod logs `bad flag`, with an error that gives the values and the rule, and exits, so the rollout doesn't finish and the old pods keep the old timing. Also set the three together: when any one is empty, the chart passes none of the flags, and the quota manager falls back to controller-runtime's own timing — a 15-second lease, a 10-second renew deadline and a 2-second retry period, whose 5-second renewal requests a routine stall outlasts. Longer values slow failover, since the standby waits out the lease duration, so raise them only as far as your API server needs. The OME controller manager times its leader election the same way: see [Lease timing](configure-the-controller.md#lease-timing).
+Keep the lease duration longer than the renew deadline, and the renew deadline longer than 1.2 times the retry period. The release adds a third rule, checked only while `leaderElect` is on, since without the election the release does nothing: the lease duration, in whole seconds, must exceed half the renew deadline (at least 1 second), plus the retry period, plus twice the renew deadline. Counted from the last renewal the standby reads, that sum is the longest a leader whose renewals fail can still be acting — one request timeout waiting for a reply, one retry period, one renew deadline of failed retries, and one more renew deadline to release the Lease on its way out — and a shorter lease would let the standby take over while the old leader still reconciles. The example clears it: 30 + 12 + 120 = 162 seconds, under its 180-second lease. A 90-second lease beside the same 60-second renew deadline fails it, with `--leader-elect-release-on-cancel needs --leader-elect-lease-duration above 162s, and it is 90s`, an error that adds up each amount. The quota manager checks the rules when it starts: when the values break one, every new pod logs `bad flag`, with an error that gives the values and the rule, and exits, so the rollout doesn't finish and the old pods keep the old timing.
+
+Also set the three together. When any one is empty, the chart passes none of the three timing flags — but it still passes `--leader-elect-release-on-cancel`, and the quota manager refuses to start, with `--leader-elect-release-on-cancel needs --leader-elect-lease-duration, --leader-elect-renew-deadline and --leader-elect-retry-period, because it checks the lease against the other two`: the release rule can't be checked against controller-runtime's own timing. That fallback timing — a 15-second lease, a 10-second renew deadline and a 2-second retry period, whose 5-second renewal requests a routine stall outlasts — comes back only with `releaseOnCancel: false` beside the empty value. Longer values slow the failover after a crash, since the standby waits out the lease duration, so raise them only as far as your API server needs. The OME controller manager times its leader election the same way: see [Lease timing](configure-the-controller.md#lease-timing).
 
 ## Metrics
 

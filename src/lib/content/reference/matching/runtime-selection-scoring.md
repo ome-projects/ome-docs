@@ -36,7 +36,7 @@ When OME picks a runtime, it matches and renders the runtime's own spec, without
 
 ## How the score is computed
 
-A runtime's score is the highest score among its `supportedModelFormats` entries. An entry that matches the model's format and framework, [versions](model-version-matching.md) included, scores `(modelFormat.weight + modelFramework.weight) × priority`:
+A runtime's score is the highest score among its `supportedModelFormats` entries. An entry scores when its format and framework names equal the model's and two set versions match under the entry's [operator](model-version-matching.md#operators); a version that either side leaves unset passes. An entry that scores earns `(modelFormat.weight + modelFramework.weight) × priority`:
 
 | Field | Default | Notes |
 | --- | --- | --- |
@@ -65,6 +65,8 @@ spec:
 ```
 
 The score ignores `modelArchitecture`, `quantization` and `diffusionPipeline`. So when another entry with the same format and framework sets `autoSelect: true`, OME can still pick the runtime for a model that only an `autoSelect: false` entry matches.
+
+The score also takes a version that only one side sets, which never lets an entry [match](model-version-matching.md). An entry has to match for the runtime to qualify, but the score can then come from a different `autoSelect: true` entry — one that names the model's format and framework without their versions, say — when its `weight`s and `priority` outscore the entry that matched. That entry's score ranks the runtime, and its [`acceleratorConfig`](../../concepts/runtimes/serving-runtimes.md#per-accelerator-configuration) is the one the pods get.
 
 Within one runtime, `autoSelect: true` entries that share an entry `name`, or that leave it empty, can't set different priorities. The admission webhook rejects such a runtime with `different priorities assigned for the model format`.
 

@@ -226,17 +226,23 @@ The controller exports these metrics on its metrics endpoint:
 | `ome_canary_traffic_weight` | `namespace`, `isvc`, `component` | The last `traffic` weight that OME recorded. It drops to 0 when the canary completes or rolls back. |
 | `ome_canary_step_total` | `namespace`, `isvc`, `component` | Step advances. |
 | `ome_canary_complete_total` | `namespace`, `isvc` | Canaries that completed on the new revision. |
+| `ome_canary_phase_total` | `namespace`, `isvc`, `phase` | Reconcile passes of a running or parked canary, by the [phase](canary-progression.md#phases) each pass leaves it in. |
 | `ome_canary_analysis_evaluations_total` | `namespace`, `isvc`, `component`, `result` | Judged samples, one count per sampled member under its `component`, by the member's own `result`: `pass`, `fail` or `inconclusive`. |
 | `ome_canary_analysis_metric_value` | `namespace`, `isvc`, `component`, `metric` | The last value of each metric, under the sampled member's `component`; `metric` is the metric's own name, never `<component>/<name>`. Kept when a sample has none. |
 | `ome_canary_analysis_failed_checks` | `namespace`, `isvc`, `component` | The failing samples at the step, as of the last sample: one count for the group, on each sampled member's `component` series. |
 | `ome_canary_rollback_total` | `namespace`, `isvc`, `component`, `cause` | Rollbacks, by `cause`: `analysis` or `manual`. |
+| `ome_canary_resume_total` | `namespace`, `isvc`, `component`, `outcome` | [`ome.io/rollout-resume`](../../guides/roll-out-changes/pause-and-resume-a-rollout.md#the-service-has-no-recognized-pause) requests, by `outcome`: `applied`, `rejected` or `ignored`. |
 | `ome_canary_sampler_inflight` | None | Samples running now. |
 | `ome_canary_sampler_queue_depth` | None | Samples waiting for a free [`maxConcurrency`](#controller-settings) slot. |
 | `ome_canary_sampler_starved_total` | None | Samples that had to wait for a slot. |
 
+`ome_canary_phase_total` counts passes, not phase changes: every reconcile pass of a canary — a parked one included — counts one on the `phase` it leaves in [`rolloutPhase`](canary-progression.md#phases), which `kubectl ome rollout status` shows as PHASE. OME keeps reconciling a canary that sits `Paused` or `Failed`, so those series keep rising while it sits, and a fleet-wide rate by `phase` finds the services parked there. Unlike the per-component canary series, the counter has no `component` label: every [canary unit](#which-members-a-step-samples) of a service counts on the same series.
+
 A judged sample publishes each [sampled member's](#which-members-a-step-samples) own result: when the decoder breached and the engine passed, `ome_canary_analysis_evaluations_total` counts `fail` under `component="decoder"` and `pass` under `component="engine"`, while the sample itself fails.
 
 When a rollback finishes, OME records a Normal event with the reason `RolloutRunClosed` and the message `run <run ID> closed: RolledBack`. `ome_canary_rollback_total` tells analysis and manual rollbacks apart.
+
+OME acts on an `ome.io/rollout-resume` request once and removes the annotation whether or not it resumed anything, so `ome_canary_resume_total` is what tells you how the requests ended. Its `component` is the [primary member](#which-members-a-step-samples) of the canary unit that handled the request. `applied` means a parked canary resumed, with the Normal event `RolloutResumed`. `rejected` means the request addressed a parked canary that OME couldn't resume: the hash isn't the parked revision, no member of the unit targets it any more, or a `Failed` hold has no rollout run pinned. `ignored` means the request addressed no canary, parked or in flight. A rejected or ignored request also records the Warning event `RolloutResumeRejected`, which [The resume annotation disappears and nothing resumes](../../guides/roll-out-changes/pause-and-resume-a-rollout.md#the-resume-annotation-disappears-and-nothing-resumes) explains, so you can alert on those outcomes instead of reading each service's events. A request that addresses a canary that isn't parked is removed with no count and no event.
 
 ## Where the metrics come from
 

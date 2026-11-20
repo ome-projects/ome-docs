@@ -3,11 +3,11 @@ title: Runtime deployment-mode matching
 description: Auto-selection skips a runtime when it and your InferenceService declare different deployment modes for the same component.
 ---
 
-When an [InferenceService](../../concepts/serving/inference-services.md) doesn't name a runtime, OME skips any [serving runtime](../../concepts/runtimes/serving-runtimes.md) that declares a different [deployment mode](../../concepts/architecture/deployment-modes.md) for the engine or decoder than the InferenceService asks for. Declare a mode on a runtime to keep it away from InferenceServices that ask for a different one. The [catalog runtimes](../../concepts/runtimes/serving-runtimes.md#the-runtime-catalog) declare no mode, so they always pass this check.
+When an [InferenceService](../../concepts/serving/inference-services.md) doesn't name a runtime, OME skips any [serving runtime](../../concepts/runtimes/serving-runtimes.md) that declares a different [deployment mode](../../concepts/architecture/deployment-modes.md) for the engine, the decoder or the encoder than the InferenceService asks for. Declare a mode on a runtime to keep it away from InferenceServices that ask for a different one. The [catalog runtimes](../../concepts/runtimes/serving-runtimes.md#the-runtime-catalog) declare no mode, so they always pass this check.
 
 ## The matching rule
 
-OME compares the engine's modes, and the decoder's when the InferenceService has a `spec.decoder`. It doesn't compare the router. It rejects the runtime when both sides declare a mode for the same component and the modes differ. For the engine:
+OME compares the modes of every component that runs the model: the engine's always, the decoder's when the InferenceService has a `spec.decoder`, and [the alpha encoder's](../../concepts/serving/inference-services.md#the-encoder) when it has a `spec.encoder`. It doesn't compare the router. It rejects the runtime when both sides declare a mode for the same component and the modes differ. For the engine:
 
 | InferenceService's engine mode | Runtime's `engineConfig` mode | Result |
 |---|---|---|
@@ -16,6 +16,8 @@ OME compares the engine's modes, and the decoder's when the InferenceService has
 | `OMENative` | `OMENative` | Passes |
 | `OMENative` | `MultiNode` | Rejected |
 | `RawDeployment` | `OMENative` | Rejected |
+
+An InferenceService with an encoder always asks for `OMENative` for it, because the webhook refuses every other shape. So a runtime whose `encoderConfig` declares another mode never matches such an InferenceService, with a reason like `runtime encoder deployment mode RawDeployment does not match requested encoder deployment mode OMENative`.
 
 The check is a filter: it adds nothing to a runtime's [score](runtime-selection-scoring.md). OME checks the mode before the model format, so runtimes built for other models can show a mode rejection too. [Troubleshoot runtime selection](../../guides/deploy-models/troubleshoot-runtime-selection.md#step-3-read-the-exclusion-reasons) lists every check in order.
 
@@ -27,9 +29,10 @@ Both sides use the `ome.io/deploymentMode` annotation, and an InferenceService c
 |---|---|
 | Runtime: `engineConfig.annotations` | Yes, for the engine |
 | Runtime: `decoderConfig.annotations` | Yes, for the decoder |
+| Runtime: `encoderConfig.annotations` | Yes, for the encoder |
 | Runtime: an annotation inherited from a [parent runtime](../../concepts/runtimes/runtime-inheritance.md#when-the-merged-spec-applies) | Only when the InferenceService names the runtime |
 | Runtime: `metadata.annotations`, `routerConfig.annotations`, or a `leader` and `worker` alone | No |
-| InferenceService: `spec.engine.annotations` or `spec.decoder.annotations` | Yes, ahead of `spec.deploymentMode` |
+| InferenceService: `spec.engine.annotations`, `spec.decoder.annotations` or `spec.encoder.annotations` | Yes, ahead of `spec.deploymentMode` |
 | InferenceService: `spec.deploymentMode` (since v1.3) | Yes, for each component whose annotation sets no mode. It takes only `OMENative` or `RawDeployment`, so `MultiNode` needs the annotation. |
 | InferenceService: `metadata.annotations` | No |
 
@@ -39,7 +42,9 @@ Since v1.3, when the engine or the decoder asks for `OMENative`, the webhook req
 
 ## The runtime's mode also sets the running mode {#matching-versus-the-mode-a-component-runs}
 
-OME merges the runtime's `engineConfig`, `decoderConfig` and `routerConfig` into the components the InferenceService declares, annotations included. So a runtime's mode becomes the component's mode, ahead of `spec.deploymentMode`, and only the component's own annotation in the InferenceService overrides it. An InferenceService that declares no mode can get a `MultiNode` runtime and run as `MultiNode`. Since v1.3, [`kubectl ome runtime effective`](../kubectl-ome/runtime.md#effective) shows each component's mode and the rule that set it. [How OME resolves the mode](../../concepts/architecture/deployment-modes.md#how-ome-resolves-the-mode) gives the full order.
+OME merges the runtime's `engineConfig`, `decoderConfig`, `encoderConfig` and `routerConfig` into the components the InferenceService declares, annotations included. So a runtime's mode becomes the component's mode, ahead of `spec.deploymentMode`, and only the component's own annotation in the InferenceService overrides it. An InferenceService that declares no mode can get a `MultiNode` runtime and run as `MultiNode`. Since v1.3, [`kubectl ome runtime effective`](../kubectl-ome/runtime.md#effective) shows each component's mode and the rule that set it. [How OME resolves the mode](../../concepts/architecture/deployment-modes.md#how-ome-resolves-the-mode) gives the full order.
+
+A service with an encoder is the exception: when any component's merged mode isn't `OMENative`, OME changes nothing in the cluster. It sets `EncoderReady` to `False` and records a Warning event, both with reason `EncoderRequiresOMENative`; [The encoder](../../concepts/serving/inference-services.md#the-encoder) covers the recovery.
 
 A runtime whose `routerConfig` declares `MultiNode` passes matching, but a router can't run in that mode. For an InferenceService that sets `spec.router` and gets that runtime, OME can't create or update the router. The manager logs `Failed to reconcile component` with `invalid deployment mode for router`, and records no event.
 
@@ -174,7 +179,7 @@ spec:
 
 ## Where a rejection shows up
 
-OME applies the rule when it picks a runtime, and when it checks a runtime that the InferenceService names. A rejection gives this reason, with `engine` or `decoder` as the component and the runtime's mode first:
+OME applies the rule when it picks a runtime, and when it checks a runtime that the InferenceService names. A rejection gives this reason, with `engine`, `decoder` or `encoder` as the component and the runtime's mode first:
 
 ```text
 runtime engine deployment mode MultiNode does not match requested engine deployment mode OMENative
@@ -203,7 +208,7 @@ Runtime srt-llama-3-3-70b-instruct-multinode does not declare support for model 
 ## Resolve a conflict
 
 - Use a runtime that declares the InferenceService's mode, or none. To move a `MultiNode` runtime to OMENative, [make an OMENative copy of it](../../guides/omenative/move-from-leaderworkerset.md#step-2-make-an-omenative-copy-of-the-runtime).
-- Change the InferenceService's mode for that component to the runtime's, or remove it. Either way, the component runs in the runtime's mode.
+- Change the InferenceService's mode for that component to the runtime's, or remove it. Either way, the component runs in the runtime's mode. For the encoder, the webhook admits only `OMENative`, so change the runtime's `encoderConfig` instead.
 - Name the runtime in `spec.runtime.name`. OME uses it with a warning, and the component runs in [the runtime's mode](#matching-versus-the-mode-a-component-runs) unless the component's own annotation sets one.
 - To keep InferenceServices that declare no mode off a runtime, leave `autoSelect` unset or `false` on all its entries. Then [name the runtime](../../guides/deploy-models/reference-a-runtime-explicitly.md) where you need it.
 

@@ -70,7 +70,7 @@ helm upgrade --install ome-crd oci://ghcr.io/moirai-internal/charts/ome-crd \
 
 Helm installs the release and reports its status as `deployed`.
 
-`--version` takes the release's version without the leading `v`. Install the same version of both OME charts, and pass `--version` on every upgrade, or Helm installs the latest.
+`--version` takes the release's version without the leading `v`. Install the same version of both OME charts, and pass `--version` on every upgrade, or Helm installs the latest. If the controller gets ahead of the CRDs, every InferenceService reports it: see [Every InferenceService reports CRDSchemaLagging after an upgrade](#every-inferenceservice-reports-crdschemalagging-after-an-upgrade).
 
 Check that the API server serves OME's resources:
 
@@ -297,6 +297,32 @@ Then run the same `helm upgrade --install` command again. If it fails with the s
 ### An upgrade fails with a conflict
 
 On Helm 4, `helm upgrade` can fail with a server-side apply conflict over the `clientConfig.caBundle` field of an OME webhook configuration. Run the upgrade again with `--server-side=false`, as in [Step 3](#step-3-install-ome).
+
+### Every InferenceService reports CRDSchemaLagging after an upgrade
+
+After a `helm upgrade` of `ome-resources` without the same upgrade of `ome-crd`, the controller can know fields that the installed CRDs don't declare. When it starts, the controller compares each CRD of the `ome.io` group with the schema its release ships, the one the matching `ome-crd` chart installs. A lagging CRD doesn't stop the controller: it serves with the fields the CRD has, and reports the gap on every InferenceService as a `CRDSchemaCurrent` condition at `False`, and as a `CRDSchemaLagging` Warning event with the same message. The message holds a sentence per lagging CRD, naming the fields it lacks:
+
+```bash
+kubectl get inferenceservice llama-3-2-1b-instruct -n llama-demo \
+  -o jsonpath='{.status.conditions[?(@.type=="CRDSchemaCurrent")]}' | jq
+```
+
+```output
+{
+  "lastTransitionTime": "2026-11-18T08:21:04Z",
+  "message": "CRD inferenceservices.ome.io lacks fields this release of the manager knows: spec.encoder. The apiserver drops them from every write until the CRD is upgraded to this release.",
+  "reason": "CRDSchemaLagging",
+  "severity": "Info",
+  "status": "False",
+  "type": "CRDSchemaCurrent"
+}
+```
+
+The controller also records one `CRDSchemaLagging` Warning event per lagging CRD on its own pods: list them with `kubectl get events -n ome --field-selector reason=CRDSchemaLagging`.
+
+Your InferenceServices keep serving: the condition is advisory, and doesn't count toward `Ready`. The cost is in writes. Until the CRD is upgraded, the API server drops the missing fields from every write of an object of that CRD — from a manifest you apply as much as from the controller's own status writes — and keeps the rest of the write, with no error. Fields the installed CRD declares are untouched.
+
+To clear it, upgrade `ome-crd` as in [Step 2](#step-2-install-the-crds), passing the version of `ome-resources` to `--version`. The controller watches the CRDs, so it notices without a restart: its pods get a Normal `CRDSchemaCurrent` event for each CRD that is current again, and each InferenceService's condition turns `True`, with the reason `CRDSchemaCurrent` and one Normal event, the next time the controller reconciles that service. Then apply again any manifest you applied while the CRD lagged, to restore the fields the API server dropped. Once the condition has appeared on an InferenceService, it stays, at `True`; a service on a cluster whose CRDs never lagged doesn't get one.
 
 ### The controller or the model agent isn't ready
 

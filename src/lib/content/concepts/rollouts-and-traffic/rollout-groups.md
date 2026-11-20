@@ -53,6 +53,7 @@ inferenceservice.ome.io/mistral-pd created
 - When a change gives both a new revision, they roll out together by [blue-green](#choose-a-progression), since the group sets no progression, paced in [batches](#batches-for-the-engine-and-the-decoder).
 - The router is in no group, so it rolls out on its own.
 - While a component's update waits, `status.components.<component>.lifecycle.rolloutHold` names the gate that holds it. [Lifecycle status](../architecture/deployment-modes.md#lifecycle-status) lists the gates.
+- Where the group as a whole stands is in `status.rolloutCoordination.groups`: see [Observe a group in status](#observe-a-group-in-status).
 - An edit to `spec.rollout` during a rollout [applies to the next one](rollout-policy.md#when-the-reference-is-resolved).
 
 Each group can set:
@@ -81,7 +82,7 @@ In a blue-green or rolling-update group, a failed Instance in any component mark
 
 `maxSurge` and `maxUnavailable` set each component's own budget, as a count or a percentage, 25% by default. With the default `SurgeThenDrain` [update strategy](../architecture/omenative-update-strategies.md), a component starts a new Instance before it stops an old one, within `maxSurge`. With any other strategy, it moves within `maxUnavailable`.
 
-An edit that changes some of the group's components and not others is admitted: the changed components roll out, and the rest keep their revision and roll nothing. The webhook warns, once per group, naming who moves and who stays: `spec.rollout.groups[0]: only the engine changes; the decoder keeps its revision and rolls nothing (RollingUpdatePartialChange)`. A component counts as changed when the edit re-renders its pod template — its image, but also an env, a command, a resource, a volume, a label or an annotation — while a change that re-renders no pods, such as its replica counts or its `lifecycle` block, draws no warning. The group rolls one member alone because any mix of its members' revisions is expected to serve together; when the engine-decoder wire protocol makes a mix unsafe, change it through [`pairingProtocol`](#change-the-engine-decoder-wire-protocol), which needs a blue-green or canary group.
+An edit that changes some of the group's components and not others is admitted: the changed components roll out, and the rest keep their revision and roll nothing. The webhook warns, once per group, naming who moves and who stays: `spec.rollout.groups[0]: only the engine changes; the decoder keeps its revision and rolls nothing (RollingUpdatePartialChange)`. A component counts as changed when the edit re-renders its pod template — its image, but also an env, a command, a resource, a volume, a label or an annotation — while a change that re-renders no pods, such as its replica counts or its `lifecycle` block, draws no warning. The group rolls one member alone because any mix of its members' revisions is expected to serve together; when the engine-decoder wire protocol makes a mix unsafe, change it through [`pairingProtocol`](#change-the-engine-decoder-wire-protocol), which needs one group listing both the engine and the decoder — a rolling-update group included.
 
 This group moves four engines and two decoders one Instance at a time, and keeps their 2:1 ratio:
 
@@ -207,7 +208,7 @@ The first step waits until you promote it. To promote a step, or to roll the can
 
 `spec.rollout.pairingProtocol` is a token you choose, such as `kv-v1`, for the wire protocol between the engine and the decoder. Change it only when that protocol changes. A new token gives both components a new revision, and OME labels their pods with `ome.io/pairing-protocol`. An [encoder](../serving/inference-services.md#the-encoder) carries the token too, but isn't kept pairable through a change, so while a service declares one the token is frozen except for clearing: see [While an encoder is declared](#while-an-encoder-is-declared).
 
-To move from one token to another, roll the engine and the decoder out in one blue-green group. If `mistral-pd` runs with `pairingProtocol: kv-v1`, this spec moves it to `kv-v2`:
+To move from one token to another, roll the engine and the decoder out in one group. Any progression serves — blue-green, rolling update or canary — since what admits the change is the shared group, under which the two sides roll together. If `mistral-pd` runs with `pairingProtocol: kv-v1`, this spec moves it to `kv-v2` in a blue-green group:
 
 ```yaml
 spec:
@@ -218,7 +219,7 @@ spec:
         blueGreen: {}
 ```
 
-While the change rolls out, OME keeps at least one engine and decoder pair with the same token serving, and keeps each component at its pairable floor: at least its desired replicas minus `maxUnavailable` [Instances](../omenative/instances.md) with a serving pod that still has a partner. A partner is a serving pod of the other component whose token is the same, or empty on either side, and a surge replacement counts from the moment it serves. `maxUnavailable` is the stricter of 25% of the component's desired replicas, rounded up, and its own [`lifecycle.updateStrategy.rollingUpdate.maxUnavailable`](../architecture/omenative-update-strategies.md#pacing-with-rollingupdate). The floor applies only when it comes to 2 or more: four engines with the default budgets keep a floor of 3, and with one or two replicas only the one-pair rule applies.
+While the change rolls out, OME keeps at least one engine and decoder pair with the same token serving, and keeps each component at its pairable floor: at least its desired replicas minus `maxUnavailable` [Instances](../omenative/instances.md) with a serving pod that still has a partner. A partner is a serving pod of the other component whose token is the same, or empty on either side, and a surge replacement counts from the moment it serves. `maxUnavailable` is the stricter of the group's `rollingUpdate.maxUnavailable` — 25% of the component's desired replicas, rounded up, when the group sets none — and the component's own [`lifecycle.updateStrategy.rollingUpdate.maxUnavailable`](../architecture/omenative-update-strategies.md#pacing-with-rollingupdate). A canary group carries no budget of its own, so there the floor reads the component's own `maxUnavailable` alone, and a component that declares none keeps no floor beyond the one pair. The floor applies only when it comes to 2 or more: four engines with the default budgets keep a floor of 3, and with one or two replicas only the one-pair rule applies.
 
 Under the default `SurgeThenDrain` update strategy, each component starts and serves its new-token pods before its old pods drain, and an old pod's drain waits, with the `rolloutHold` gate `Pairing`, in four cases:
 
@@ -231,7 +232,9 @@ A floor holds a drain only when the drain itself lowers the pairable count, so a
 
 Under `RecreatePod` or an in-place strategy, a component runs the new token only once its old pods leave rotation, so OME checks both floors before a step takes its pod out of rotation, at the same `Pairing` gate. The step waits with a reason such as `pairing protocol transition to "kv-v2": updating a serving engine of cohort "kv-v1" would leave the engine with 2 pairable serving Instance(s), below its floor of 3 (desired 4 minus maxUnavailable 1); holding until cohort "kv-v2" serves on both Components`, until the new token serves on both components. With one engine and one decoder the change can briefly leave no pair.
 
-The webhook rejects a change from one token to another when the engine and the decoder roll out separately or by rolling update (`PairingProtocolChangeUncoordinated`). With no encoder declared, it always accepts setting a token for the first time, or clearing it.
+These holds follow each component's update strategy, whatever progression the group sets, and come on top of the group's ordinary pacing: in a rolling-update or blue-green group, the [batches](#batches-for-the-engine-and-the-decoder) and budgets still pace the steps, and in a canary group the [steps](#canary) still stage capacity, with the `Pairing` holds added to them.
+
+The webhook rejects a change from one token to another when no group lists both the engine and the decoder, because they roll out independently or in separate groups (`PairingProtocolChangeUncoordinated`). The refusal names the fix: `spec.rollout.pairingProtocol: changing the pairing protocol ("kv-v1" -> "kv-v2") requires engine and decoder to roll together: declare one spec.rollout group that lists both components (rollingUpdate, blueGreen or canary); when they roll independently or in separate groups nothing holds one side back for the other, so a step can leave every serving engine on a protocol no serving decoder speaks (PairingProtocolChangeUncoordinated)`. With no encoder declared, it always accepts setting a token for the first time, or clearing it.
 
 ### While an encoder is declared
 
@@ -284,6 +287,94 @@ Each canary group rolls out on its own, alongside the other groups. The other gr
 
 `spec.rollout.groupOrdering` changes only what the webhook accepts, not how the groups roll out. `Sequential`, the default, accepts one group or a sequence alone. Any other list of two or more groups, such as a canary group beside another group, needs `groupOrdering: Concurrent`, or the webhook rejects it with `GroupOrderingNotHonored`.
 
+## Observe a group in status
+
+OME reports where each blue-green or rolling-update group stands — a [sequence](#roll-components-one-at-a-time) included — in `status.rolloutCoordination.groups`, rolls the groups up into the `RolloutCoordinationReady` condition, and records [events](#the-transition-events) on the InferenceService at a rollout's turning points. The surface exists only while the service declares such groups: a canary group reports through [`status.components.<component>.rolloutPhase`](../../reference/rollouts/canary-progression.md#phases) instead, and a component in no group has only its [`rolloutHold`](../architecture/deployment-modes.md#lifecycle-status).
+
+Each group gets one entry, named by its position in `spec.rollout.groups`, as a string: the first group is `"0"`. A [sequence](#roll-components-one-at-a-time) collapses into one entry, `0`. Read the group of `mistral-pd` while it rolls:
+
+```bash
+kubectl get inferenceservice mistral-pd -n mistral-demo -o custom-columns='GROUP:.status.rolloutCoordination.groups[0].name,PHASE:.status.rolloutCoordination.groups[0].phase,COMPOSITE:.status.rolloutCoordination.groups[0].compositePhase,MESSAGE:.status.rolloutCoordination.groups[0].message'
+```
+
+```output
+GROUP   PHASE     COMPOSITE   MESSAGE
+0       Waiting   Waiting     waiting for new-revision pods to be Ready
+```
+
+The entry is a [RolloutCoordinationGroupStatus](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-RolloutCoordinationGroupStatus):
+
+| Field | What it reports |
+| --- | --- |
+| `name`, `components`, `policy` | The group's index as a string, its components, and how it rolls out: `BlueGreen`, `RollingUpdate`, or `Sequential` for a sequence. |
+| `order` | In a sequence, the components in list order. |
+| `phase` | The base phase. See [the table below](#the-phases). |
+| `compositePhase` | The phase with the rolling member composed in. See [below](#the-phases). |
+| `currentComponent`, `previousComponent` | In a sequence, the member rolling out now — or the next one, while the group waits between members — and the member before it. |
+| `memberFinished` | In a sequence with a `soak`, the member whose rollout last finished (`component`) and when it did (`at`): the instant the wait runs from. |
+| `memberNotReady` | In a sequence with a `soak`, the finished member whose Ready condition is False or absent while the next member waits on it. |
+| `observedSurge` | The group's `rollingUpdate.maxSurge`, or `25%` when it sets none. |
+| `observedRatio` | With `maintainRatio`: `original`, the desired counts the band measures against — they follow the spec, so a resize moves them — then each component's live pods (`current`) and new-revision pods (`newPods`). |
+| `lastTransitionTime` | When `phase` last changed. |
+| `mixedPairing` | A rolling-update group's live pods span more than one revision, which it permits while it rolls. |
+| `surgeHeldByRatio` | `maintainRatio` held at least one component's next start on this pass, at the `Ratio` gate of [Rolling update](#rolling-update). |
+| `message` | A sentence that explains the phase. |
+
+### The phases
+
+| Phase | The group is |
+| --- | --- |
+| `Idle` | At rest, with no rollout in flight. A sequence also reads `Idle` between members: `compositePhase` is what says it hasn't finished. |
+| `Surging` | Starting new-revision pods. |
+| `Waiting` | Waiting for its new-revision pods to be ready. |
+| `Shifting` | Writing the components' traffic weights toward the new revision. |
+| `ScalingDown` | Removing old-revision pods. |
+| `Staged` | Done up to the [`rollingUpdate.partition`](../architecture/omenative-update-strategies.md#pacing-with-rollingupdate) its components set, holding old-revision pods by design. |
+| `Failed` | Held by a failed component, as [Choose a progression](#choose-a-progression) describes. The `message` names the progression, or the failed member of a sequence. |
+| `Paused` | Held by the `ome.io/rollout-paused` annotation. See [Pause and resume a rollout](../../guides/roll-out-changes/pause-and-resume-a-rollout.md). |
+
+The [CoordinationPhase](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-CoordinationPhase) values `Draining` and `RollingBack` exist in the API, but OME doesn't set them.
+
+`compositePhase` is the phase to read; `phase` is the stable value [the group metrics](../../guides/operate-ome/metrics.md#watch-rollout-groups-in-the-controllers-metrics) carry. For a blue-green or rolling-update group the two match. A sequence composes the member into it:
+
+- `decoder.Surging`: the named member is rolling, in the base phase after the dot.
+- `Sequential.AwaitingNextComponent`: the sequence is between members — waiting out a [`soak`](#roll-components-one-at-a-time), or waiting for a change to the next member. The base phase is `Idle`.
+- `Sequential.Failed`: a failed member blocks the sequence.
+- `Idle`: the sequence is done, or hasn't started.
+
+### The `RolloutCoordinationReady` condition
+
+OME rolls the groups' phases up into one condition in `status.conditions`, which the COORDINATION column of [`kubectl ome rollout status`](../../reference/kubectl-ome/rollout.md#status-output-fields) shows:
+
+| Status | Reason | When |
+| --- | --- | --- |
+| `False` | `Failed` | A group is `Failed`. The message names the groups: `rollout coordination failed in groups: 0`. |
+| `False` | `InProgress` | No group is `Failed`, and a group is in any phase but `Idle` or `Staged`. The message names each with its phase: `rollout coordination in flight: 0:Waiting`. |
+| `True` | `Idle`, or `Staged` | Every group is `Idle` — or `Staged`, which counts as ready. |
+| `True` | `NoCoordinationGroups` | An edit left the service without blue-green or rolling-update groups — it dropped them, or moved to canary only — and OME cleared `status.rolloutCoordination` with them. A service that never declared such groups never gets the condition. |
+
+```bash
+kubectl get inferenceservice mistral-pd -n mistral-demo -o jsonpath='{.status.conditions[?(@.type=="RolloutCoordinationReady")].status}{" "}{.status.conditions[?(@.type=="RolloutCoordinationReady")].reason}{"\n"}'
+```
+
+```output
+False InProgress
+```
+
+Two details to read it right. The condition reads the base phase, so a sequence between members reads `True` while a soak runs or the next member waits for you: its `compositePhase` is what says the sequence hasn't finished. And the service's own Ready condition doesn't depend on it, so a mid-rollout group doesn't make the service unready.
+
+### The transition events
+
+OME records an event on the InferenceService when a group enters these phases — once per transition, not per reconcile — so `kubectl describe` shows a rollout's turning points without polling status:
+
+| Event | Type | When |
+| --- | --- | --- |
+| `CoordinationGroupSurging` | Normal | The group enters `Surging`. |
+| `CoordinationGroupShifting` | Normal | The group enters `Shifting`. |
+| `CoordinationGroupCompleted` | Normal | The group returns to `Idle`. |
+
+Each message is the group and its status message, as in `coordination group 0 surging: creating new-revision pods`. Entering `Failed` records the `CoordinationGroupFailed` Warning that [Choose a progression](#choose-a-progression) describes; entering `Waiting`, `ScalingDown`, `Staged` or `Paused` records nothing. A group first observed already in one of these phases records that event; one first observed at rest records nothing. In a sequence, `CoordinationGroupSurging` fires once per member. `CoordinationGroupCompleted` fires when the base phase returns to `Idle`: between members while the sequence waits — out a [`soak`](#roll-components-one-at-a-time), or for a change to the next member — and when the sequence finishes. With no wait, the base phase moves straight from a finished member to the next member's `Surging`, with no `CoordinationGroupCompleted` between them.
+
 ## What admission rejects
 
 When the webhook rejects a rollout, `kubectl` prints `admission webhook "inferenceservice.ome-webhook-server.validator" denied the request:`, then a message that ends in a reason in parentheses:
@@ -298,7 +389,7 @@ When the webhook rejects a rollout, `kubectl` prints `admission webhook "inferen
 | `OrderNotHonored` | A group sets `order`, which no progression applies. |
 | `InvalidRollingUpdateInteger`, `InvalidRollingUpdatePercent`, `ZeroBudgetPacingUnstartable` | A negative count, a string that isn't a percentage from `"0%"` to `"100%"`, or two budgets that resolve to zero. |
 | `RatioDrainInfeasible` | A `maintainRatio` group's drain-first member's first drain would leave it with nothing serving, or move a pair's serving ratio more than twice the `tolerance`. See [Rolling update](#rolling-update). |
-| `PairingProtocolChangeUncoordinated` | With no encoder declared, `pairingProtocol` changes tokens while the engine and the decoder roll out separately or by rolling update. |
+| `PairingProtocolChangeUncoordinated` | With no encoder declared, `pairingProtocol` changes tokens while no group lists both the engine and the decoder: they roll out independently, or in separate groups. |
 | `PairingProtocolChangeWithEncoder` | `pairingProtocol` changes — between tokens, or a first-time set — while the old or the new spec declares an encoder. The token may only stay or be cleared. See [While an encoder is declared](#while-an-encoder-is-declared). |
 | `EncoderAddedWithPairingProtocol` | An edit adds an encoder while `pairingProtocol` is set. Clear the token in the same edit. |
 | `RolloutPolicyRefUnsupported` | A group sets `policyRef` while RolloutPolicy is off. |

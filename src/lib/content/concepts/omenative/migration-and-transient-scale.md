@@ -60,7 +60,7 @@ The key is `ome.io/migration-request-v1-` followed by a request UUID, and the va
 
 | Field | Meaning |
 | --- | --- |
-| `schemaVersion` | Always `v1`. |
+| `schemaVersion` | `v1`, the only version OME understands. The webhook rejects any other value; a request that reaches the controller anyway gets its own `UnsupportedSchemaVersion` event. |
 | `component` | `engine`, `decoder` or `router`. |
 | `instance` | The index of the Instance to move. |
 | `from_node` | The node to leave. When the Instance no longer runs there, OME moves it off the node it does occupy: see [When a request waits or fails](#what-refuses-a-migration-request). |
@@ -69,9 +69,11 @@ The key is `ome.io/migration-request-v1-` followed by a request UUID, and the va
 | `requested_at` | Optional. When the request was made. |
 | `requested_by` | Optional. Who asked, such as `kubectl-ome` or `alfred`. |
 
-OME's webhook rejects a malformed request, or one for a component the InferenceService doesn't have, with a message that starts with `migration request`.
+OME's webhook rejects a malformed request, one whose `schemaVersion` isn't `v1`, or one for a component the InferenceService doesn't have, with a message that starts with `migration request`.
 
 OME then records the request in the InferenceReplica's `status.migrations` as `Accepted`, adds a row to the audit ConfigMap `qwen3-0-6b-ome-migration-audit`, and removes the annotation. So a missing annotation means OME has taken the request, not that the Instance has moved. The `MigrationRequestAccepted` event comes later, when the move starts. A request OME can't act on, such as one for a removed component, gets a `MigrationRequestRejected` event instead of a record.
+
+One rejection keeps its own reason. When a request whose `schemaVersion` isn't `v1` reaches the controller anyway, OME rejects it with a Warning `UnsupportedSchemaVersion` event, writes the request's `Failed` row to the audit ConfigMap, and removes the annotation, again with no record in `status.migrations`. The event's message ends with the version the request carried, such as `rejected: UnsupportedSchemaVersion: "v2"`. The reason is kept apart from `MigrationRequestRejected` so you can alert on version skew between the tooling that writes your requests and the OME that reads them.
 
 ## Migration policy
 
@@ -138,6 +140,17 @@ The rebuilt Instance also avoids nodes that earlier relocations left. Each reloc
 
 The avoidance lasts only while another node has room. When the scheduler can't place a rebuild anywhere for longer than [`unschedulableGracePeriod`](instances.md#when-an-instance-fails), OME prefers a rebuild that may land on a blamed node to one that can't run at all: it releases the nodes the Instance avoids for the revision it's building, and records one Normal `NodeExclusionReleased` event naming them, ending with `no other node had room for the rebuild; it may land on gpu-node-a again`. The rebuild that found no room fails with the scheduler's verdict, as the No room row of [When an Instance fails](instances.md#when-an-instance-fails) describes, and the next one can land on a node an earlier relocation left. The release returns no relocation attempts: the ones spent stay counted against `autoMigrate.maxAttempts` until the Instance is next `Ready`, which resets the count and the avoided nodes together. An Instance that avoids no node gets no release and no event.
 
+### A failed replacement on an excluded node
+
+A relocation can follow a failed [SurgeThenDrain update](../architecture/omenative-update-strategies.md#surgethendrain) of a single-pod Instance, and the failed attempt leaves its replacement pod standing: a pod that isn't serving, still holding the Instance's surge slot on the node the relocation just excluded. When the failure was a container that couldn't be created — the reason `CreateContainerError` in the Instance's `lastFailure` — OME deletes that pod instead of retrying it in place: the exclusion means the rebuild belongs on another node, and every attempt builds its own replacement. OME records a Normal `FailedSurgeTargetRecycled` event, such as `OMENative component=engine instance=0 deleted failed non-serving surge target qwen3-0-6b-engine-0-default-1 on excluded node gpu-node-a; retry will create a fresh pod`, and the retry's fresh pod avoids the excluded nodes. The source pod isn't touched and serves throughout.
+
+Two guards hold the delete. OME keeps the failed pod, and the Instance waits, while:
+
+- the source isn't serving. The delete needs the Instance's one source pod live, ready, in rotation and on its running revision; a missing or unhealthy source needs an operator, not another removal.
+- no recorded exclusion names the replacement's node for the pod's own revision, because the failure recorded no relocation, or the relocations in `autoMigrate.maxAttempts` are spent and no new node is recorded. A fresh pod could land on the same node and fail the same way, so OME waits instead of churning pods.
+
+The recycle acts only on a pod that still shows the failure — the one the `lastFailure` names, on the failed revision, neither ready nor serving, with a container still waiting in `CreateContainerError` — and only while that revision is still the update's target. When you push a corrected revision instead, the retry commits to it and clears the old replacement itself. OME reads both pods live and deletes under the replacement's UID, so a pod that recovered, or a fresh pod under the same name, is never deleted.
+
 ## When a request waits or fails {#what-refuses-a-migration-request}
 
 Once OME has taken a request, the request waits in `Accepted` while:
@@ -199,7 +212,8 @@ InferenceService   qwen3-0-6b   OMENative migration uuid=3f9c2a1e-7b4d-4c8e-9a6f
 | --- | --- | --- |
 | `MigrationRequestAccepted` | Normal | A move starts. |
 | `MigrationCompleted` | Normal | The surge has replaced the source. |
-| `MigrationRequestRejected` | Warning | OME rejected or failed a request, for any reason but its deadline or a stuck surge pod. |
+| `MigrationRequestRejected` | Warning | OME rejected or failed a request, for any reason but its deadline, a stuck surge pod or an unsupported `schemaVersion`. |
+| `UnsupportedSchemaVersion` | Warning | The request's `schemaVersion` isn't `v1`, so OME rejected it. Its own reason, so you can alert on version skew between a requester and the controller. |
 | `MigrationFromNodeMismatch` | Normal | `from_node` doesn't host the source, so the move leaves the node the Instance occupies instead. |
 | `MigrationFromNodeMismatch` | Warning | The source names no node to leave, so the request fails. |
 | `MigrationSourceRebuilt` | Normal | An update rebuilt the source Instance at a new index, so a waiting request follows it there. |
@@ -214,6 +228,7 @@ InferenceService   qwen3-0-6b   OMENative migration uuid=3f9c2a1e-7b4d-4c8e-9a6f
 | `AutoMigrationTriggered` | Normal | OME relocated an Instance. |
 | `AutoMigrationCapReached` | Warning | An Instance used its last relocation. |
 | `NodeExclusionReleased` | Normal | No node had room for a rebuild that avoided the nodes earlier [relocations](#automatic-relocation) left, so the next rebuild may land on them again. |
+| `FailedSurgeTargetRecycled` | Normal | A failed update's replacement pod sat on a node a [relocation](#a-failed-replacement-on-an-excluded-node) excluded, so OME deleted it; the retry builds a fresh pod elsewhere. |
 
 ### Count automatic relocations
 
