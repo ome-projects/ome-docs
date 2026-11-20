@@ -53,7 +53,7 @@ Set `storage.storageUri`, and for `hf://`, `oci://`, `modelpack://` and `local:/
 | --- | --- | --- |
 | `hf` | `hf://{model-id}[@{revision}]` | Downloads the model from Hugging Face to `path` on the selected nodes. The revision defaults to `main`, and a node resolves it to a commit each time it processes the model. See [Pin the revision](#pin-the-hf-revision). |
 | `oci` | `oci://n/{namespace}/b/{bucket}/o/{object_path}` | Downloads the model from OCI Object Storage to `path` on the selected nodes. |
-| `modelpack` | `modelpack://{registry}/{repository}[:{tag}]`, or `@{digest}` in place of the tag | Pulls the model, a [CNCF ModelPack](https://github.com/modelpack/model-spec) artifact, from a container registry to `path` on the selected nodes, through an `llmman serve` daemon that you provide. The repository can contain slashes. See [ModelPack models](../../guides/operate-ome/model-agent.md#modelpack-models). |
+| `modelpack` | `modelpack://{registry}/{repository}[:{tag}]`, or `@{digest}` in place of the tag | Pulls the model, a [CNCF ModelPack](https://github.com/modelpack/model-spec) artifact, from a container registry to `path` on the selected nodes, through an `llmman serve` daemon that you provide. The repository can contain slashes, and a node pulls whatever a tag points to each time it processes the model. See [Pin the digest](#pin-the-modelpack-digest) and [ModelPack models](../../guides/operate-ome/model-agent.md#modelpack-models). |
 | `pvc` | `pvc://{pvc-name}/{sub-path}` for a BaseModel, `pvc://{namespace}:{pvc-name}/{sub-path}` for a ClusterBaseModel | A metadata Job reads the model from the claim. Whatever the kind, only InferenceServices in the claim's namespace can use it. See [Serve models from a PVC](../../guides/deploy-models/serve-models-from-pvc.md). |
 | `local` | `local://{path}` | Reads the model from a directory that's already on the selected nodes. See [Serve models from node-local storage](../../guides/deploy-models/serve-models-from-local-storage.md). |
 | `vendor` | `vendor://{vendor-name}/{resource-type}/{resource-path}` | Downloads and reads nothing. The selected nodes report the model ready. |
@@ -81,6 +81,14 @@ Every in-place source change works this way: a `storageUri` edit to a new pinned
 So when you change an `hf://` model's `storageUri`, change `path` in the same edit, and the new snapshot downloads into an empty directory. [Pin the revision](#pin-the-hf-revision) too: then `main` can't change the source without an edit from you.
 
 Models with `downloadPolicy: ReuseIfExists` switch cleanly: each resolved commit gets a shared copy of its own, which the agent checks against the commit's list of files, and a source change relinks the model's `path` to the new commit's copy. See [Share Hugging Face artifacts](../../guides/operate-ome/shared-hf-artifacts.md).
+
+### Pin the `modelpack://` digest {#pin-the-modelpack-digest}
+
+The tag in a `modelpack://` URI names whatever it points to in the registry at pull time, and a node pulls the URI's reference again every time it [processes the model](#choose-the-nodes) — a copy already at `path` doesn't shorten the pass, as [ModelPack models](../../guides/operate-ome/model-agent.md#modelpack-models) in the model agent guide describes. So once the tag moves, such as a `v1` republished in the registry, a node that processes the model again replaces its copy with the new artifact, reports the model `Ready` as before, and nothing records that the content changed. Two nodes that process an unpinned model at different times can hold different artifacts, like [an unpinned `hf://` revision](#pin-the-hf-revision).
+
+Unlike [an in-place `hf://` source change](#change-the-hf-source), the replacement is whole: the agent swaps the complete new artifact into `path`, so the copy is never a mix of two artifacts — just, silently, another version.
+
+To keep every node on one artifact, put the artifact's digest in the URI in place of the tag, as in `modelpack://ghcr.io/myorg/llama-3-70b@sha256:<digest>`. The digest names the artifact's content, so every pass pulls the same artifact, wherever the tag moves.
 
 ### Credentials
 
@@ -179,7 +187,7 @@ When you change the model or a node:
 | `displayName`, `modelCapabilities` or other descriptive metadata | Nodes keep their copy as it is. |
 | A node's labels | Nothing, until you [restart the agent pod](../../guides/operate-ome/model-agent.md#a-node-never-gets-the-label) on that node. The new agent downloads models that now select the node, and keeps copies of models that no longer do. |
 
-Processing an `hf://` model again also [resolves its revision](#pin-the-hf-revision) again. Without a commit in the URI, a node that processes the model after `main` has moved downloads the new commit — by default over its old copy, [keeping the files that the new snapshot doesn't replace](#change-the-hf-source).
+Processing an `hf://` model again also [resolves its revision](#pin-the-hf-revision) again. Without a commit in the URI, a node that processes the model after `main` has moved downloads the new commit — by default over its old copy, [keeping the files that the new snapshot doesn't replace](#change-the-hf-source). Processing a `modelpack://` model again [pulls its reference again](#pin-the-modelpack-digest): without a digest in the URI, a node that processes the model after the tag has moved swaps in the new artifact whole.
 
 While a node processes the model, the model's label there is `Updating`, so new serving pods avoid that node until it's `Ready` again. Running pods keep running.
 
