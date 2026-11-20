@@ -10,7 +10,7 @@ The examples use the `llama-demo` namespace and the `llama-3-2-1b-instruct` Infe
 
 ## Classes
 
-Put the block in `spec.engine`, `spec.decoder` or `spec.router`. Its `class` decides what OME creates, and who sets the replica count:
+Put the block in `spec.engine`, `spec.decoder`, [`spec.encoder`](inference-services.md#the-encoder) or `spec.router`. Its `class` decides what OME creates, and who sets the replica count:
 
 | `class` | Use it to | What OME creates | Who sets the replica count |
 | --- | --- | --- | --- |
@@ -193,7 +193,7 @@ On OMENative, a `Resource` or `Pods` metric averages over every pod in every Ins
 
 ## Replica bounds
 
-`minReplicas` and `maxReplicas` sit next to `autoscaler` in the component, and OME passes them to the autoscaler that it creates. A bound that the InferenceService and its runtime leave unset comes from the [replica defaults](../../guides/operate-ome/set-replica-defaults.md). The `ome-resources` chart sets them to 1 to 3 replicas for the engine and the decoder, and 1 to 2 for the router. OME raises a default maximum that's below `minReplicas` to match.
+`minReplicas` and `maxReplicas` sit next to `autoscaler` in the component, and OME passes them to the autoscaler that it creates. A bound that the InferenceService and its runtime leave unset comes from the [replica defaults](../../guides/operate-ome/set-replica-defaults.md). The `ome-resources` chart sets them to 1 to 3 replicas for the engine, the decoder and the encoder, and 1 to 2 for the router. OME raises a default maximum that's below `minReplicas` to match.
 
 Keep `minReplicas` at or below `maxReplicas`, wherever each is set. Admission checks the pair only when the InferenceService sets both, so a `minReplicas` above the runtime's `maxReplicas` gets through. OME then raises an OMENative component's maximum to match. On a RawDeployment component, the controller logs `minReplicas must not exceed maxReplicas`, and the autoscaler and the InferenceService's status stop updating. [Set replica defaults](../../guides/operate-ome/set-replica-defaults.md#reconciles-fail-with-minreplicas-must-not-exceed-maxreplicas) shows how to find the error.
 
@@ -207,7 +207,7 @@ OME takes a component's autoscaling block from the first of these places that ha
 | --- | --- | --- |
 | 1 | The component's `autoscaler` in the InferenceService. | `isvc` |
 | 2 | The [AutoscalerPolicy](autoscaler-policy.md) that the component's `autoscalerPolicyRef` names. | `policy` |
-| 3 | The `autoscaler` in the runtime's `engineConfig`, `decoderConfig` or `routerConfig`. | `runtime` |
+| 3 | The `autoscaler` in the runtime's `engineConfig`, `decoderConfig`, `encoderConfig` or `routerConfig`. | `runtime` |
 | 4 | The [legacy annotations](../../reference/api/labels-and-annotations.md#legacy-autoscaling), for a RawDeployment component. | `legacy` |
 | 5 | The default: `class: HPA` at 80% average CPU utilization. | `default` |
 
@@ -274,7 +274,7 @@ OME alone writes a follower's count:
 - The webhook rejects a Proportional policy whose follower sets `autoscalerPolicyRef`, with `decoder follower cannot reference AutoscalerPolicy "queue-depth" when scaling is Proportional: remove the reference or remove decoder from ratios`, or an `autoscaler` with any class but `None`, with `decoder follower autoscaler must have class None when scaling is Proportional`.
 - When a competing autoscaler reaches a follower anyway — the InferenceService's policy lists a follower whose block comes from the runtime, say — OME holds every follower at the count it has, sets the policy's `Ready` condition to `False` with reason `FollowerAutoscalerConflict`, and records a Warning event of the same name, such as `decoder follower has a competing KEDA autoscaler from the serving runtime; follower counts are held`.
 
-The webhook also rejects a `proportional` block with mode `Independent`, an empty `ratios`, a ratio that names the anchor or a component the object doesn't declare, and `spec.replicaRefs` with `Proportional scaling requires InferenceService-owned replicas`. A declared deployment mode that isn't OMENative is rejected with a message like `Proportional scaling requires OMENative decoder, not deployment mode "RawDeployment"`; a component whose mode only resolves to something else at reconcile holds with `InvalidPolicy` instead. The same checks run on a runtime's `scalingPolicy`, against `engineConfig`, `decoderConfig` and `routerConfig`. The webhook validates the policy when you create the object and when an update sets or changes it, or changes a component's autoscaler settings or deployment mode, so an unchanged stored policy never blocks an unrelated update.
+The webhook also rejects a `proportional` block with mode `Independent`, an empty `ratios`, a ratio that names the anchor or a component the object doesn't declare, and `spec.replicaRefs` with `Proportional scaling requires InferenceService-owned replicas`. A declared deployment mode that isn't OMENative is rejected with a message like `Proportional scaling requires OMENative decoder, not deployment mode "RawDeployment"`; a component whose mode only resolves to something else at reconcile holds with `InvalidPolicy` instead. The same checks run on a runtime's `scalingPolicy`, against `engineConfig`, `decoderConfig`, `encoderConfig` and `routerConfig`. The webhook validates the policy when you create the object and when an update sets or changes it, or changes a component's autoscaler settings or deployment mode, so an unchanged stored policy never blocks an unrelated update.
 
 Whenever the InferenceService or its runtime sets `spec.scalingPolicy`, in every mode, OME reports it in `status.scalingPolicy`:
 
@@ -344,7 +344,7 @@ The InferenceService webhook rejects the following, with the component and the r
 | `AutoscalerAnnotationConflict` | An `ome.io/autoscalerClass` annotation on the InferenceService while a component sets an `autoscaler` block. |
 | `AutoscalerPolicyFeatureDisabled` | An `autoscalerPolicyRef` while AutoscalerPolicy is off. |
 
-The ServingRuntime and ClusterServingRuntime webhooks check the blocks in `engineConfig`, `decoderConfig` and `routerConfig` the same way, and reject an `autoscalerPolicyRef` in a runtime. [Legacy autoscaling](../../reference/api/labels-and-annotations.md#legacy-autoscaling) lists the legacy annotations' values, and [Attach a policy to an InferenceService](autoscaler-policy.md#attach-a-policy-to-an-inferenceservice) covers policy references. What the webhook rejects in `spec.scalingPolicy` is under [Proportional scaling](#proportional-scaling).
+The ServingRuntime and ClusterServingRuntime webhooks check the blocks in `engineConfig`, `decoderConfig`, `encoderConfig` and `routerConfig` the same way, and reject an `autoscalerPolicyRef` in a runtime. [Legacy autoscaling](../../reference/api/labels-and-annotations.md#legacy-autoscaling) lists the legacy annotations' values, and [Attach a policy to an InferenceService](autoscaler-policy.md#attach-a-policy-to-an-inferenceservice) covers policy references. What the webhook rejects in `spec.scalingPolicy` is under [Proportional scaling](#proportional-scaling).
 
 ## Upgrade from v1.2.2 {#upgrade-from-v1-2-2}
 

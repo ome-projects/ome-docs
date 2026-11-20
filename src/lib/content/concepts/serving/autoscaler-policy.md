@@ -109,7 +109,7 @@ The values in a trigger's `metadata` can use these variables, which OME fills in
 | --- | --- |
 | `{{ .Namespace }}` | The InferenceService's namespace. |
 | `{{ .ISVCName }}` | The InferenceService's name. |
-| `{{ .Component }}` | The component: `engine`, `decoder` or `router`. |
+| `{{ .Component }}` | The component: `engine`, `decoder`, `encoder` or `router`. |
 | `{{ .MinReplicas }}` | The component's minimum replica count. |
 | `{{ .MaxReplicas }}` | The component's maximum replica count. |
 | `{{ .TargetName }}` | `<isvc>-<component>`, such as `llama-3-2-1b-instruct-engine`. |
@@ -264,7 +264,7 @@ SOURCE   POLICY        RESOLVED
 policy   queue-depth   RenderedFromPolicy
 ```
 
-The `engine`, `decoder` and `router` can each name a policy, the same one or different ones. The webhooks reject:
+The `engine`, `decoder`, [`encoder`](inference-services.md#the-encoder) and `router` can each name a policy, the same one or different ones. The webhooks reject:
 
 - any reference until the controller has found the CRD at startup, with a message that starts with `AutoscalerPolicyFeatureDisabled`;
 - `kind: ClusterAutoscalerPolicy` in a reference, with `AutoscalerPolicyRefKindReserved: spec.engine.autoscalerPolicyRef.kind "ClusterAutoscalerPolicy" is not supported (ClusterAutoscalerPolicy is a reserved shape); use AutoscalerPolicy`. The schema lists the kind, but it's reserved until a cluster-scoped policy exists, so a reference needs only `name`: `kind: AutoscalerPolicy` is the default and the only kind there is;
