@@ -4,11 +4,11 @@ description: Change how many Instances one OMENative component runs with the alp
 since: v1.3
 ---
 
-`kubectl ome scale` changes how many [Instances](../../concepts/omenative/instances.md) one [OMENative](../../concepts/omenative/overview.md) component runs, and leaves the [InferenceService](../../concepts/serving/inference-services.md) and its other components alone. It checks the component first, and refuses while other work is in progress on it or when the count is outside its bounds. The change is transient: the component's autoscaler, or OME, can set the count again at any time. For a lasting change, edit the component's `minReplicas` and `maxReplicas` instead. The command is alpha, so its flags and behavior can change between releases.
+`kubectl ome scale` changes how many [Instances](../../concepts/omenative/instances.md) one [OMENative](../../concepts/omenative/overview.md) component runs, and leaves the [InferenceService](../../concepts/serving/inference-services.md) and its other components alone. It checks the component first, and refuses while lifecycle, migration or rollout work on it is unfinished, or when the count is outside its bounds. The change is transient: the component's autoscaler, or OME, can set the count again at any time. For a lasting change, edit the component's `minReplicas` and `maxReplicas` instead. The command is alpha, so its flags and behavior can change between releases.
 
 <div class="prerequisites" markdown>
 
-- An InferenceService with a component on OMENative and no rollout, migration or other Instance change in progress on it. [Deployment modes](../../concepts/architecture/deployment-modes.md#opt-in-to-omenative) shows how to opt in.
+- An InferenceService with a component on OMENative and no unfinished rollout, migration or Instance work on it. [Deployment modes](../../concepts/architecture/deployment-modes.md#opt-in-to-omenative) shows how to opt in.
 - No `spec.encoder` on the service: `scale` refuses every request on a service that declares an [encoder](../../concepts/serving/inference-services.md#the-encoder), whatever the component. See [The service declares an encoder](#the-service-declares-an-encoder).
 - The kubectl-ome plugin. See [kubectl-ome overview and install](../../reference/kubectl-ome/overview.md). If OME runs in a namespace other than `ome`, pass it with `--ome-namespace`.
 - Permission to patch `inferencereplicas/scale` in the `ome.io` API group, and the read access that [Required RBAC](../../reference/kubectl-ome/guarded-actions.md#required-rbac) lists. A rule that names only `inferencereplicas` doesn't include the subresource.
@@ -106,7 +106,9 @@ When `scale` refuses, it prints `error:` and the reason, changes nothing, and ex
 
 ### Work is active on the component
 
-`error: manual scale refused: selected lifecycle, migration or rollout work is active` means the component is busy. One of its Instances is being created, updated, restarted, migrated or deleted, or a migration, rollout or rollback is in progress. Instances that an autoscaler or your earlier request added or removed count too. Check PHASE in `kubectl ome instance list chat -n prod`, and run `kubectl ome migration status chat -n prod`. `scale` needs the engine's PHASE in `kubectl ome rollout status chat -n prod` to be `Stable` or `Unknown`. If the engine is in a rollout group, its GROUP-PHASE must be `Stable` too.
+`error: manual scale refused: selected lifecycle, migration or rollout work is active` means lifecycle, migration or rollout work is unfinished on the component — not always that something is running. Check PHASE in `kubectl ome instance list chat -n prod`: every engine Instance must be `Ready` or `Failed`. Any other phase blocks the scale, with or without an operation. An Instance that sits in `Pending` is a `Ready` Instance that [lost all its pods](../../concepts/omenative/instances.md#demotion-to-pending): nothing is in progress on it, no operation shows anywhere, and it still blocks every scale of the engine until OME rebuilds it and it's `Ready` again. While the rollout is paused, the rebuild waits, so resume first. Instances that an autoscaler or your earlier request added or removed count too, while they're `Creating` or `Deleting`.
+
+A `Failed` Instance doesn't block a scale by itself: the failed `Create` or `Restart` attempt it keeps doesn't count as work. Only a failed `Update`, or a `Delete` operation on it, still does. The refusal also covers an unfinished migration — run `kubectl ome migration status chat -n prod` — and a rollback that hasn't finished, and `scale` needs the engine's PHASE in `kubectl ome rollout status chat -n prod` to be `Stable` or `Unknown`, with its GROUP-PHASE `Stable` when the engine is in a rollout group. [What blocks a scale](../../reference/kubectl-ome/scale.md#what-blocks-a-scale) lists every condition.
 
 ### The count is out of bounds
 
