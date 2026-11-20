@@ -263,7 +263,12 @@ OME ships neither the daemon nor the binary, so provide both to the agent on eve
 
 Set both variables in `modelAgent.env`: see [Environment variables](#environment-variables). The agent copies the files from the path that `llmman resolve` reports, and fails when that path doesn't exist in its pod, so mount the binary and the daemon's store into the agent pod with `extraVolumes` and `extraVolumeMounts`.
 
-The daemon does the registry work, authentication included, so the model's `storage.key` and `storage.parameters` play no role: give the daemon the registry's credentials in its own configuration. When the daemon isn't reachable, the binary is missing, or the pull fails, the model fails on the node: see [Troubleshooting](#troubleshooting).
+The daemon does the registry work, authentication included, so the model's `storage.key` and `storage.parameters` play no role: give the daemon the registry's credentials in its own configuration.
+
+The agent runs the whole acquisition — probe the daemon, pull, resolve, place — every time the node processes the model: when the node starts matching it, when [a change to the model](../../concepts/models/base-models.md#choose-the-nodes) makes all matching nodes process it again, and when [its agent pod restarts](#step-2-change-a-setting). A copy that's already `Ready` at `path` doesn't shorten the pass. Unlike an `hf://` retry, which [skips files already at their full size](#interrupted-hf-downloads), or an `oci://` model, which can [reuse files already on the node](#workers-and-queues), the agent asks the daemon to pull the URI's reference as it stands, and places the result at `path` again. Two things follow:
+
+- A tag is taken as the registry has it at each pass. Once the tag moves — a `v1` republished, say — the next pass replaces the node's copy with the new artifact. The swap is whole: the agent stages the new files next to `path` and swaps them in only when they're complete, so the copy is never a mix of two artifacts, and a failed pass leaves the old one untouched. But nothing records that the content changed, and two nodes that process the model at different times can hold different artifacts. Pin the digest to keep every pass on one artifact: see [Pin the `modelpack://` digest](../../concepts/models/base-models.md#pin-the-modelpack-digest).
+- The daemon and the binary are a standing dependency, not a first-download one. A pass that can't reach the daemon, finds the binary missing, or whose pull fails marks the model `Failed` on the node, even when the files are already at `path` — so a model that was `Ready` turns `Failed` at an agent restart while the daemon is down. The files stay, but OME places no new serving pods for the model on that node. Keep the daemon and the binary in place for as long as the model exists: see [Troubleshooting](#troubleshooting).
 
 ## Metrics {#health-checks-and-metrics}
 
@@ -319,7 +324,7 @@ When the model is `Failed`, read the log of the agent on a node where its label 
 | An `oci://` file differs from its size or MD5 in object storage, or changed during the download. | `MD5 or size mismatch for`, then `All download attempts failed for model` |
 | The agent can't read the model's [Secret](../../concepts/models/base-models.md#credentials), which a ClusterBaseModel keeps in `ome`, so a gated model fails. | `Failed to retrieve secret` |
 | A TensorRT-LLM model has no objects for the node's GPU: see [TensorRT-LLM models](#tensorrt-llm-models). | `no suitable objects found for shape` |
-| A `modelpack://` model can't be pulled: no `llmman serve` daemon answers at `LLMMAN_HOST`, or the `llmman` binary is missing. See [ModelPack models](#modelpack-models). | `Failed to pull ModelPack artifact for model` |
+| A `modelpack://` model can't be pulled: no `llmman serve` daemon answers at `LLMMAN_HOST`, or the `llmman` binary is missing. Every pass pulls again, so this also fails a model that was `Ready` on the node. See [ModelPack models](#modelpack-models). | `Failed to pull ModelPack artifact for model` |
 | Hugging Face answered with an error or a rate limit. | The error |
 
 After you fix the cause, restart the agent pod on the node, as in [A model stays `Updating`](#a-model-stays-updating). For an `oci://` model, the new agent downloads only the mismatched files. For an `hf://` model, it skips the files already in the `path` at their full size and downloads the rest: see [What an interrupted `hf://` download keeps](#interrupted-hf-downloads).
