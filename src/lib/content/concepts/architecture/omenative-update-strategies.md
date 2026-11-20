@@ -88,7 +88,7 @@ When the loss uses up the revision's attempts, three with the chart, there's no 
 
 ### In-place updates
 
-When only the images of regular containers change, `InPlaceIfPossible` and `InPlaceOnly` update a single-pod Instance in place. OME takes the pod out of rotation, sets the new images, and puts the pod back once its restarted containers are ready. The pod keeps its name, its node and its `emptyDir` volumes. For any other change, such as an environment variable, a resource request or an init container's image, `InPlaceIfPossible` recreates the pods.
+When only the images of regular containers change, `InPlaceIfPossible` and `InPlaceOnly` update a single-pod Instance in place. OME takes the pod out of rotation, sets the new images, and puts the pod back once its restarted containers are ready. The pod keeps its name, its node and its `emptyDir` volumes. For any other change, such as an environment variable, a resource request or an init container's image, `InPlaceIfPossible` recreates the pods. For what a further change does to an update that's already patching, see [An in-place update kept for pairing](#an-in-place-update-kept-for-pairing).
 
 A label that you add to the pod template reaches the pod only when OME recreates it. With `inPlaceUpdateStrategy.markNotReadyDuringLifecycle: false`, the pod stays in rotation while its containers restart, so requests to it can fail. See [InPlaceUpdateStrategy](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InPlaceUpdateStrategy).
 
@@ -296,6 +296,26 @@ Normal   OMENative component=engine instance=0 keeps its serving replacement on 
 ```
 
 Only the `Pairing` gate keeps a surge this way, and only a new pod that's already serving: one that never entered rotation is nothing's partner, and OME abandons it as usual. The old pod's drain waits for its own gates as ever — under a pause, or while a gate holds that drain, both pods keep serving and the surge stays pinned. A multi-pod Instance's kept surge works the same with its whole replacement Instance, and uses the same `SurgeKeptForPairing` reason.
+
+## An in-place update kept for pairing
+
+Changing the pod template again while an [in-place update](#in-place-updates) runs abandons nothing: there's no extra pod to withdraw. The open attempt follows the newest revision — the next pass patches the pod onto it instead, and the Instance promotes there. A change beyond the images falls back or is refused, as for any in-place update.
+
+One retarget waits: a further [wire protocol change](../rollouts-and-traffic/rollout-groups.md#change-the-engine-decoder-wire-protocol) while a pod of the Instance serves, the in-place analogue of [a surge kept for pairing](#a-surge-kept-for-pairing). The coordination gate admitted the patch onto the token of the revision the attempt opened with, and a pod patched straight onto the newer token could serve beside no partner of it. So the attempt finishes on the admitted revision: the pod keeps that token, under its `ome.io/pairing-protocol` label, and the Instance promotes to `Ready` on it. Only then does the Instance roll toward the newest revision, as a new update through the gate, which admits the next token once a partner serves it. Even a change taken back to the token the pod ran before waits the same way, promoting on the admitted revision first.
+
+As the Instance promotes, OME records one Normal `InPlaceKeptForPairing` event on the InferenceService, which names both revisions and their tokens. For the engine of `mistral-pd` from that section — one engine, one decoder, the engine updating in place — whose token moved again to `kv-v3` while the patch the gate admitted onto `kv-v2` was finishing:
+
+```bash
+kubectl get events -n mistral-demo --field-selector reason=InPlaceKeptForPairing \
+  -o custom-columns=TYPE:.type,MESSAGE:.message
+```
+
+```output
+TYPE     MESSAGE
+Normal   OMENative component=engine instance=0 keeps its pod on revision mistral-pd-engine-3f82c6d1, whose pairing protocol "kv-v2" the coordination gate admitted the patch onto, promotes to that revision, and only then rolls toward mistral-pd-engine-a94d7e20 on pairing protocol "kv-v3"
+```
+
+Only a move between two tokens is kept. A retarget that keeps the attempt's token, or where either revision names none, follows the target as usual; so does one that finds the pod out of rotation, restarting under the patch — a pod that isn't serving is nothing's partner. And when the ControllerRevision the attempt opened with is gone, there's nothing left to finish on: the attempt follows the target.
 
 ## Changing the strategy mid-rollout
 

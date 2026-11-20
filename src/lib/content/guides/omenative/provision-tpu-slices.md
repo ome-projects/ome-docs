@@ -25,7 +25,7 @@ OME provisions slices only for OMENative components, and only on node pools that
 - One Slice serves the pods of one Instance. The leader and workers of a multi-pod Instance share it. A single-pod Instance gets one Slice per pod, so during an update's surge the new pod gets its own Slice while the pod it replaces keeps its own.
 - The Slice's shape comes from what the pods already declare: the accelerator and topology node labels they select, and the TPU chips their containers request. The chips must fill the topology exactly: see [Multi-host slices](#multi-host-slices).
 - OME creates an Instance's pods only once their Slice is ready: its `Ready` condition's reason is one of the configured `readyStates`. Each pod gets a node selector on the slice-name label, which confines it to the Slice's nodes. With `slice.readyTimeout` set, a Slice that has its partition but stays out of a ready state longer than the timeout is released and provisioned again, once no pod holds it.
-- OME deletes a ready Slice that no pod holds when no Instance wants it anymore: after a scale-down, a shape change, or when one of its hosts can't take the pods. While pods of another workload hold TPU chips on the Slice's hosts, OME keeps it, because deleting it would deactivate the partition under them: see [A SliceReleaseDeferred event appears](#a-slicereleasedeferred-event-appears). Deleting the Slice is what returns the capacity; GKE can hold it behind a finalizer while it releases the partition.
+- OME deletes a ready Slice that no pod holds when no Instance wants it anymore: after a scale-down, a shape change, or when one of its hosts can't take the pods — unless every matching host would refuse them too, which keeps the Slice instead: see [A SlicePodsTooLargeForHosts event appears](#a-slicepodstoolargeforhosts-event-appears). While pods of another workload hold TPU chips on the Slice's hosts, OME keeps it, because deleting it would deactivate the partition under them: see [A SliceReleaseDeferred event appears](#a-slicereleasedeferred-event-appears). Deleting the Slice is what returns the capacity; GKE can hold it behind a finalizer while it releases the partition.
 - When a Slice is deleted, or moved onto other nodes, from outside while pods run on it, OME deletes those pods so that their Instance is rebuilt: see [A SliceLost event appears](#a-slicelost-event-appears).
 
 A Slice is named after the component's [InferenceReplica](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica), cut to fit, then the Instance's index, the pod's ordinal and an 8-character hash of the owner's identity, such as `qwen3-tpu-engine-0-0-8f3a21c7`. The `ome.io/slice-owner-uid` label alone makes a Slice OME's: OME never adopts, modifies or deletes a Slice without it. OME also labels its Slices with `ome.io/managed-by: OMENative`, the Instance's `ome.io/instance-index`, the pod's `ome.io/pod-ordinal` and the owner kind and name labels from Step 1, and annotates them with the owner as `ome.io/slice-owner: {namespace}/{name}`.
@@ -195,7 +195,7 @@ NAME                            TYPE    TOPOLOGY   STATE
 qwen3-tpu-engine-0-0-8f3a21c7   tpu7x   2x2x1      ACTIVE
 ```
 
-Your hash differs, and `STATE` is `<none>` until GKE reports one. While the state isn't one of the configured `readyStates`, OME withholds the pod: the Instance stays in `Creating`, its operation holds on `CapacityProvisioning`, and its last failure records the hold, with a message that ends with what the Slice waits for, such as `slice qwen3-tpu-engine-0-0-8f3a21c7 is waiting for partition assignment`. In `kubectl ome instance status qwen3-tpu 0 --component engine -n qwen3-tpu`, the `failure` row names the hold, as `reason=CapacityProvisioning` — cut in the default table, so add `-o wide`. The `op hold` row doesn't: it reads `waiting=Unknown refused=-`, with an `issue` row `OperationWaitingUnknown`, because `CapacityProvisioning` isn't a token the CLI [recognizes](../../reference/kubectl-ome/instance.md#status-output-fields). The wait doesn't count against the Instance's [readiness deadline](set-instance-readiness-deadlines.md).
+Your hash differs, and `STATE` is `<none>` until GKE reports one. While the state isn't one of the configured `readyStates`, OME withholds the pod: the Instance stays in `Creating`, its operation holds on `CapacityProvisioning`, and its last failure records the hold, with a message that ends with what the Slice waits for, such as `slice qwen3-tpu-engine-0-0-8f3a21c7 is waiting for partition assignment`. In `kubectl ome instance status qwen3-tpu 0 --component engine -n qwen3-tpu`, the `op hold` row [names the hold](../../reference/kubectl-ome/instance.md#status-output-fields), as `waiting=CapacityProvisioning refused=-`, and the `failure` row's `reason=` repeats it — the `failure` row is cut in the default table, so add `-o wide` to read it in full. The wait doesn't count against the Instance's [readiness deadline](set-instance-readiness-deadlines.md).
 
 Once the Slice is ready, OME creates the pod. Wait for the InferenceService:
 
@@ -273,10 +273,12 @@ The webhook rejects only a write that introduces the problem, and admits the Inf
 
 ### Pods wait for a slice
 
-The Instance stays in `Creating` with no pods, and its operation holds on `CapacityProvisioning`: in `kubectl ome instance status`, the `failure` row reads `reason=CapacityProvisioning` and the `op hold` row `waiting=Unknown`, as in [Step 3](#step-3-watch-the-slice-and-the-pod). The Instance's last failure says what the Slice is waiting for, and `kubectl describe slices.accelerator.gke.io qwen3-tpu-engine-0-0-8f3a21c7` shows GKE's `Ready` condition with its message. The deadline clock is stopped either way, and what ends the wait depends on what the Slice waits for:
+The Instance stays in `Creating` with no pods, and its operation holds on `CapacityProvisioning`: in `kubectl ome instance status`, the `op hold` row reads `waiting=CapacityProvisioning` and the `failure` row's `reason=` repeats it, as in [Step 3](#step-3-watch-the-slice-and-the-pod). The Instance's last failure says what the Slice is waiting for, and `kubectl describe slices.accelerator.gke.io qwen3-tpu-engine-0-0-8f3a21c7` shows GKE's `Ready` condition with its message. The deadline clock is stopped either way, and what ends the wait depends on what the Slice waits for:
 
 - A Slice waiting for its partition waits for capacity, which a new Slice would wait for too, so OME waits as long as it takes, with or without `slice.readyTimeout`: free capacity in the pool.
 - A Slice that has its partition but doesn't reach a ready state is recycled after `slice.readyTimeout`, when you set it: see [A SliceReadyTimeout event appears](#a-slicereadytimeout-event-appears). Without it, OME waits as long as the Slice isn't ready: fix what GKE's `Ready` condition reports.
+
+A ready Slice can hold the pods too, when one of its hosts can't take them. The last failure's reason says so, and the Warning event on the InferenceService names the case: [SliceHostUnavailable](#a-slicehostunavailable-event-appears) for a broken host, [SliceHostShortOfResources](#a-slicehostshortofresources-event-appears) for a host whose other pods leave too little room, and [SlicePodsTooLargeForHosts](#a-slicepodstoolargeforhosts-event-appears) for pods too large for every host.
 
 ### A SliceReadyTimeout event appears
 
@@ -307,6 +309,47 @@ OMENative component=engine instance=0 withheld: slice qwen3-tpu-engine-0-0-8f3a2
 ```
 
 A Slice whose pods are already running is left alone. When every replacement Slice comes up broken too, fix the node pool.
+
+### A SliceHostShortOfResources event appears
+
+A ready Slice that no pod holds has a healthy host without room for the pods: the other pods bound to it leave too little of a resource the pods request, such as memory. OME withholds the pods, records the Warning event on the InferenceService, deletes the Slice and provisions the slot again. The delete itself waits while pods of another workload hold chips on the Slice's hosts: see [A SliceReleaseDeferred event appears](#a-slicereleasedeferred-event-appears). Read the event:
+
+```bash
+kubectl get events -n qwen3-tpu --field-selector reason=SliceHostShortOfResources \
+  -o jsonpath='{range .items[*]}{.message}{"\n"}{end}'
+```
+
+```output
+OMENative component=engine instance=0 withheld: slice qwen3-tpu-engine-0-0-8f3a21c7 is ACTIVE, but node gke-tpu-pool-node-3 has 160.0Gi of memory left unrequested, but a pod requests 180.0Gi; it is released and provisioned again once no pod holds it
+```
+
+OME checks everything the pods request except the chips, which the Slice's own pods hold by construction, and counts a container's missing request from its limit, the way the API server defaults it. What a host has left unrequested is its allocatable minus the requests of the pods bound to it, skipping pods that have succeeded or failed and pods confined to this Slice, which are on their way out. When one of the hosts is also cordoned, not ready or unreachable, the event is [SliceHostUnavailable](#a-slicehostunavailable-event-appears) instead, and the message names the unhealthy hosts first.
+
+A Slice whose pods are already running is left alone. Unlike a broken host, a shortfall can follow the slot: GKE's slice scheduler doesn't weigh what a host has left, so the new Slice may land on the same hosts, and the repeated warning shows it. List the pods on the named node, and move or remove the ones that hold the resource, or lower the component's requests:
+
+```bash
+kubectl get pods -A --field-selector spec.nodeName=gke-tpu-pool-node-3
+```
+
+```output
+NAMESPACE   NAME        READY   STATUS    RESTARTS   AGE
+tpu-batch   indexer-0   1/1     Running   0          42m
+```
+
+### A SlicePodsTooLargeForHosts event appears
+
+A ready Slice that no pod holds has a healthy host that can't fit the pods even next to its DaemonSet and static pods alone. Those pods run on every matching host, so another slice's hosts wouldn't fit the pods either: OME withholds the pods, records the Warning event on the InferenceService, and keeps the Slice, since releasing it couldn't help. Read the event:
+
+```bash
+kubectl get events -n qwen3-tpu --field-selector reason=SlicePodsTooLargeForHosts \
+  -o jsonpath='{range .items[*]}{.message}{"\n"}{end}'
+```
+
+```output
+OMENative component=engine instance=0 withheld: slice qwen3-tpu-engine-0-0-8f3a21c7 is ACTIVE, but node gke-tpu-pool-node-3 has 160.0Gi of memory left next to its DaemonSet and static pods, but a pod requests 180.0Gi; every matching host runs these DaemonSet and static pods, so another slice would not fit the pods either, and the slice is kept
+```
+
+The pods wait under the `CapacityProvisioning` hold from [Step 3](#step-3-watch-the-slice-and-the-pod), which doesn't count against the Instance's readiness deadline, so nothing times the wait out: lower the component's requests under what a host has left next to its node-wide pods — the message gives both numbers — trim the DaemonSets on the pool's nodes, or move to a pool with bigger hosts. When a host like this and [a host other pods leave short](#a-slicehostshortofresources-event-appears) appear together, the Slice is still kept; when a host is also cordoned, not ready or unreachable, the event is [SliceHostUnavailable](#a-slicehostunavailable-event-appears) and the Slice is released. A Slice whose pods are already running is left alone.
 
 ### A SliceLost event appears
 

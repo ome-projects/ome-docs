@@ -20,7 +20,7 @@ OME creates a Service for each component of an [InferenceService](../../concepts
 
 ## How OME names Service ports
 
-For each component that runs pods, OME creates a Service named after the InferenceService and the component. This guide's InferenceService gets `llama-3-1-8b-instruct-engine` and `llama-3-1-8b-instruct-router`. A decoder gets `llama-3-1-8b-instruct-decoder`.
+For each component that runs pods, OME creates a Service named after the InferenceService and the component. This guide's InferenceService gets `llama-3-1-8b-instruct-engine` and `llama-3-1-8b-instruct-router`. A decoder gets `llama-3-1-8b-instruct-decoder`, and an [encoder](../../concepts/serving/inference-services.md#the-encoder) gets `llama-3-1-8b-instruct-encoder`. The encoder is alpha, and only an InferenceService that runs every component on OMENative can have one; its Service gets its ports and their `appProtocol` values the same way as the other components'.
 
 Each Service takes its ports from the first container of the component's pods:
 
@@ -46,7 +46,7 @@ The value is copied onto the port's `appProtocol` as written. Kubernetes defines
 A value can also be an IANA service name, such as `http`, or a name with a domain prefix that your gateway or mesh defines. It must follow the syntax of a Kubernetes label key. OME doesn't check the value, and it ignores a key that matches no port, without an error, an event or a condition.
 
 !!! note "The Service named after the InferenceService"
-    While ingress creation is off, which it is by default, OME also creates a Service named after the InferenceService, `llama-3-1-8b-instruct`, unless the InferenceService has the label `networking.knative.dev/visibility: cluster-local`. It sends traffic to the router's pods, or to the engine's when there's no router, on one port named `http`. OME never sets an `appProtocol` on it: `servicePortAppProtocols` changes only the component Services.
+    While ingress creation is off, which it is by default, OME also creates a Service named after the InferenceService, `llama-3-1-8b-instruct`, unless the InferenceService has the label `networking.knative.dev/visibility: cluster-local`. It sends traffic to the router's pods, or to the engine's when there's no router, on one port named `http`. OME never sets an `appProtocol` on it: `servicePortAppProtocols` changes only the component Services and, on OMENative, the [per-revision routing Services](#per-revision-services-on-omenative).
 
 ## Step 1: Find the port name
 
@@ -92,7 +92,7 @@ spec:
 
 The InferenceService uses a ClusterBaseModel, the default kind, so it doesn't set `spec.model.kind`. It names the runtime, which sets `autoSelect: false`, so OME never picks it on its own.
 
-`spec.engine`, `spec.decoder` and `spec.router` each take their own `servicePortAppProtocols`, and each map changes only that component's Service. The field is part of [`ComponentExtensionSpec`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-ComponentExtensionSpec).
+`spec.engine`, `spec.decoder`, `spec.encoder` and `spec.router` each take their own `servicePortAppProtocols`, and each map changes only that component's Services, never another component's: its component Service and, on OMENative, its [per-revision routing Services](#per-revision-services-on-omenative). The field is part of [`ComponentExtensionSpec`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-ComponentExtensionSpec), which every component embeds.
 
 You can change the map on a running InferenceService. OME updates the ports of the existing Service in place, so the Service keeps its ClusterIP. When you remove a key, OME clears that port's `appProtocol`, unless the runtime sets one for the port.
 
@@ -123,7 +123,7 @@ A port without an `appProtocol` prints its name alone. The router's Service does
 
 ## Set a default in the ServingRuntime
 
-A ServingRuntime or ClusterServingRuntime takes the same field in `engineConfig`, `decoderConfig` and `routerConfig`, so a runtime author can set the protocol once for every InferenceService that uses the runtime. This part of a runtime marks the engine's `grpc1` port:
+A ServingRuntime or ClusterServingRuntime takes the same field in `engineConfig`, `decoderConfig`, `encoderConfig` and `routerConfig`, so a runtime author can set the protocol once for every InferenceService that uses the runtime. This part of a runtime marks the engine's `grpc1` port:
 
 ```yaml
 spec:
@@ -142,7 +142,23 @@ The runtime's map and the InferenceService's map combine key by key:
 
 - The runtime's map is the base. A key that both set takes the InferenceService's value, and runtime keys that the InferenceService doesn't set still apply.
 - To leave a port unset that the runtime marks, set its key to `""` in the InferenceService.
-- A runtime's map applies only to components that the InferenceService has. For example, `routerConfig.servicePortAppProtocols` applies only when the InferenceService has a `spec.router` section, since OME creates no router without one.
+- A runtime's map applies only to components that the InferenceService has. For example, `routerConfig.servicePortAppProtocols` applies only when the InferenceService has a `spec.router` section, since OME creates no router without one. The same goes for `encoderConfig.servicePortAppProtocols` and `spec.encoder`.
+
+## Per-revision Services on OMENative
+
+For a component on [OMENative](../../concepts/architecture/deployment-modes.md#omenative), OME also keeps a pair of [per-revision Services](../../concepts/architecture/deployment-modes.md#what-ome-creates) for each revision of the component that still has pods: a routing Service, `llama-3-1-8b-instruct-engine-rev-{hash}` for the engine, and a headless one, the same name with `-headless`. [`status.components.<component>.traffic`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-ComponentTrafficTarget) names each revision that receives traffic by its routing Service, with its weight, and on the Gateway API HTTPRoutes OME renders, those Services are the route's weighted backends: a rollout splits the component's traffic across its revisions' routing Services. This guide's InferenceService runs its components as RawDeployment, the default mode, so it has none.
+
+`servicePortAppProtocols` reaches the routing Services too, so the protocol your gateway reads holds mid-roll:
+
+- A revision's routing Service publishes exactly one port, the component's serving port: of the runner's ports, the one named `http`, else the first. The runner's ports are the ones it declares, or, when it declares none, those of the listed container with the runner's name, else the first listed container's; for a component that runs a leader and workers, the leader's. With the catalog runtimes, the runner is the first container, so the serving port is one of the ports [Step 1](#step-1-find-the-port-name) reads; a component that lists containers of its own can publish different ports on the two Services, since the component Service follows the first listed container.
+- That port takes the map's value for its own name, so the routing Service and the component Service agree on a port they both publish. The runtime's and the InferenceService's maps combine as [above](#set-a-default-in-the-servingruntime), and an empty value leaves the port unset.
+- A key for any other port changes nothing here, since no other port is published. It still sets that port's `appProtocol` on the component Service, when that Service has a port of that name.
+- The headless Service publishes no ports, so it never carries an `appProtocol`.
+- When neither the runner nor the container it falls back to declares a port, there's no serving port, and OME skips the revision's routing Service rather than publish a port the pods don't declare; the headless one is still created. When the first container declares no ports, the component Service still gets its one default port, named after the container, and that port takes its key as the table in [How OME names Service ports](#how-ome-names-service-ports) shows.
+
+With this guide's runtime and map, an engine on OMENative publishes `grpc1` as `kubernetes.io/h2c` on every revision's routing Service, so a gateway that splits traffic between two revisions speaks cleartext HTTP/2 to both.
+
+You can change the map here too: for each revision that still has pods, OME rewrites the routing Service's ports in place, so the Service keeps its ClusterIP, and a removed key clears the port's `appProtocol`, unless the runtime sets one for the port.
 
 ## Troubleshooting
 
@@ -152,7 +168,8 @@ The key doesn't match a port of the component's Service, or its value is empty. 
 
 - When the first container declares no ports, the key is the container's name, such as `ome-container`, not `http`.
 - The map must be on the component whose Service has the port: `spec.engine` for `llama-3-1-8b-instruct-engine`, and `spec.router` for `llama-3-1-8b-instruct-router`.
-- Only the first container's ports are on the Service, so the ports of other containers can't get an `appProtocol`.
+- Only the first container's ports are on the component Service, so the ports of other containers can't get an `appProtocol` there.
+- A [per-revision routing Service](#per-revision-services-on-omenative) publishes only the component's serving port, so a key for any other port can show only on the component Service.
 - A key set to `""` in the InferenceService leaves the port unset, even when the runtime sets it.
 
 An InferenceService that fronts standalone replicas with `spec.replicaRefs` can never set one: the webhook rejects `spec.engine`, `spec.decoder`, `spec.router` and `spec.runtime` next to `spec.replicaRefs`, an [InferenceReplica](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InferenceReplica) has no field for an `appProtocol`, and the map of a runtime the replica names in `runtimeRef` never reaches the fronting service's Services, which OME builds from the replica's pod templates alone. Every port of those Services stays without an `appProtocol`.
@@ -169,7 +186,7 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E 
 
 Each matching line names the Service and carries the API server's error. OME records no event for it. The API server rejects an `appProtocol` that doesn't follow label key syntax, such as one with a space, so the Service keeps its old ports, and OME retries. For a component that has no Service yet, the log says `Failed to create Service`, and the Service isn't created.
 
-Until you fix the value in the InferenceService or the runtime, each reconcile stops at that Service. OME reconciles the engine, then the decoder, then the router, so it doesn't create or update the components after the failing one, or the Ingress, HTTPRoutes and Service named after the InferenceService.
+Until you fix the value in the InferenceService or the runtime, each reconcile stops at that Service. OME reconciles the engine, then the decoder, then the encoder, then the router, so it doesn't create or update the components after the failing one, or the Ingress, HTTPRoutes and Service named after the InferenceService.
 
 ### The gateway still uses HTTP/1.1
 
@@ -177,7 +194,7 @@ Until you fix the value in the InferenceService or the runtime, each reconcile s
 
 Also check that the traffic goes through the Service you marked:
 
-- When ingress creation is on, OME's Ingress rules and HTTPRoutes send the InferenceService's traffic to the router's Service, or to the engine's when there's no router, and give each component a route to its own Service. They always use the Service's first port.
+- When ingress creation is on, OME's Ingress rules and HTTPRoutes send the InferenceService's traffic to the router's Service, or to the engine's when there's no router, and give each component a route to its own Service. They always use the Service's first port. For a component on OMENative, an HTTPRoute's backends are the [per-revision routing Services](#per-revision-services-on-omenative) instead, which carry the serving port's `appProtocol`.
 - The Service named after the InferenceService, which OME creates while ingress creation is off, never has an `appProtocol`.
 
 ## Next steps

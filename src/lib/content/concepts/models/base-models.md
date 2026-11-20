@@ -65,9 +65,22 @@ Set `storage.storageUri`, and for `hf://`, `oci://`, `modelpack://` and `local:/
 
 The revision after `@` in an `hf://` URI is a full 40-character commit, or a branch or tag such as the default `main`. Before a download, the node turns the revision into a commit: it uses a 40-character commit as it is, and resolves anything else to the commit it points to on Hugging Face at that moment.
 
-A node resolves the revision again every time it processes the model, whatever the model's `downloadPolicy`: when the node starts matching the model, when [a change to the model](#choose-the-nodes) makes all matching nodes process it again, and when its [agent pod restarts](../../guides/operate-ome/model-agent.md#workers-and-queues). Once `main` moves, a node that processes the model again downloads the newly resolved commit and switches its copy to it. So two nodes that processed an unpinned model at different times can hold different snapshots of it.
+A node resolves the revision again every time it processes the model, whatever the model's `downloadPolicy`: when the node starts matching the model, when [a change to the model](#choose-the-nodes) makes all matching nodes process it again, and when its [agent pod restarts](../../guides/operate-ome/model-agent.md#workers-and-queues). Once `main` moves, a node that processes the model again downloads the newly resolved commit — by default into the same `path`, [which the download never cleans first](#change-the-hf-source). So two nodes that processed an unpinned model at different times can hold different snapshots of it, and one node can hold a mix of two.
 
 To keep every node on one snapshot, put the commit in the URI, as in `hf://Qwen/Qwen2.5-7B-Instruct@<commit>`. Models that share files with `downloadPolicy: ReuseIfExists` share one copy per resolved commit: see [Share Hugging Face artifacts](../../guides/operate-ome/shared-hf-artifacts.md).
+
+### Change the `hf://` source {#change-the-hf-source}
+
+With the default `downloadPolicy`, `AlwaysDownload`, a download into a `path` that already holds files never cleans or checks them first. The agent downloads the resolved commit into the directory as it is, and skips every existing file whose size matches the snapshot's, without reading it — the rule that lets [an interrupted download keep its finished files](../../guides/operate-ome/model-agent.md#interrupted-hf-downloads). When the files at `path` came from another revision, the download leaves a mix of the two:
+
+- A file that isn't in the new snapshot stays. Nothing deletes it.
+- A file whose name and size are unchanged between the revisions keeps the old revision's bytes. Only missing files, and files whose sizes differ, download.
+
+Every in-place source change works this way: a `storageUri` edit to a new pinned commit or to another repository that keeps the same `path`, and `main` moving on an unpinned model. The node reports the model `Ready` at the new commit, and nothing records that the copy at `path` is mixed.
+
+So when you change an `hf://` model's `storageUri`, change `path` in the same edit, and the new snapshot downloads into an empty directory. [Pin the revision](#pin-the-hf-revision) too: then `main` can't change the source without an edit from you.
+
+Models with `downloadPolicy: ReuseIfExists` switch cleanly: each resolved commit gets a shared copy of its own, which the agent checks against the commit's list of files, and a source change relinks the model's `path` to the new commit's copy. See [Share Hugging Face artifacts](../../guides/operate-ome/shared-hf-artifacts.md).
 
 ### Credentials
 
@@ -162,11 +175,11 @@ When you change the model or a node:
 | Change | What happens |
 | --- | --- |
 | `nodeSelector` or `nodeAffinity` | Nodes that stop matching delete their copy, and nodes that start matching download it. Since v1.3, nodes that still match keep their copy. On v1.2.2, they process the model again. |
-| The model's labels or annotations, or another `storage` field, such as `storageUri`, `path` or `key` | All matching nodes process the model again. A `downloadPolicy` change does this only for `hf://` models. |
+| The model's labels or annotations, or another `storage` field, such as `storageUri`, `path` or `key` | All matching nodes process the model again. A `downloadPolicy` change does this only for `hf://` models. Changing an `hf://` model's `storageUri` alone downloads over the old files by default, so [change `path` too](#change-the-hf-source). |
 | `displayName`, `modelCapabilities` or other descriptive metadata | Nodes keep their copy as it is. |
 | A node's labels | Nothing, until you [restart the agent pod](../../guides/operate-ome/model-agent.md#a-node-never-gets-the-label) on that node. The new agent downloads models that now select the node, and keeps copies of models that no longer do. |
 
-Processing an `hf://` model again also [resolves its revision](#pin-the-hf-revision) again. Without a commit in the URI, a node that processes the model after `main` has moved downloads the new commit and switches to it.
+Processing an `hf://` model again also [resolves its revision](#pin-the-hf-revision) again. Without a commit in the URI, a node that processes the model after `main` has moved downloads the new commit — by default over its old copy, [keeping the files that the new snapshot doesn't replace](#change-the-hf-source).
 
 While a node processes the model, the model's label there is `Updating`, so new serving pods avoid that node until it's `Ready` again. Running pods keep running.
 

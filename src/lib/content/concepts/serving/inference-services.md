@@ -154,7 +154,7 @@ Each component is a pod spec, so it takes pod fields such as `nodeSelector` and 
 | `labels`, `annotations` | All | Added to the component's workload and pods. |
 | `minAvailable`, `maxUnavailable` | All | The component's PodDisruptionBudget, in place of the default budget. Set one of them. |
 | `deploymentStrategy` | All | The Deployment's update strategy, for components that run as a RawDeployment. |
-| `timeoutSeconds` | All | The request timeout on the component's HTTPRoute. See [Configure route timeouts](../../guides/networking/configure-route-timeouts.md). |
+| `timeoutSeconds` | Engine, decoder, router | The request timeout on the component's HTTPRoute. The [encoder](#the-encoder) accepts the field but backs [no HTTPRoute](../rollouts-and-traffic/ingress.md#routes), so its value sets nothing. See [Configure route timeouts](../../guides/networking/configure-route-timeouts.md). |
 | `servicePortAppProtocols` | All | Since v1.3. The `appProtocol` of each Service port. See [Set Service app protocols](../../guides/networking/set-service-app-protocols.md). |
 | `lifecycle` | All | Since v1.3. How an OMENative component updates and restarts its Instances, and how long each may take to become ready. See [OMENative update strategies](../architecture/omenative-update-strategies.md) and [Instance restart policy](../omenative/instance-restart-policy.md). |
 | `autoscaler`, `autoscalerPolicyRef` | All | Since v1.3. How the component scales. See [Scaling](#scaling). |

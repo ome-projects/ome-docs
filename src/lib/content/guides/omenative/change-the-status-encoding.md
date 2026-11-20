@@ -129,7 +129,7 @@ kubectl get events -A --field-selector reason=InstanceStatusConverted
 
 Its message names the InferenceReplica and says `per-Instance status was rewritten from ColumnarV2 to DenseV1`.
 
-If Prometheus scrapes the manager, as [Collect metrics](../operate-ome/metrics.md) sets up, these series track the change. Only the leader records them, and the encoding labels are `dense_v1` or `columnar_v2`.
+If Prometheus scrapes the manager, as [Collect metrics](../operate-ome/metrics.md) sets up, these series track the change. Only the leader records them, except the readySince gauge, which every replica sets when it starts. The encoding labels are `dense_v1` or `columnar_v2`.
 
 | Metric | Labels | What it shows |
 | --- | --- | --- |
@@ -137,6 +137,7 @@ If Prometheus scrapes the manager, as [Collect metrics](../operate-ome/metrics.m
 | `ome_omenative_ir_status_writes_total` | `encoding`, `result` | Status writes by `result`, where `rejected` means too large. |
 | `ome_omenative_ir_status_bytes` | `namespace`, `name`, `component`, `encoding` | The size of an InferenceReplica's last status write, to spot one nearing the size limit. |
 | `ome_omenative_ir_status_codec_errors_total` | `reason` | Status that failed to encode or decode. |
+| `ome_omenative_ir_status_readysince_columns_missing` | None | The readySince columns the InferenceReplica CRD lacked when the replica started. Above zero, every status write keeps each Instance's Ready time in its entry: see [The CRD lacks the readySince columns](#the-crd-lacks-the-readysince-columns). |
 
 ## Check a fleet with ome-status-preflight
 
@@ -232,6 +233,33 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 \
 | `Failed to initialize OMENative status configuration` | The error says `inferenceservice-config is missing the required "omenativeStatus" block`, or starts with `invalid omenativeStatus config:`. Fix the block, or set it through the chart. |
 | `InferenceReplica status schema preflight failed`, with `is not ColumnarV2-capable` | The InferenceReplica CRD is missing or older than the manager. Upgrade the `ome-crd` chart to your `ome-resources` version, and restart the manager. |
 | `InferenceReplica status schema preflight failed`, with another error | The manager couldn't read OpenAPI v3 discovery from the API server. |
+
+One lag doesn't stop the manager: a CRD that lacks only the readySince columns. See [The CRD lacks the readySince columns](#the-crd-lacks-the-readysince-columns).
+
+### The CRD lacks the readySince columns
+
+The manager runs, but the gauge `ome_omenative_ir_status_readysince_columns_missing` is above zero, and your InferenceReplica statuses are larger than they could be. Each replica said so when it started:
+
+```bash
+kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 \
+  | grep 'lacks readySince columns'
+```
+
+The line starts with `The installed InferenceReplica CRD lacks readySince columns`, and names the missing columns under `missingColumns`.
+
+The columns — `readySinceBase`, `readySinceIndexes` and `readySinceOffsets` — store when each Instance of a ColumnarV2 InferenceReplica became Ready, as whole seconds from one base time: see [the API reference](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-InstanceStatusColumns). A CRD that lacks only the three is the one lag the preflight in [The manager doesn't start](#the-manager-doesnt-start) tolerates: the replica starts, sets the gauge to the number of missing columns, and every status write stores each Instance's Ready time in its own entry, the larger form. No time is lost, and OME reads both forms, but the statuses don't get the columns' savings.
+
+A replica reads the CRD's schema once, when it starts, and keeps the form it chose for the life of the process, so upgrading the CRD alone changes neither the gauge nor the writes. Upgrade the `ome-crd` chart to your `ome-resources` version, then restart the manager:
+
+```bash
+kubectl rollout restart deployment ome-controller-manager -n ome
+```
+
+```output
+deployment.apps/ome-controller-manager restarted
+```
+
+A replica that finds the columns logs `readySinceForm` as `columns` on its `Configured InferenceReplica status representation` line, and its gauge reads `0`. An InferenceReplica's Ready times move into the columns when its status is next written.
 
 ### The status can't be decoded {#status-cant-be-decoded}
 
