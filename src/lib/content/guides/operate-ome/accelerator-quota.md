@@ -34,7 +34,7 @@ A budget in `spec.budgets` counts one resource on one Kueue ResourceFlavor, such
 | `borrowingLimit` | How much more the team can borrow from the unused shares of any team in the tree, not only its siblings. Unset means 0. |
 | `lendingLimit` | How much of its unused share other teams can borrow, at most `nominal`. Unset means all of it. |
 
-A team's `priorityTier` has no effect in this release.
+A team's `priorityTier` has no effect in this release. A team can also set [`spec.preemption`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorQuotaPreemption), which lets its pending workloads evict borrowers and take back its share: see [Reclaim borrowed GPUs](#reclaim-borrowed-gpus).
 
 The quota manager writes a Cohort node to Kueue as a Cohort, and a team as a ClusterQueue with a LocalQueue in each enrolled namespace. Every team's ClusterQueue selects exactly the enrolled namespaces, so the enrollment is a boundary that Kueue enforces: a workload anywhere else is never admitted, whatever queue name it carries. These objects take their node's name and carry the label `ome.io/quota-managed-by: ome-quota-manager`.
 
@@ -207,8 +207,8 @@ spec:
 
 `ml-research` comes first: the webhook denies a team whose parent doesn't exist yet.
 
-!!! warning "Borrowed GPUs aren't reclaimed"
-    When `team-beta` borrows GPUs that `team-alpha` left idle, it keeps them until its own pods end, and `team-alpha`'s new pods wait. The ClusterQueues that the quota manager writes don't preempt borrowers, and serving pods run until you delete them. Set a `borrowingLimit` only where that wait is acceptable.
+!!! warning "Borrowed GPUs aren't reclaimed by default"
+    When `team-beta` borrows GPUs that `team-alpha` left idle, it keeps them until its own pods end, and `team-alpha`'s new pods wait: a queue evicts nothing until its team sets `spec.preemption`, and serving pods run until you delete them. Set a `borrowingLimit` only where that wait is acceptable, or let `team-alpha` take its share back: see [Reclaim borrowed GPUs](#reclaim-borrowed-gpus).
 
 Apply the tree:
 
@@ -319,6 +319,65 @@ The entries follow `spec.budgets`, so the list shows only what you authored. The
 
 The quota manager rereads what Kueue holds on every pass, and a change in what a queue holds wakes one, so the figures follow admissions. When it can't read Kueue, the last figures stand rather than being zeroed: unknown and nothing held are different answers. The figures are observational — Kueue admits against its own queues, not against them — so a stale number misleads only its reader. The [metrics](#metrics) publish the same four amounts per node, as the `ome_quota_budget_*` gauges, and in `kubectl get aq`, NOMINAL and ADMITTED show the first budget's amounts, `-o wide` adds BORROWED, and `reserved` appears only in the full status.
 
+## Reclaim borrowed GPUs
+
+In [Read usage up the tree](#read-usage-up-the-tree), `team-beta` holds 2 GPUs of `team-alpha`'s share, and nothing takes them back while its pods run: an unset [`spec.preemption`](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorQuotaPreemption) keeps Kueue's defaults, which disable preemption. Setting it on a team authorizes evictions for that team's pending workloads. Each field permits one kind:
+
+| Field | Policies | What it permits |
+| --- | --- | --- |
+| `reclaimWithinCohort` | `Never`, `LowerPriority`, `Any` | Evicting other teams' borrowers in the cohort, to admit a pending workload that fits the team's own `nominal`. `LowerPriority` evicts only workloads of lower priority than the pending one; `Any` evicts them regardless of priority. |
+| `withinClusterQueue` | `Never`, `LowerPriority`, `LowerOrNewerEqualPriority` | Evicting the team's own admitted workloads to admit a pending one. `LowerPriority` evicts only workloads of lower priority than the pending one; `LowerOrNewerEqualPriority` also evicts newer workloads of its priority. |
+| `borrowWithinCohort.policy` | `Never`, `LowerPriority` | Evicting lower-priority borrowers so the pending workload can itself borrow. Borrowing idle GPUs needs no policy: this is for borrowing when none are idle. |
+| `borrowWithinCohort.maxPriorityThreshold` | An integer | Only evicting, for borrowing, workloads whose priority is at most this value. It has no effect while `policy` is `Never`. |
+
+Priority, where a policy compares it, is the workload's own. OME stamps none — a team's `priorityTier` has no effect in this release, as [How quotas work](#how-quotas-work) says — so where no workload declares a priority, every workload ties, a tie isn't lower, and `LowerPriority` evicts nothing. That's why the example below uses `Any`.
+
+The policies authorize, never shield: they work for the team that sets them, and they don't protect its running pods from another team's reclamation. And only a team can carry them. The API rejects `preemption` on a Cohort, `root` included, with an error that ends in `only a ClusterQueue node may set preemption`, and rejects `borrowWithinCohort.policy: LowerPriority` without a `reclaimWithinCohort` of `Any` or `LowerPriority` with one that ends in `borrowWithinCohort.policy LowerPriority requires reclaimWithinCohort Any or LowerPriority`. The quota manager re-checks the same rules on every pass, and a node that gets one past admission is frozen with `NodeKindInvalid`, as in [A node isn't Ready or Materialized](#conditions). Kueue adds a limit of its own: it doesn't support borrowing-driven preemption while its Fair Sharing feature is on.
+
+To let `team-alpha` take its share back, add `preemption` to it in `quota-tree.yaml`, keeping the rest of the file:
+
+```yaml
+apiVersion: ome.io/v1beta1
+kind: AcceleratorQuota
+metadata:
+  name: team-alpha
+spec:
+  role: ClusterQueue
+  parentRef:
+    name: ml-research
+  preemption:
+    reclaimWithinCohort: Any
+  budgets:
+    - resourceName: nvidia.com/gpu
+      resourceFlavor: a100
+      nominal: "16"
+```
+
+```bash
+kubectl apply -f quota-tree.yaml
+```
+
+```output
+acceleratorquota.ome.io/ml-research unchanged
+acceleratorquota.ome.io/team-alpha configured
+acceleratorquota.ome.io/team-beta unchanged
+```
+
+The quota manager writes the fields you set into the team's ClusterQueue, and only those — Kueue's defaults stand for the rest there too:
+
+```bash
+kubectl get clusterqueues.kueue.x-k8s.io team-alpha -o jsonpath='{.spec.preemption.reclaimWithinCohort}{"\n"}'
+```
+
+```output
+Any
+```
+
+From then on, a pending `team-alpha` workload that fits the team's 16 no longer waits on the borrowed GPUs: Kueue evicts `team-beta`'s workloads — the queue holding more than its own `nominal` of 8 — until the pending pods fit, and admits them.
+
+!!! danger "Reclamation deletes running pods"
+    Kueue reclaims by evicting the borrower's pods, so `team-beta`'s serving on borrowed GPUs now stops whenever `team-alpha`'s pending pods need its share. Under a reclaiming owner, a `borrowingLimit` is capacity a team can lose at any moment: borrow only for work that tolerates it.
+
 ## Change the tree
 
 Edit `quota-tree.yaml` and apply it again. To check a change without writing it, add `--dry-run=server`: the webhook still runs, and kubectl marks the objects `(server dry run)`.
@@ -426,7 +485,7 @@ team-beta ["ml-serving"]
 
 Kueue enforces the selector, so from that pass on no team admits workloads from `ml-batch`. The one exception is a [frozen](#conditions) node: its queue keeps its last-good selector, the removed namespace included, until the node is repaired. What the namespace already holds doesn't vanish with the enrollment:
 
-- Admitted pods keep running and keep charging their team: the queues don't preempt, and serving pods run until you delete them, as the borrowing warning in [Step 2](#step-2-create-the-quota-tree) says. Deleting them is what frees the budget.
+- Admitted pods keep running and keep charging their team: a queue evicts only what a team's [`spec.preemption`](#reclaim-borrowed-gpus) authorizes, and serving pods otherwise run until you delete them, as the borrowing warning in [Step 2](#step-2-create-the-quota-tree) says. Deleting them is what frees the budget.
 - The pods of new labeled workloads, and the ones that were still waiting, stay `SchedulingGated` for good. OME leaves `kueue.x-k8s.io/queue-name` off a pod only by its [resource requests](#budget-other-accelerators), never by its namespace, so Kueue keeps gating the pods, and no queue admits them. Stop labeling the workloads there, or delete them.
 
 The teams' LocalQueues in `ml-batch` are also left behind. The sweep deletes an object only when its node is gone from the tree — it keeps everything whose `ome.io/accelerator-quota` label names a node that still exists, in any namespace — and a namespace off the list is simply no longer rendered, so the LocalQueues are neither swept nor written again. They're orphans that make the namespace look enrolled. Delete them:
@@ -804,7 +863,7 @@ acceleratorquota.ome.io/team-beta unchanged (server dry run)
 
 `kubectl describe workloads -n ml-serving` shows why Kueue holds a pod. The usual causes:
 
-- The team's quota is in use, by its own pods or by a team that borrowed it.
+- The team's quota is in use, by its own pods or by a team that borrowed it. A borrower is evicted for the waiting pod only when the team [reclaims](#reclaim-borrowed-gpus).
 - The Workload reports `LocalQueue team-beta doesn't exist`. Add the namespace to `enrolledNamespaces`.
 - The namespace has been [removed from `enrolledNamespaces`](#remove-a-namespace-from-enrollment). A left-behind LocalQueue still resolves, so the Workload finds its queue, but no ClusterQueue selects the namespace any more, and nothing admits the pod. Enroll the namespace again, or stop labeling workloads there.
 - The pod requests a resource missing from its ClusterQueue, such as an RDMA device.
