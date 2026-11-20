@@ -13,7 +13,7 @@ Here you serve `meta-llama/Llama-3.2-1B-Instruct` on OMENative with two prefill 
 - OME v1.3 or later, installed with the `ome-resources` chart, and `kubectl`, with the rights to create namespaces, Secrets in `ome`, ClusterBaseModels, ClusterServingRuntimes and InferenceServices. See [Install OME](../../getting-started/install.md).
 - The model agent, to download the weights to your nodes. It's off by default: turn it on with the chart values `modelAgent.enabled=true` and `modelAgent.hostPath=/raid/models`, as [Install OME](../../getting-started/install.md#step-3-install-ome) shows. Or put the weights on a PersistentVolumeClaim, as in Steps 1 to 3 of [Serve models from a PVC](../deploy-models/serve-models-from-pvc.md). Then create only the runtime in Step 1, skip the namespace in Step 2, and add `kind: BaseModel` under `spec.model`.
 - For the model agent, a Hugging Face token with access to `meta-llama/Llama-3.2-1B-Instruct`, which is gated, in the environment variable `HF_TOKEN`.
-- Three amd64 nodes with NVIDIA GPUs and RDMA NICs, and a fourth for Step 5. An engine or decoder pod takes a GPU, 10 CPUs, 30 GiB of memory and port 8080 on its node's network, so a node runs at most one of them. The runtime uses the RDMA device `mlx5_0` and OME's [`oci-roce` RDMA profile](../../reference/api/labels-and-annotations.md#pod-keys-you-set), and expects nodes set up for them.
+- Three amd64 nodes with NVIDIA GPUs and RDMA NICs, and a fourth for Step 5. An engine or decoder pod takes a GPU, 10 CPUs, 30 GiB of memory and port 8080 on its node's network, so a node runs at most one of them. The runtime uses the RDMA device `mlx5_0`, and asks for an [RDMA profile](../../reference/api/labels-and-annotations.md#pod-keys-you-set) named `oci-roce`, which OME doesn't ship: define your fabric's profile under that name in the `rdma` entry of the `inferenceservice-config` ConfigMap, through the ome-resources chart value `ome.rdma`, as [PD mode](../../reference/operate-ome/ome-serving-values.md#pd-mode) shows.
 - For the router, 1 CPU and 2 GiB of memory on a node without the `nvidia.com/gpu` taint.
 - Optionally, the [kubectl ome](../../reference/kubectl-ome/overview.md) plugin, to inspect the Instances.
 
@@ -250,6 +250,20 @@ Read the scheduler's message in the pod's events with `kubectl describe pod -n l
 ### An engine or decoder pod fails
 
 Read SGLang's logs with `kubectl logs -n llama-demo -l component=engine --tail=100`, or `-l component=decoder`. For an Instance's last failure, run `kubectl ome instance status llama-pd 0 --component engine -n llama-demo`. If your nodes' RDMA device isn't `mlx5_0`, change `--disaggregation-ib-device` in the runtime's `engineConfig` and `decoderConfig`, and apply the runtime again. OME rolls the change out to both components.
+
+### The pods run without the RDMA profile's settings
+
+The engine and decoder pods ask for the `oci-roce` profile, but while the `rdma` entry of `inferenceservice-config` defines no profiles, OME's pod webhook doesn't block them: it admits the pods without the profile's settings, so SGLang runs without its environment, devices and capabilities, and transfers between prefill and decode fail. The manager also logs, once per process, `pods that ask for RDMA injection get nothing until rdma.profiles names a profile; a chart install ships none, the cluster's values file carries its fabric table`. Read the entry:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.rdma}{"\n"}'
+```
+
+```output
+{"defaultProfile":"","profiles":{}}
+```
+
+An empty `profiles`, as here on a fresh install, or no output at all, means no profile table. Define the `oci-roce` profile, as in [Before you begin](#before-you-begin), then delete the pods with `kubectl delete pods -n llama-demo -l ome.io/inferenceservice=llama-pd`: the webhook reads the entry again as OME recreates them.
 
 ### The router can't pull its image
 

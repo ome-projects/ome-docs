@@ -43,7 +43,7 @@ Set these under the model's `runtime` key. Keep a `runtime` key for each model w
 | `extraArgs` | None | More arguments, added at the end of SGLang's command. |
 | `routerImage` | `defaults.routerImage` | The router's image. |
 | `ibDevice` | `defaults.ibDevice` | In PD mode, SGLang's `--disaggregation-ib-device`. |
-| `rdmaProfile` | `defaults.rdmaProfile` | In PD mode, the RDMA profile that OME applies to the engine and decoder pods. |
+| `rdmaProfile` | `defaults.rdmaProfile` | In PD mode, the name of the RDMA profile that the engine and decoder pods ask for. Your cluster's own profile table must define it: see [PD mode](#pd-mode). |
 
 Helm replaces a list instead of merging it, so a model's `extraArgs` in your values file replaces the catalog's. To add an argument to Phi-4-mini-instruct, list `--trust-remote-code` too.
 
@@ -94,16 +94,40 @@ A `gpus` value without a preset makes the chart fail to render, including the ca
 
 ## PD mode
 
-`pdMode: true` splits the model's serving into prefill and decode. The engine runs SGLang with `--disaggregation-mode prefill`, the InferenceService gets a decoder that runs it with `--disaggregation-mode decode`, and a router finds the engine and decoder pods by their labels. The engine and the decoder use the InfiniBand device `ibDevice`, so PD mode needs GPU nodes with RDMA networking that one of OME's [RDMA profiles](../api/labels-and-annotations.md#pod-keys-you-set) supports. Since v1.3, the profiles are `oci-roce`, `cks-gb-sglang` and `cks-gb-rdma`. On v1.2.2, the only one is `oci-roce`.
+`pdMode: true` splits the model's serving into prefill and decode. The engine runs SGLang with `--disaggregation-mode prefill`, the InferenceService gets a decoder that runs it with `--disaggregation-mode decode`, and a router finds the engine and decoder pods by their labels. The engine and the decoder use the InfiniBand device `ibDevice`, and PD mode needs GPU nodes with RDMA networking, which OME's pod webhook sets up in the pods with an [RDMA profile](../api/labels-and-annotations.md#pod-keys-you-set): the chart writes `rdmaProfile` into the pods' `rdma.ome.io/profile` annotation.
+
+OME ships no profiles: every cluster's fabric differs, so the profile table lives in the `rdma` entry of the `inferenceservice-config` ConfigMap, which the ome-resources chart writes from its `ome.rdma` value — empty by default. Define the profile there, under the name that `rdmaProfile` keeps, with your fabric's environment, devices, capabilities and Multus networks, and upgrade the ome-resources release, as [Change ConfigMap settings](../../guides/operate-ome/configure-the-controller.md#tune-the-config-cache) describes:
+
+```yaml title="ome-resources values (excerpt)"
+ome:
+  rdma:
+    defaultProfile: oci-roce
+    profiles:
+      oci-roce:
+        env:
+          NCCL_IB_HCA: mlx5_0
+          NCCL_SOCKET_IFNAME: eth0
+        volumes:
+          - name: devinf
+            hostPath:
+              path: /dev/infiniband
+        volumeMounts:
+          - name: devinf
+            mountPath: /dev/infiniband
+        securityContext:
+          capabilities:
+            add: [IPC_LOCK]
+```
 
 In PD mode, the engine and decoder pods:
 
 - use their node's network. Each one takes port 8080 on its node, so a node runs at most one engine or decoder pod in PD mode, whichever model it serves.
-- run SGLang in a privileged container, which can use all of its node's devices, when `rdmaProfile` is `oci-roce`, the default, and since v1.3 when it's `cks-gb-sglang`.
+- run SGLang in a privileged container, which can use all of its node's devices, when `rdmaProfile` is `oci-roce`, the default, or `cks-gb-sglang`.
 
-The chart sets `privileged: true` on those containers explicitly: no RDMA profile makes a container privileged, because a privileged container sees every GPU on its node, not just the ones allocated to it. On a runtime of your own, the profile doesn't open the RDMA devices either: the container can open them only when you request your cluster's RDMA device-plugin resource, such as `rdma/hca_shared_devices_a: 1`, or set `privileged: true` on it yourself.
+The chart sets `privileged: true` on those containers explicitly, in the runtime it renders; it doesn't come from the profile. A privileged container sees every GPU on its node, not just the ones allocated to it. On a runtime of your own, a profile like the one above doesn't open the RDMA devices either: the container can open them only when you request your cluster's RDMA device-plugin resource, such as `rdma/hca_shared_devices_a: 1`, or set `privileged: true` — on the container, or in the profile's `securityContext`, whose `privileged` counts only when the container doesn't set its own.
 
-With a profile that OME doesn't know, OME's pod webhook blocks the pods, and the component's ReplicaSet records `FailedCreate` events.
+!!! warning "An empty profile table injects nothing"
+    While the `rdma` entry names no profiles — a fresh chart install — the pod webhook denies nothing: it admits the engine and decoder pods without the environment, mounts, capabilities or networks of the profile they ask for, and the manager logs `inferenceservice-config block absent or incomplete` once per process. The webhook blocks the pods, with the component's ReplicaSet recording `FailedCreate` events, only while the entry names at least one profile: with `unknown RDMA profile` when it doesn't name `rdmaProfile`, and with `no RDMA profile` when a pod names none and `defaultProfile` is empty.
 
 The chart sets no deployment mode, so the engine, decoder and router run in RawDeployment mode, where a change is a plain Deployment update. Since v1.3, [OMENative](../../concepts/omenative/overview.md) can roll prefill and decode out as one group, by canary, blue-green or rolling update: see [Rollout groups](../../concepts/rollouts-and-traffic/rollout-groups.md). Until v1.3 is released, that needs [a build of `main`](../../getting-started/install.md#install-from-source). To use it, install the model and its runtime, with `pdMode: true`, as in [Install a model without serving it](../../getting-started/pre-configured-models.md#install-a-model-without-serving-it). Then create an InferenceService of your own that sets `spec.deploymentMode: OMENative`, as in [Serve a prefill-decode model](../../guides/omenative/serve-a-prefill-decode-model.md#step-2-create-the-inferenceservice).
 
