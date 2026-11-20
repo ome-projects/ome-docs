@@ -26,6 +26,7 @@ The `ome-resources` chart sets all three limits by default. You'll give one comp
 | `stuckPodGracePeriod` | Fails the attempt early when a container or init container is stuck, as in `ImagePullBackOff`, and its pod is older than this. Unset, only the deadline fails it. | The cluster | `60s` |
 | `unschedulableGracePeriod` | Fails the attempt when it waits this long for a pod's placement. The clock is the attempt's, not the pod's: one that first waited on a node that stopped reporting runs from `operation.placementWaitSince`, so it can run out before the pod now refused has waited this long itself. See [Placement waits](../../concepts/omenative/instances.md#placement-waits). Unset, the pod waits until you free capacity. | The cluster | `15m` |
 | `gangDomainFullGracePeriod` | Fails a multi-pod attempt sooner when the scheduler reports that [the gang is held to a topology domain that can't take its remaining members](../../concepts/serving/gang-scheduling.md#a-gang-held-to-a-full-domain-can-fail-sooner), where freeing capacity elsewhere doesn't help. The shorter of this and `unschedulableGracePeriod` applies. | The cluster | Unset |
+| `schedulingRetry` | Fails nothing: once a pod of a multi-pod Instance has waited `after` for a node, OME [re-queues it with the scheduler](../../concepts/serving/gang-scheduling.md#scheduling-retry) and records a `SchedulingRequestedAgain` event. The k-th write waits k times `after`, and `maxAttempts` caps the writes per pod. Unset, no pod is ever written. | The cluster | `after: 5m`, `maxAttempts: 2` |
 
 A component's value in the InferenceService wins over the runtime's, and either wins over the cluster's. The same timeout sets the deadline of an [Instance migration](../../concepts/omenative/migration-and-transient-scale.md#deadline), and a [drain](recover-stuck-deletions.md) that runs past it raises `DrainOverdue`. OME also derives a multi-pod Instance's [gang schedule timeout](../../concepts/serving/gang-scheduling.md#bound-the-gang-schedule-timeout) from it.
 
@@ -157,6 +158,8 @@ ome:
 ```
 
 Give each duration a unit, as in `90s` or `1h`. A bare number, like `30`, stops new controller pods from starting: see [The controller doesn't start after you change the settings](#the-controller-doesnt-start-after-you-change-the-settings). To turn a setting off, set it to `null`. To fail a [gang held to a full domain](../../concepts/serving/gang-scheduling.md#a-gang-held-to-a-full-domain-can-fail-sooner) sooner, add `gangDomainFullGracePeriod`, which the chart leaves unset, to the same block.
+
+The chart also sets `schedulingRetry`, the block that [re-queues a gang pod left waiting with no node](../../concepts/serving/gang-scheduling.md#scheduling-retry). Keep both of its fields when you change it: `after` and `maxAttempts` are required together, each above zero, and OME treats the block as unset otherwise. To turn the retry off, set `schedulingRetry: null`.
 
 With no timeout at all, a migration request fails as soon as OME accepts it, with `deadline exceeded in phase Accepted: surge never allocated`. This is a known bug, so keep a timeout set while you use migrations.
 
