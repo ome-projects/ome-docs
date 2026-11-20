@@ -7511,7 +7511,7 @@ LifeCycleState enum
 
 Underlying type: `string`.
 
-Allowed values: `Creating`, `Importing`, `In_Transit`, `In_Training`, `Ready`, `Failed`.
+Allowed values: `Creating`, `Importing`, `In_Transit`, `In_Training`, `Ready`, `Failed`, `Evicted`.
 
 ### `LifecycleSpec` {#ome-io-v1beta1-LifecycleSpec}
 
@@ -8462,6 +8462,27 @@ Disabled or NotReady overlays are silently omitted.
 </tbody>
 </table>
 
+### `ModelRehydrationStatus` {#ome-io-v1beta1-ModelRehydrationStatus}
+
+Used by [`ModelStatusSpec`](#ome-io-v1beta1-ModelStatusSpec).
+
+ModelRehydrationStatus records the last restoration request acknowledged by
+at least one Ready node. Completion is history, not proof
+of present readiness; the current request is in the Model annotation.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>completedRequestID</code></td>
+<td><code>string</code></td>
+<td>
+
+
+
+</td></tr>
+</tbody>
+</table>
+
 ### `ModelRevisionStates` {#ome-io-v1beta1-ModelRevisionStates}
 
 Used by [`ModelStatus`](#ome-io-v1beta1-ModelStatus).
@@ -8635,6 +8656,13 @@ advances on actual status flips.
 <td><code>[]string</code></td>
 <td>
 
+
+</td></tr>
+<tr><td><code>rehydration</code></td>
+<td><a href="#ome-io-v1beta1-ModelRehydrationStatus"><code>ModelRehydrationStatus</code></a></td>
+<td>
+
+Rehydration records observed restoration progress for per-node models.
 
 </td></tr>
 <tr><td><code>conditions</code></td>
