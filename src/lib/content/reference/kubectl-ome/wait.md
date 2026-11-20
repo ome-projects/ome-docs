@@ -30,7 +30,7 @@ kubectl ome wait INFERENCESERVICE --for=PREDICATE [flags]
 | [`runtime-sync=acknowledged`](#runtime-sync-acknowledged) | `--request-id` | OME acknowledged the runtime sync with that request ID. |
 | [`held-revision=unheld`](#held-revision-unheld) | `--component`, `--revision`, `--ir-name`, `--ir-uid` | The revision is no longer held on that InferenceReplica. |
 
-The migration, replica and held-revision predicates read InferenceReplicas (IRs), which OME writes only for components that run on [OMENative](../../concepts/omenative/overview.md). `migration=terminal` matches only from a snapshot in which every IR the service owns is valid, so a service with an encoder [never matches](#migration-terminal). They see only the replicas the service owns, so on a service that fronts pools through [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) they never match: see [Which replicas the predicates read](#which-replicas-the-predicates-read).
+The migration, replica and held-revision predicates read InferenceReplicas (IRs), which OME writes only for components that run on [OMENative](../../concepts/omenative/overview.md). `migration=terminal` and `replicas=ready` match only from a snapshot in which every IR the service owns is valid, so a service with an encoder never matches them: see the warnings under [`migration=terminal`](#migration-terminal) and [`replicas=ready`](#replicas-ready). They see only the replicas the service owns, so on a service that fronts pools through [`spec.replicaRefs`](../../concepts/serving/inference-services.md#referenced-replicas) they never match: see [Which replicas the predicates read](#which-replicas-the-predicates-read).
 
 Each predicate takes only the flags in its row, and refuses others with an [error](#error-messages). The first check runs at once, so a state that already holds matches immediately. After that, `condition=Ready` and `rollout` watch the InferenceService, and the other predicates check every 5 seconds. Every wait ends with one of these outcomes:
 
@@ -119,6 +119,11 @@ kubectl ome wait INFERENCESERVICE --for=replicas=ready --component=engine|decode
 ```
 
 Waits until the component's InferenceReplica reports exactly `N` ready replicas in `status.readyReplicas`. `N` can be `0`.
+
+A matching count alone isn't enough. Like [`migration=terminal`](#migration-terminal), every check reads the InferenceService and every IR it owns into one snapshot, whichever component you ask about, and a flaw anywhere in it — an issue on any of those replicas, or one whose status isn't current — makes the check report `InvalidReplicaReadyEvidence`, with no verified count. A flaw like a replica that lags its own spec clears when the replica catches up. One never clears:
+
+!!! warning "A service with an encoder never matches"
+    The command reads only the engine, the decoder and the router, and the [encoder](../../concepts/serving/inference-services.md#the-encoder)'s IR, which claims the service like the others, never counts as valid. So on a service with an encoder, every check reports `InvalidReplicaReadyEvidence`, with Count validity `Invalid` and Observed ready `<unavailable>`, whichever `--component` you pass, and the wait runs to `TimedOut`, exit `2` — even while that component's InferenceReplica reports exactly `N` ready replicas. In a script, block on the ready count with `kubectl wait inferencereplica/chat-engine -n prod --for=jsonpath='{.status.readyReplicas}'=2 --timeout=30m`; [`kubectl ome get ir`](get.md#inferencereplicas-columns) shows the replica's name.
 
 !!! warning "Index gaps leave the count invalid"
     After a [surge migration](../../concepts/omenative/migration-and-transient-scale.md#surge-migration), yours or Alfred's, or a [`SurgeThenDrain`](../../concepts/architecture/omenative-update-strategies.md#surgethendrain) update of multi-pod Instances, `replicas=ready` shows Count validity `Invalid` for every component of the service, and times out. Until the Instance indices have no gaps again, as after a scale-up, `kubectl ome instance list` shows `SPARSE`; meanwhile, wait with `replicas=current`, which counts Instances in any phase. This is a known bug.
@@ -283,7 +288,7 @@ Reported rollout, Rollout state, Rollout epoch and Coordination Ready show REPOR
 | `ReplicaReadyMatched` | The count is valid and equals `--replicas`. |
 | `ReplicaReadyNotMatched` | The count is valid and differs. |
 | `ReplicaReadyNotRecorded` | The service [owns](#which-replicas-the-predicates-read) no InferenceReplica for the component, or the InferenceService was missing, deleted or replaced. |
-| `InvalidReplicaReadyEvidence` | An InferenceReplica of the service is stale, malformed or replaced, or has a gap in its Instance indices. |
+| `InvalidReplicaReadyEvidence` | The snapshot is invalid: an InferenceReplica the service owns is stale, malformed or replaced, has a gap in its Instance indices, or runs a component the command doesn't read — any of them fails every check. A service with an encoder [always reports this](#replicas-ready). |
 
 ### `replicas=current` fields {#replicas-current-fields}
 
