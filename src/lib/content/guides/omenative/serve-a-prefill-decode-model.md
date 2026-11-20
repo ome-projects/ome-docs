@@ -253,7 +253,7 @@ Read SGLang's logs with `kubectl logs -n llama-demo -l component=engine --tail=1
 
 ### The pods run without the RDMA profile's settings
 
-The engine and decoder pods ask for the `oci-roce` profile, but while the `rdma` entry of `inferenceservice-config` defines no profiles, OME's pod webhook doesn't block them: it admits the pods without the profile's settings, so SGLang runs without its environment, devices and capabilities, and transfers between prefill and decode fail. The manager also logs, once per replica, `pods that ask for RDMA injection get nothing until rdma.profiles names a profile; a chart install ships none, the cluster's values file carries its fabric table`. Read the entry:
+The engine and decoder pods ask for the `oci-roce` profile, but while the `rdma` entry of `inferenceservice-config` defines no profiles, OME's pod webhook doesn't block them: it admits the pods without the profile's settings, so SGLang runs without its environment, devices and capabilities, and transfers between prefill and decode fail. The manager also logs, once per process, `pods that ask for RDMA injection get nothing until rdma.profiles names a profile; a chart install ships none, the cluster's values file carries its fabric table`. Read the entry:
 
 ```bash
 kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.rdma}{"\n"}'
