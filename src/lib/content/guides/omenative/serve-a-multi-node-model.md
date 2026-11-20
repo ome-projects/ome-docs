@@ -162,7 +162,7 @@ spec:
 | Flag | Variable | Value |
 | --- | --- | --- |
 | `--tp-size` | `PARALLELISM_SIZE` | The pod's GPUs times the pods in the Instance: `2` here |
-| `--dist-init-addr` | `OME_LEADER_ADDRESS`, with port 5000 | The leader's DNS name, which resolves once the leader pod has an IP address |
+| `--dist-init-addr` | `OME_LEADER_ADDRESS`, with port 5000 | The leader's [DNS name](../../concepts/architecture/deployment-modes.md#pod-dns-names), which carries the Instance's incarnation and resolves once the leader pod has an IP address |
 | `--nnodes` | `OME_INSTANCE_POD_COUNT` | `1` + `worker.size`: `2` here |
 | `--node-rank` | `OME_INSTANCE_POD_RANK` | `0` on the leader, `k + 1` on worker `k` |
 
@@ -414,8 +414,10 @@ kubectl get pod qwen3-multi-node-engine-0-worker-0 -n qwen3-multi-node \
 ```
 
 ```output
-qwen3-multi-node-engine-0-leader-0.qwen3-multi-node-engine-headless
+qwen3-multi-node-engine-0-leader-0-i1.qwen3-multi-node-engine-headless
 ```
+
+`-i1` is the Instance's [incarnation](../../concepts/omenative/instances.md#incarnation). A higher number, such as `-i2` after a restart, is normal: each incarnation gets its own [DNS names](../../concepts/architecture/deployment-modes.md#pod-dns-names), so a worker never connects to the still-draining leader of a previous incarnation. The name resolves once that incarnation's leader pod has an IP address.
 
 Then check these causes:
 

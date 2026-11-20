@@ -138,7 +138,7 @@ Besides the pods, OME creates these objects for an OMENative component:
 | Object | Name | What it's for |
 | --- | --- | --- |
 | Service | `{isvc}-{component}` | Takes the component's traffic, as in the other modes |
-| Headless Service | `{isvc}-{component}-headless` | Gives the pods DNS names, `{pod}.{isvc}-{component}-headless`, that resolve before the pods are ready, so a leader and its workers can find one another |
+| Headless Service | `{isvc}-{component}-headless` | Gives the pods DNS names, `{hostname}.{isvc}-{component}-headless`, that resolve before the pods are ready, so a leader and its workers can find one another. See [Pod DNS names](#pod-dns-names). |
 | Revision Services | `{isvc}-{component}-rev-{hash}`, and the same with `-headless` | One pair per revision, used to drain pods, connect components of the same revision and analyze canaries |
 | ControllerRevision | `{isvc}-{component}-{hash}` | One per version of the pod template, which the InferenceReplica rolls Instances between |
 | PodGroup | `{isvc}-{component}-{index}` | One per multi-pod Instance, for [gang scheduling](../serving/gang-scheduling.md), when the scheduler-plugins PodGroup CRD is installed |
@@ -146,6 +146,17 @@ Besides the pods, OME creates these objects for an OMENative component:
 OME also creates the PodDisruptionBudget and autoscaler from [The deployment modes](#the-deployment-modes). It adds a PodMonitor that scrapes all the pods, workers included, when the Prometheus operator's PodMonitor CRD was installed before the manager started.
 
 For a multi-pod Instance, the Service selects only leaders when the InferenceService itself sets `worker` on the component, and workers too when only the runtime does. To select only leaders, add `leader: {}` and `worker: {}` to the component in the InferenceService, which keep the runtime's settings. Without a router, the [external Service](../../guides/networking/expose-without-ingress.md#expose-a-multi-node-engine) `{isvc}` sends requests to the workers too.
+
+### Pod DNS names
+
+Under the headless Service, a pod's DNS name comes from its hostname, which isn't always its name:
+
+- A single-pod Instance's hostname is its pod name.
+- A pod of a multi-pod Instance gets the hostname `{pod}-i{incarnation}`, its name plus the Instance's [incarnation](../omenative/instances.md#incarnation): `llama-70b-engine-0-leader-0-i1` for a new Instance, and `-i2` after a restart.
+
+Pod names stay the same when OME recreates an Instance, and the headless Service resolves pods that aren't ready, so a bare pod name could resolve to the previous incarnation's pod while it drains. The incarnation makes every DNS name OME hands out, `OME_LEADER_ADDRESS` and the `TPU_*` host lists, point at the current incarnation's pods alone: a lookup either returns the pod it names or fails, and the runtime retries until that pod exists.
+
+A hostname is a DNS label, so it can't exceed 63 characters. When `{pod}-i{incarnation}` is longer, OME shortens it to an 8-character hash of the whole name followed by as much of its end as fits. The hash covers the incarnation, so two incarnations never share a hostname.
 
 ### Pod labels and environment
 
@@ -176,13 +187,13 @@ It also sets these environment variables:
 | `OME_RUNNER_SIZE` | The number of pods in the pod's runner: `1` for `default` and `leader`, the worker size for `worker` |
 | `OME_RUNNER_INDEX` | The pod's position in its runner, from `0`. Always `0` for `default` and `leader`, even when the pod's ordinal is `1`. |
 | `OME_INSTANCE_SUBDOMAIN` | `{isvc}-{component}-{index}`. It isn't a DNS name, so reach the leader through `OME_LEADER_ADDRESS`. |
-| `OME_LEADER_ADDRESS` | Multi-pod Instances only. The leader's DNS name, `{isvc}-{component}-{index}-leader-0.{isvc}-{component}-headless` |
+| `OME_LEADER_ADDRESS` | Multi-pod Instances only. The leader's [DNS name](#pod-dns-names), `{isvc}-{component}-{index}-leader-0-i{incarnation}.{isvc}-{component}-headless` |
 | `OME_INSTANCE_POD_RANK` | Multi-pod Instances only. The pod's rank in the Instance: `0` for the leader, and `k + 1` for worker `k` |
 | `OME_INSTANCE_POD_COUNT` | Multi-pod Instances only. The number of pods in the Instance |
 | `OME_<PEER>_ENDPOINT` | With `spec.rollout.groups` only. One per other component, as in `OME_DECODER_ENDPOINT`: `{isvc}-{peer}.{namespace}.svc.cluster.local` |
 | `OME_<PEER>_REVISION_ENDPOINT` | With `spec.rollout.groups` only, when the pod pairs with a revision of the peer. That revision's Service, `{isvc}-{peer}-rev-{hash}.{namespace}.svc.cluster.local` |
 
-OME sets them in all containers but the init containers, over any variable with the same name. The pods of a multi-pod Instance that request `google.com/tpu` also get `TPU_WORKER_HOSTNAMES`, `TPU_WORKER_ID` and the other `TPU_*` variables that multi-host JAX reads. A runtime written for a LeaderWorkerSet uses these instead of the `LWS_*` variables and labels: [Move from LeaderWorkerSet to OMENative](../../guides/omenative/move-from-leaderworkerset.md#step-2-make-an-omenative-copy-of-the-runtime) has the mapping.
+OME sets them in all containers but the init containers, over any variable with the same name. The pods of a multi-pod Instance that request `google.com/tpu` also get `TPU_WORKER_HOSTNAMES`, `TPU_WORKER_ID` and the other `TPU_*` variables that multi-host JAX reads; the host lists carry the pods' [DNS names](#pod-dns-names), the incarnation included. A runtime written for a LeaderWorkerSet uses these instead of the `LWS_*` variables and labels: [Move from LeaderWorkerSet to OMENative](../../guides/omenative/move-from-leaderworkerset.md#step-2-make-an-omenative-copy-of-the-runtime) has the mapping.
 
 OMENative pods also have the readiness gate `ome.io/serving`. OME sets it to `False` to take the pod out of rotation without stopping it, as it does during a drain or before an in-place update.
 
