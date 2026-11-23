@@ -206,7 +206,10 @@ The placement state is:
 | `Partial` | Part of the placement status is missing, cut short or unknown to the CLI. The other placement rows show which part. |
 | `Unavailable` | The CLI couldn't make sense of the placement data. The row reads `Unavailable / Unknown / NotRecorded`. |
 
-The mode is `Single`, `All`, `Split`, `Unknown` or `NotApplicable`. [`kubectl ome placement status`](placement.md#status-output-fields) explains the phase, candidate and endpoint values.
+The mode is `Single`, `All`, `Split`, `Unknown` or `NotApplicable`. The phase is `Pending`, `Placed`, `Failed`, `NotRecorded` or `Unknown`, or the legacy `Racing` that an older controller may have left in `status.placement.phase`. That's not the list [`kubectl ome placement status`](placement.md#status-output-fields) prints: this row never shows `Admitting`, the phase the controller records until a cluster admits the service. That page explains the candidate and endpoint values.
+
+!!! warning "Placement shows `Partial` and the phase `Unknown` while a service is admitted"
+    From fan-out until a cluster admits the service, the controller records the phase `Admitting`, which [`kubectl ome placement status`](placement.md#status) shows. This report doesn't recognize that phase: it prints it as `Unknown` and demotes the state to `Partial`, with no Issue row — on a Split service, the row reads `Partial / Split / Unknown`. That marks the CLI's limit, not a broken placement, so trust the phase in `placement status`. This is a known bug.
 
 ### Traffic
 
