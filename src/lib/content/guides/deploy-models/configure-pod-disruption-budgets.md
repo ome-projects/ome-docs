@@ -7,6 +7,8 @@ A PodDisruptionBudget limits how many of a component's pods evictions can take d
 
 A PodDisruptionBudget limits evictions only. Rolling updates and OME's own changes delete pods rather than evict them, so the budget doesn't slow them down.
 
+The budgets on this page cover the components that serve your models. The OME controller manager's own pods get none of them: the defaults that [Step 2](#step-2-set-the-operator-defaults-for-each-mode) sets under `ome.controller.podDisruptionBudget` never protect the manager, so a drain can still evict every manager pod at once — and with them the admission webhooks. The chart's opt-in `ome.controller.managerPodDisruptionBudget` gives those pods their own budget: see [Give the manager pods a disruption budget](../operate-ome/configure-the-controller.md#give-the-manager-pods-a-disruption-budget).
+
 <div class="prerequisites" markdown>
 
 - OME installed, and `kubectl` access to the cluster. See [Install OME](../../getting-started/install.md).

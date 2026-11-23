@@ -3,7 +3,7 @@ title: Configure the controller
 description: "Tune the OME controller manager's command-line flags, including reconcile concurrency, leader election and runtime-revision garbage collection."
 ---
 
-Set the OME controller manager's command-line flags to speed up changes to your InferenceServices, keep its leader stable during API server slowdowns, or apply ConfigMap edits sooner. [Controller manager flags](../../reference/operate-ome/controller-manager-flags.md) lists them all, with their defaults. The chart can also [add environment variables and files to the manager pod](#add-environment-variables-and-files-to-the-manager-pod), such as proxy settings and a private CA bundle.
+Set the OME controller manager's command-line flags to speed up changes to your InferenceServices, keep its leader stable during API server slowdowns, or apply ConfigMap edits sooner. [Controller manager flags](../../reference/operate-ome/controller-manager-flags.md) lists them all, with their defaults. The chart can also [add environment variables and files to the manager pod](#add-environment-variables-and-files-to-the-manager-pod), such as proxy settings and a private CA bundle, and [give the manager pods a disruption budget](#give-the-manager-pods-a-disruption-budget).
 
 <div class="prerequisites" markdown>
 
@@ -128,6 +128,37 @@ ome:
 ```
 
 Keep the lease duration longer than the renew deadline, and the renew deadline longer than 1.2 times the retry period. Otherwise the manager logs `Invalid leader election timing` when it starts, and exits. Longer values slow failover: a standby waits up to the lease duration before it takes over.
+
+## Give the manager pods a disruption budget
+
+By default, the manager pods have no PodDisruptionBudget: `ome.controller.podDisruptionBudget` covers [the workloads that the controller creates](../deploy-models/configure-pod-disruption-budgets.md), not these pods. A maintenance drain across several nodes can therefore evict every manager pod at once — and while none runs, the API server refuses every create and update of OME's resources, such as InferenceServices, models and runtimes, because the admission webhooks, which every replica serves, have `failurePolicy: Fail`. Running pods keep serving; only changes are refused, until a manager pod reschedules.
+
+To keep a drain to at most one manager pod at a time, enable the chart's budget for them:
+
+```yaml title="values.yaml"
+ome:
+  controller:
+    managerPodDisruptionBudget:
+      enabled: true
+```
+
+Upgrade with your values file, as in [Step 1](#with-a-helm-value). The chart creates the PodDisruptionBudget `ome-controller-manager` in the release's namespace, selecting the manager Deployment's pods — and changes nothing else: the Deployment and the `inferenceservice-config` ConfigMap stay as they are, so the pods don't roll. Check the budget:
+
+```bash
+kubectl get pdb ome-controller-manager -n ome
+```
+
+```output
+NAME                     MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+ome-controller-manager   N/A             1                 1                     30s
+```
+
+Two more values under `ome.controller.managerPodDisruptionBudget` set the budget's fields, and their defaults suit the chart's three replicas:
+
+- `maxUnavailable` is how many manager pods evictions can take down at a time: `1` by default, so a drain takes one, the rest keep serving the admission webhooks, and one of them takes over when the evicted pod was the leader, as [Tune leader election](#tune-leader-election) describes. The value is a whole number of pods, not a percentage, and must be at least 1: with `0`, no node running a manager pod could ever be drained, so the chart refuses to render, and the upgrade stops before it changes anything, with `ome.controller.managerPodDisruptionBudget.maxUnavailable must be an integer of at least 1 so voluntary maintenance can make progress`.
+- `unhealthyPodEvictionPolicy`, `AlwaysAllow` by default, lets a drain always evict a manager pod that isn't Ready. Such a pod serves no webhook requests, but it can hold a drain under Kubernetes' default policy, `IfHealthyBudget`, which refuses to evict a not-Ready pod while the budget's Ready pods are below its target: with the defaults, two manager pods stuck unready would pin the nodes they run on. An empty value leaves the field off the budget, which keeps that Kubernetes default.
+
+The budget bounds evictions only: a `helm upgrade` that changes the pods still replaces them one at a time, through the Deployment's rolling update. And it can't keep a lone pod up — with `ome.controller.replicaCount: 1`, the budget renders and still lets the one pod's node drain, so changes are refused until the pod reschedules. For maintenance without that window, keep the chart's three replicas.
 
 ## Tune reconcile throughput {since=v1.3}
 
