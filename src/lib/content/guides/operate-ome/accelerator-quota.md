@@ -800,6 +800,30 @@ helm upgrade ome-quota-manager ./charts/ome-quota-manager \
 
 Helm reports the upgrade. In place of the empty Secret, the chart renders a self-signed Issuer, `ome-quota-manager-selfsigned`, and a Certificate, `ome-quota-manager-serving-cert`, which cert-manager issues into the same Secret, `ome-quota-manager-webhook-cert`, with the webhook Service's DNS names. The ValidatingWebhookConfiguration carries `cert-manager.io/inject-ca-from: ome/ome-quota-manager-serving-cert`, so cert-manager's cainjector keeps the CA bundle current. The quota manager's pods restart reading the mounted Secret and rotating nothing, and the release carries neither the webhook-configuration grants nor the Secrets Role.
 
+Both paths put the same two DNS names on the certificate: the webhook Service's name, `ome-quota-manager-service.ome.svc`, which the API server dials, and the fully qualified `ome-quota-manager-service.ome.svc.cluster.local`. One value sets the domain in the second, on both paths: `quotaManager.clusterDomain`, `cluster.local` by default. Under the default internal management, the chart passes it to the quota manager as its `--cluster-domain` flag; with cert-manager issuing, the chart writes the fully qualified name into the Certificate's `dnsNames`. The quota manager has no built-in domain, so the value is the only source: left empty, the certificate covers the short name alone on either path, and under internal management the quota manager notes it at startup, with `--cluster-domain is not set; the webhook certificate covers only <service>.<namespace>.svc, not a fully qualified name`.
+
+On a cluster whose DNS domain isn't `cluster.local`, set the value to the real domain. Admission doesn't depend on it — the API server dials the short name, which both paths always cover — but an in-cluster client that calls the webhook Service by its fully qualified name fails TLS verification until the certificate covers the name it dials. Set the domain at the install in Step 1, or in an upgrade, keeping the other values in the file:
+
+```yaml title="quota-values.yaml"
+global:
+  hub: registry.example.com/ome
+quotaManager:
+  mode: workload
+  clusterDomain: internal.example
+  image:
+    tag: dev
+  materialize:
+    enrolledNamespaces:
+      - ml-serving
+```
+
+```bash
+helm upgrade ome-quota-manager ./charts/ome-quota-manager \
+  --namespace ome -f quota-values.yaml
+```
+
+Helm reports the upgrade. Under the default internal management, the quota manager's pods restart with the new flag; with cert-manager issuing, the upgrade rewrites the Certificate's `dnsNames`, and cert-manager reissues into the Secret.
+
 Who issues the certificate also decides how a broken cert heals: cert-manager recreates a deleted Secret on its own, where the default wedges the webhook, as [Troubleshooting](#kubectl-apply-fails-with-a-webhook-error) explains.
 
 ## Troubleshooting
