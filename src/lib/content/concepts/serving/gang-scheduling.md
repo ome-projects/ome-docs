@@ -163,6 +163,42 @@ The scheduler's default is `defaultPermitTimeoutSeconds` for the OME scheduler, 
 
 [Change the cluster defaults](../../guides/omenative/set-instance-readiness-deadlines.md#change-the-cluster-defaults) shows how to change these settings. OME updates existing PodGroups to the new timeout in place, unlike [the topology annotation](#the-topology-annotation-follows-the-instances-pods), which a live gang's pods hold.
 
+## A gang pod left Pending is re-queued {#scheduling-retry}
+
+The controller's `lifecycle.schedulingRetry` setting bounds how OME asks the scheduler again for a pod of a multi-pod Instance that stays Pending with no node while its attempt — its [operation](../omenative/instances.md#operations) — is open. Once the pod has waited `after` for a node, OME patches a small record onto it: the `internal.ome.io/scheduling-retry` annotation, whose value, such as `{"count":1}`, counts the writes. The patch changes nothing the scheduler reads as a placement input. That's the point: the write puts a pod the scheduler's queue has lost track of back into its active queue, and leaves a pod the queue still holds where it is, so a write to a pod the scheduler is already working on costs nothing.
+
+The `ome-resources` chart sets the retry by default:
+
+```yaml
+ome:
+  controller:
+    lifecycle:
+      schedulingRetry:
+        after: 5m
+        maxAttempts: 2
+```
+
+Three rules bound the writes:
+
+- **The wait runs from the scheduler's last word.** The clock starts at the pod's creation, or at the scheduler's last `PodScheduled` ruling when that's later, so a pod the scheduler just ruled on gets the whole wait again from the ruling.
+- **Each write waits longer.** The k-th write comes once the pod has waited k times `after`: with the chart's values, the first after 5 minutes of waiting, the second after 10.
+- **`maxAttempts` caps the writes per pod.** The count is the annotation's, so a pod OME rebuilds starts over. Past the cap, the pod waits on the scheduler's own queue and the attempt's limits.
+
+The write ends nothing: the attempt keeps its deadline, and a pod the scheduler has refused keeps its `Unschedulable` hold, so the [readiness deadlines](../../guides/omenative/set-instance-readiness-deadlines.md) still bound the wait. OME writes only a pod still waiting for the scheduler — Pending, with no node, not held by a scheduling gate and not terminating — of a multi-pod Instance, a surge replacement gang included. It leaves a single-pod Instance, a teardown and a [paused](../../guides/roll-out-changes/pause-and-resume-a-rollout.md#what-a-pause-holds) attempt alone, and writes nothing in the pass where `unschedulableGracePeriod`, or [a full domain's shorter window](#a-gang-held-to-a-full-domain-can-fail-sooner), ends the attempt.
+
+Each write records a `SchedulingRequestedAgain` event on the InferenceService that names the pod, how long it waited and which write of the cap this was:
+
+```bash
+kubectl get events -n qwen3-multi-node --field-selector reason=SchedulingRequestedAgain \
+  -o jsonpath='{range .items[*]}{.message}{"\n"}{end}'
+```
+
+```output
+OMENative component=engine instance=0 pod qwen3-multi-node-engine-0-worker-0 has waited 5m12s for a node; the pod was written so the scheduler looks at it again (1 of 2)
+```
+
+Both fields are required when the block is present, each above zero, and OME treats the block as unset otherwise. The binary has no built-in values: remove the block, as [Change the cluster defaults](../../guides/omenative/set-instance-readiness-deadlines.md#change-the-cluster-defaults) describes, and no pod is ever written — such a pod is left to the scheduler's own queue and the attempt's deadline.
+
 ## A gang held to a full domain can fail sooner
 
 Placed members pin their gang. When some of an Instance's pods run in one topology domain and the scheduler reports that the domain can't take the rest — for example, one of its nodes stopped reporting — freeing capacity in another domain doesn't help: each worker's [affinity](#the-topology-annotation-follows-the-instances-pods) keeps it in its leader's domain. Only removing the placed members frees the gang. Ending the attempt does exactly that, and the rebuilt gang can land in a domain that fits.
@@ -190,6 +226,7 @@ When both settings are set, the shorter applies, and `gangDomainFullGracePeriod`
 | What you see | What it means |
 | --- | --- |
 | The component's `GangSchedulingUnavailable` condition is `True`, with the reason `PodGroupCRDNotInstalled` | The CRD is missing, or was when the controller started. The default scheduler may place part of an Instance, and the OME scheduler keeps its pods `Pending`. [Install the CRD](#when-the-podgroup-crd-is-missing). |
+| A `SchedulingRequestedAgain` event on the InferenceService | A pod of a multi-pod Instance waited past `lifecycle.schedulingRetry.after` for a node, so OME [wrote it so the scheduler looks at it again](#scheduling-retry). Nothing failed, and the attempt keeps running. |
 | An `InstanceFailed` Warning event with the scheduler's message | A pod stayed unschedulable longer than the controller's [`unschedulableGracePeriod`](../../guides/omenative/set-instance-readiness-deadlines.md), 15 minutes with the chart — or longer than `gangDomainFullGracePeriod`, when [the gang was held to a full domain](#a-gang-held-to-a-full-domain-can-fail-sooner). |
 | An `InstanceFailed` Warning event that names `PodGroupOwnershipConflict` | Another owner controls a PodGroup with the Instance's PodGroup name. OME fails the Instance and creates none of its pods. |
 | A `PodGroupReset` Warning event on the InferenceService | A pod of a running gang failed, so the scheduler-plugins controller marked the PodGroup `Failed`. OME replaced it without failing the Instance. The Instance's [restart policy](../omenative/instance-restart-policy.md) decides what happens next. |
