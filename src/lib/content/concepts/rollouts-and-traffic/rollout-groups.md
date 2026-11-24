@@ -64,7 +64,7 @@ Each group can set:
 | `canary`, `blueGreen` or `rollingUpdate` | The progression. Set at most one. See [Choose a progression](#choose-a-progression). |
 | `policyRef` | Alpha, and off by default. A [RolloutPolicy](rollout-policy.md) that supplies the progression when the group sets none. |
 | `soak` | In a [sequence](#roll-components-one-at-a-time), how long to wait between components. |
-| `maintainRatio` | For a blue-green or rolling-update group of two or more components. Keeps them in step, and their replica ratio within `tolerance` percent. See [Rolling update](#rolling-update) and [Batches for the engine and the decoder](#batches-for-the-engine-and-the-decoder). |
+| `maintainRatio` | For a blue-green or rolling-update group of two or more components. Keeps them in step, and their replica ratio within `tolerance` percent. A group that names the encoder can keep a ratio only beside one other role (`EncoderRatioGroup`): see [What admission rejects](#what-admission-rejects). See [Rolling update](#rolling-update) and [Batches for the engine and the decoder](#batches-for-the-engine-and-the-decoder). |
 
 ## Choose a progression
 
@@ -391,6 +391,7 @@ When the webhook rejects a rollout, `kubectl` prints `admission webhook "inferen
 | `OrderNotHonored` | A group sets `order`, which no progression applies. |
 | `InvalidRollingUpdateInteger`, `InvalidRollingUpdatePercent`, `ZeroBudgetPacingUnstartable` | A negative count, a string that isn't a percentage from `"0%"` to `"100%"`, or two budgets that resolve to zero. |
 | `RatioDrainInfeasible` | A `maintainRatio` group's drain-first member's first drain would leave it with nothing serving, or move a pair's serving ratio more than twice the `tolerance`. See [Rolling update](#rolling-update). |
+| `EncoderRatioGroup` | A `maintainRatio` group names the encoder and two or more other roles. The ratio check compares members two at a time, and three members can hold each other, so the roll would never finish. Keep the ratio on a two-role group, or drop `maintainRatio`. |
 | `PairingProtocolChangeUncoordinated` | With no encoder declared, `pairingProtocol` changes tokens while no group lists both the engine and the decoder: they roll out independently, or in separate groups. |
 | `PairingProtocolChangeWithEncoder` | `pairingProtocol` changes — between tokens, or a first-time set — while the old or the new spec declares an encoder. The token may only stay or be cleared. See [While an encoder is declared](#while-an-encoder-is-declared). |
 | `EncoderAddedWithPairingProtocol` | An edit adds an encoder while `pairingProtocol` is set. Clear the token in the same edit. |
