@@ -43,6 +43,22 @@ On scale-down, OME first keeps the Instances that a migration or a multi-pod sur
 
 An Instance sits on a cordoned node when any of its pods, a worker included, still runs on a node marked unschedulable, as `kubectl cordon` does; a terminating or finished pod doesn't count. Cordoning a node therefore steers the next scale-down, an autoscaler's included, toward the node's Instances, and when the [scale-down budget](../../guides/operate-ome/configure-the-controller.md#pace-omenative-scale-ups-and-scale-downs) splits the deletions into waves, those Instances go in the first ones.
 
+A rebuild in progress is kept work. When an update is rebuilding an Instance — recreating its pods, or updating them in place: the `Drain` and `InPlace` [steps](#operations) — a scale-down doesn't throw the rebuild away for a `Ready` Instance that still owes the same update, and the Instance keeps its place even when the pods the update replaces sit on a cordoned node. A rebuild toward a revision under a [retry backoff or hold](#what-ome-does-with-a-failed-instance) protects nothing.
+
+The keep also sets the pace. While the kept Instance serves nothing, its rebuild still coming up, retiring a serving Instance too would take away capacity the kept one can't give back yet. So a leaving Instance with a pod still in [rotation](#readiness-and-availability) keeps serving, out of `Deleting`, until the kept Instance serves again or its rebuild fails on its revision; the leaving Instances with no pod in rotation, and the ones already `Deleting`, go at once. The component keeps serving through the scale-down what it served before it, and the scale lands one rebuild later. A [SurgeThenDrain](../architecture/omenative-update-strategies.md#surgethendrain) update, the default, never causes the wait — its source keeps serving while the replacement comes up — and neither does a repair or a [restart](instance-restart-policy.md): only an update's rebuild is waited on.
+
+OME records one Normal `ScaleDownWaitsForRebuild` event on the InferenceService for each Instance the scale-down keeps serving: once per Instance, not once per pass. The message names the Instance waited on — the lowest-indexed kept one being rebuilt — and the revision its rebuild serves. For the example's engine, scaled from two Instances to one while an update recreates Instance 0's pods:
+
+```bash
+kubectl get events -n qwen3-0-6b --field-selector reason=ScaleDownWaitsForRebuild \
+  -o custom-columns=TYPE:.type,MESSAGE:.message
+```
+
+```output
+TYPE     MESSAGE
+Normal   OMENative component=engine instance=1: scale-down keeps this Instance serving until component=engine instance=0 serves revision qwen3-0-6b-engine-a41b7e90
+```
+
 ### Incarnation
 
 A new Instance starts at incarnation `1`, and so does the replacement in a migration or a multi-pod surge. A restart raises the incarnation by one, and so does an update that deletes the pods and creates them again under the same names. It stays the same through an in-place update, a SurgeThenDrain update of a single-pod Instance, and the rebuild of a failed or `Pending` Instance. The pods carry it in the `ome.io/instance-incarnation` label, which tells a recreated pod from the one it replaced.
