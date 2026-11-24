@@ -49,6 +49,7 @@ In a healthy report, Ready and each component row start with `True / Valid`, eve
 - Rollout shows `Unknown` on most services, with the rollout state in `reported=`.
 - Traffic shows `Unavailable` when the service declares no traffic behavior — though a service with an encoder shows `Invalid` instead, traffic behavior or not: see [Traffic](#traffic).
 - Runtime active and Accelerator show `AutoSelectionNotProbed` when the service names a model but no runtime.
+- Placement shows `Partial` and the mode `Unknown` on a service that declares the placement mode `SplitByCapacity`, however healthy its placement: see [Placement](#placement).
 
 And a service that fronts standalone replicas through `spec.replicaRefs` counts zero pods and has no component rows when healthy: see [Pods and components](#pods-and-components). A service with an [encoder](../../concepts/serving/inference-services.md#the-encoder) shows a `Partial` Pod observation and an `UnsupportedComponent` issue even when healthy, because the CLI reads the encoder's pods but doesn't count them: that section covers it too.
 
@@ -192,7 +193,7 @@ A service without placement shows Placement as `NotConfigured / NotApplicable / 
 | Placement homes | The candidate clusters the status lists, as `<state> <kept>/<total> truncated=<bool>`. |
 | Reported cluster | The cluster the status names, when it names one. |
 | Placement endpoint | Whether the status records an endpoint, as `<state> (reported; not probed)`. |
-| Placement replicas | When the mode is `Split`. `admitted=<n> ready=<n> (reported)`, with `Unknown` or `Unavailable` in place of a count the CLI can't vouch for. |
+| Placement replicas | Only when the mode is `Split` — never for a `SplitByCapacity` service, whose mode reads `Unknown`. `admitted=<n> ready=<n> (reported)`, with `Unknown` or `Unavailable` in place of a count the CLI can't vouch for. |
 | Placement evidence | Wide. `Reported / Unverifiable` when the CLI read a placement status, `Unavailable / NotApplicable` otherwise. |
 | Placement mode | Wide. Where the mode comes from: `Declared`, `Defaulted`, `Unavailable` or `NotApplicable`. |
 
@@ -206,10 +207,13 @@ The placement state is:
 | `Partial` | Part of the placement status is missing, cut short or unknown to the CLI. The other placement rows show which part. |
 | `Unavailable` | The CLI couldn't make sense of the placement data. The row reads `Unavailable / Unknown / NotRecorded`. |
 
-The mode is `Single`, `All`, `Split`, `Unknown` or `NotApplicable`. The phase is `Pending`, `Placed`, `Failed`, `NotRecorded` or `Unknown`, or the legacy `Racing` that an older controller may have left in `status.placement.phase`. That's not the list [`kubectl ome placement status`](placement.md#status-output-fields) prints: this row never shows `Admitting`, the phase the controller records until a cluster admits the service. That page explains the candidate and endpoint values.
+The mode is `Single`, `All`, `Split`, `Unknown` or `NotApplicable` — never [`SplitByCapacity`](../api/ome.v1beta1.md#ome-io-v1beta1-PlacementMode), a `spec.placement.mode` value the CLI doesn't recognize: a service that declares it reads `Unknown`. The phase is `Pending`, `Placed`, `Failed`, `NotRecorded` or `Unknown`, or the legacy `Racing` that an older controller may have left in `status.placement.phase`. That's not the list [`kubectl ome placement status`](placement.md#status-output-fields) prints: this row never shows `Admitting`, the phase the controller records until a cluster admits the service. That page explains the candidate and endpoint values.
 
 !!! warning "Placement shows `Partial` and the phase `Unknown` while a service is being admitted"
     From fan-out until a cluster admits the service, the controller records the phase `Admitting`, which [`kubectl ome placement status`](placement.md#status) shows. This report doesn't recognize that phase: it prints it as `Unknown` and demotes the state to `Partial`, with no Issue row — on a Split service, the row reads `Partial / Split / Unknown`. That marks the CLI's limit, not a broken placement, so trust the phase in `placement status`. This is a known bug.
+
+!!! warning "Placement shows `Partial`, the mode `Unknown` and no replica counts for a `SplitByCapacity` service"
+    The CLI doesn't recognize the placement mode `SplitByCapacity`, the mode that [capacity-based placement](../../guides/operate-ome/configure-the-controller.md#opt-in-to-capacity-based-placement) opts a service into. A service that declares it shows the mode as `Unknown`, and once the controller writes `status.placement`, the state as `Partial`, with no Issue row — healthy and placed, the row reads `Partial / Unknown / Placed`. And because the Placement replicas row appears only when the mode is `Split`, no admitted or ready sum appears either: in `-o json`, `admittedReplicas` and `readyReplicas` read `NotApplicable`. That marks the CLI's limit, not a broken placement. [`kubectl ome placement status`](placement.md#status-output-fields) has the same limit — its Mode row reads `Unknown (Declared)` and its per-home replica rows `NotApplicable` — while [`kubectl ome get tm`](get.md#trafficmaps-columns) prints the declared mode. To read each home's admitted and ready replicas, read `status.placement.candidates` on the InferenceService, with `kubectl get inferenceservice -o yaml`. This is a known bug.
 
 ### Traffic
 
