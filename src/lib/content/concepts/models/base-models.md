@@ -183,7 +183,7 @@ When you change the model or a node:
 | Change | What happens |
 | --- | --- |
 | `nodeSelector` or `nodeAffinity` | Nodes that stop matching delete their copy, and nodes that start matching download it. Since v1.3, nodes that still match keep their copy. On v1.2.2, they process the model again. |
-| The model's labels or annotations, or another `storage` field, such as `storageUri`, `path` or `key` | All matching nodes process the model again. A `downloadPolicy` change does this only for `hf://` models. Changing an `hf://` model's `storageUri` alone downloads over the old files by default, so [change `path` too](#change-the-hf-source). |
+| The model's labels, an annotation whose key starts with `ome.io/repair`, or another `storage` field, such as `storageUri`, `path` or `key` | All matching nodes process the model again. Among annotations, only the `ome.io/repair` prefix counts: adding, changing or removing a [repair annotation](../../reference/api/labels-and-annotations.md#basemodel-annotations), such as `ome.io/repair-request: "1"`, requests the pass, and a change to any other annotation doesn't. A `downloadPolicy` change does this only for `hf://` models. Changing an `hf://` model's `storageUri` alone downloads over the old files by default, so [change `path` too](#change-the-hf-source). |
 | `displayName`, `modelCapabilities` or other descriptive metadata | Nodes keep their copy as it is. |
 | A node's labels | Nothing, until you [restart the agent pod](../../guides/operate-ome/model-agent.md#a-node-never-gets-the-label) on that node. The new agent downloads models that now select the node, and keeps copies of models that no longer do. |
 

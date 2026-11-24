@@ -299,10 +299,10 @@ On a `Failed` node, look for one of these lines:
 | `invalid local storage URI format: missing path` | The URI is `local://` with nothing after it. | Add the directory to the URI. |
 | `unknown storage type for URI` | The URI has the wrong scheme. | Use `local://`. |
 
-The agent doesn't retry a failed model on its own. After you fix the files, change an annotation on the model, with a new value each time, and the agents check it again:
+The agent doesn't retry a failed model on its own. After you fix the files, change a [repair annotation](../../reference/api/labels-and-annotations.md#basemodel-annotations) on the model — any key that starts with `ome.io/repair` — with a new value each time, and the agents check it again. Changing an annotation outside that prefix, such as `example.com/recheck`, does nothing:
 
 ```bash
-kubectl annotate clusterbasemodel llama-3-2-1b-instruct-local example.com/recheck=1 --overwrite
+kubectl annotate clusterbasemodel llama-3-2-1b-instruct-local ome.io/repair-request=1 --overwrite
 ```
 
 ```output
