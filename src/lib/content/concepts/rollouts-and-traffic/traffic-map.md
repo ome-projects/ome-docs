@@ -442,6 +442,9 @@ The chart ships `observationGrace` empty, which is no grace: on a default instal
 | `True` | `OverridesApplied` | At least one drain holds an entry. |
 | `False` | `OverridesPending` | The InferenceService has drains, but none names a cluster in the table. `kubectl ome traffic drain` doesn't check the name against the map, so look for a misspelling. |
 | `False` | `NoOverrides` | The InferenceService has no drains. |
+| `Unknown` | `OverridesInvalid` | The `ome.io/traffic-drain` annotation can't be parsed, usually after a hand edit, and the message holds the parse error. The map keeps its last valid table, so the drains of the last valid value still hold their clusters at 0. See [The TrafficMap stops changing after a hand edit](../../guides/multi-cluster/drain-a-workload-cluster.md#the-trafficmap-stops-changing-after-a-hand-edit). |
+
+While the reason is `OverridesInvalid`, only this condition changes: the entries, `Routable` and `CapacityFallback` keep describing the last valid table, and the condition's `observedGeneration` is that table's generation.
 
 ### CapacityFallback
 
@@ -507,13 +510,13 @@ The numbers match, so the publisher has published the latest table.
 
 ## When the map stops updating {#where-it-comes-from}
 
-Some errors stop OME from updating a map. The map keeps its last table and conditions, and the route keeps its last published weights. When the error follows a spec change, `Published` turns `False` with reason `InvalidOwner`. The error shows only in the manager's log. Read every replica's log with `kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1`.
+Some errors stop OME from updating a map. The map keeps its last table and conditions, and the route keeps its last published weights. When the error follows a spec change, `Published` turns `False` with reason `InvalidOwner`. A malformed drain annotation is the one error the map itself reports, as [`OverrideActive`](#overrideactive) `Unknown` with reason `OverridesInvalid`; the others show only in the manager's log. Read every replica's log with `kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1`.
 
 | Log error | Cause |
 | --- | --- |
 | `validate placement intent:` | The InferenceService carries the obsolete `ome.io/accelerator-requirements` or `ome.io/cluster-selector` annotation. Remove the annotation, and put the restriction in `spec.placement.clusterAffinity`. |
 | `validate routing policy:` | A factor in `spec.routing.capacityFactors` is 0 or negative. See [The weights don't change](../../guides/multi-cluster/weight-traffic-for-heterogeneous-clusters.md#the-weights-dont-change). |
-| `parse ome.io/traffic-drain:` | The drain annotation is malformed. See [The TrafficMap stops changing after a hand edit](../../guides/multi-cluster/drain-a-workload-cluster.md#the-trafficmap-stops-changing-after-a-hand-edit). |
+| `parse ome.io/traffic-drain:` | The drain annotation is malformed. The map's `OverrideActive` condition carries the same error — unless the service had no map when the value went bad, which leaves the error only in the log: OME creates no map until the value parses. See [The TrafficMap stops changing after a hand edit](../../guides/multi-cluster/drain-a-workload-cluster.md#the-trafficmap-stops-changing-after-a-hand-edit). |
 | `TrafficMap llama-demo/llama-chat exists but is not controlled by InferenceService UID` | A TrafficMap with that name belongs to something else, for example an earlier InferenceService with the same name. |
 
 ## Next steps
