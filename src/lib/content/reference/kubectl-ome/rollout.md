@@ -262,7 +262,21 @@ The `Effective` view also shows the plan conditions, the holds and the observed 
 | TRAFFIC | The traffic weight the controller recorded for each revision, as `component:revision=percent`. |
 | COMPONENT type | A component in no rollout group: its strategy, phase and evidence, then rows for its revisions, traffic and issues. REVISIONS shows the [`status`](#status-output-fields) revisions as `current=`, `ready=` and `previous=`. |
 
-READY is `False` with the reason `PolicyNotFound`, `PolicyNotReady`, `ProgressionMismatch`, `PlanInvalid` or `ProviderUnbound`. READY and DRIFT show `Unobserved; evidence=Unavailable` until the controller sets the condition. They show `Invalid/Unknown`, and ISSUES lists `PlanConditionMalformed`, when the condition is malformed or conflicts with whether a run is active.
+READY is `False` with the reason `PolicyNotFound`, `PolicyNotReady`, `ProgressionMismatch`, `PlanInvalid` or `ProviderUnbound` — the only `False` reasons the report reads. READY and DRIFT show `Unobserved; evidence=Unavailable` until the controller sets the condition. They show `Invalid/Unknown`, and ISSUES lists `PlanConditionMalformed`, when the condition is malformed, conflicts with whether a run is active, or carries a reason outside those lists.
+
+!!! warning "A `RouteProviderUnsupported` park shows `Invalid/Unknown`"
+    The controller parks a rollout with one `False` reason this report doesn't read: `RouteProviderUnsupported`, when a canary group's traffic percentages need a capability the configured route provider declares it doesn't have, so the run doesn't open. The condition is well formed, but READY shows `Invalid/Unknown`, ISSUES lists `PlanConditionMalformed`, and HOLD doesn't show `PlanParked`: like [`status`](#status-output-fields), the report refuses what it doesn't know. The controller's record isn't broken. Read the park reason and the full explanation from the condition itself:
+
+    ```bash
+    kubectl get inferenceservice chat -n prod \
+      -o jsonpath='{range .status.conditions[?(@.type=="RolloutPlanReady")]}{.status} {.reason}: {.message}{"\n"}{end}'
+    ```
+
+    ```output
+    False RouteProviderUnsupported: groups[0].canary.steps[].traffic splits traffic between revisions by percentage, but the configured route provider "KubernetesIngress" does not declare the weightedRevisionRouting capability (ingress.routeProviderCapabilities); declare it for that provider, route through one that has it, or use a blueGreen/rollingUpdate progression (RouteProviderUnsupported)
+    ```
+
+    The same park reads as malformed evidence in [`validate`](#validate-output-fields).
 
 The source in a GROUP row is one of:
 
@@ -305,7 +319,7 @@ HOLD is one of:
 | Hold | Evidence | Meaning |
 | --- | --- | --- |
 | `GlobalPause` | `Declared` | The `ome.io/rollout-paused` annotation is `true` or `freeze`. [`resume`](#pause-and-resume) clears it. |
-| `PlanParked` | `Reported` | READY is `False`, so the rollout is parked. READY names the cause. |
+| `PlanParked` | `Reported` | READY is `False`, so the rollout is parked. READY names the cause. A park whose reason reads as `Invalid/Unknown`, such as [`RouteProviderUnsupported`](#explain-output-fields), gets no hold. |
 | `CanaryPreStep` | `Reported` | After a repin to a step with a higher traffic weight than last recorded, the canary holds before the step. [The canary holds after the repin](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#what-the-controller-does-next) shows how to release it. |
 | `ObservedPaused` | `Reported` | The controller reports the group as `Paused`, as for a canary waiting at a gate before its last step. |
 
@@ -443,6 +457,8 @@ ROLLOUT-PLAN is narrower than admission in one way: the API takes [up to four gr
 AUTOSCALER-SPEC's service row checks the `ome.io/autoscalerClass`, `ome.io/metrics` and `ome.io/targetUtilizationPercentage` annotations. Each component's row checks its `autoscaler` block, its replica bounds and its `autoscalerPolicyRef`. [Rollout groups](../../concepts/rollouts-and-traffic/rollout-groups.md#what-admission-rejects), [Canary progression](../rollouts/canary-progression.md#what-admission-rejects) and [Component autoscaling](../../concepts/serving/component-autoscaling.md#what-admission-rejects) list what admission rejects in these fields.
 
 ROLLOUT-RESOLVE, TRAFFIC-READY and AUTOSCALER-RESOLVE check the controller's evidence. They report any problem as `Unverifiable`, including a plan or autoscaler policy that fails to resolve, and `-o wide` shows the cause.
+
+ROLLOUT-RESOLVE reads the same RolloutPlanReady reasons as [`explain`](#explain-output-fields). A park with a reason it reads is `Unverifiable` with the issue `RolloutResolutionFailed`: the controller couldn't resolve the plan. A park with a reason it doesn't, such as `RouteProviderUnsupported`, is `Unverifiable` with `RolloutResolutionMalformed` instead, as if the condition were unreadable. The evidence isn't malformed: read the park reason from the RolloutPlanReady condition, as the [`explain` warning](#explain-output-fields) shows.
 
 !!! note "An InferenceService with rollout groups never passes"
     With rollout groups, or while a run is active, ROLLOUT-RESOLVE is always `Unverifiable`. OVERALL is then `Unverifiable`, and `validate` exits `2` even when every other check is `Valid`. To gate CI on such a service, fail when any `.content.checks[].result` in the `-o json` output is `Invalid`.
