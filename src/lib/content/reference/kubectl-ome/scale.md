@@ -118,7 +118,7 @@ A refusal changes nothing and exits `1`. [Troubleshooting](../../guides/scale-an
 | `manual scale source evidence is unavailable or inconsistent` | The command couldn't verify where the component's count and bounds come from. The usual causes: a runtime sync is pending, the live runtime drifted, the alpha `spec.scalingPolicy.mode` isn't `Independent`, or the component doesn't exist or doesn't run on OMENative. |
 | `manual scale requires locally verifiable autoscaling; winning policy resolution is unavailable` | The component gets its autoscaling from an alpha AutoscalerPolicy, through `autoscalerPolicyRef`, with no inline `autoscaler`. |
 | `manual scale requires complete current selected replica and Scale evidence` | The InferenceReplica's count is unset or 0, it doesn't match the component, or it changed between the command's reads. |
-| `action refused: controller safety evidence is stale or inconsistent` | OME hasn't caught up with a recent change, something changed after the preview, or [`kubectl ome rollout status`](rollout.md#status) shows an issue other than `EpochUnverifiable` or `AnalysisInconclusive` — as it always does on a service that declares `spec.encoder`, which `scale` [refuses permanently](#services-with-an-encoder). |
+| `action refused: controller safety evidence is stale or inconsistent` | OME hasn't caught up with a recent change, something changed after the preview, or [`kubectl ome rollout status`](rollout.md#status) shows an issue on the selected component or in its SERVICE column, other than `EpochUnverifiable` or `AnalysisInconclusive`. Another component's issues don't count, and one of the selected component's own is tolerated: see [Which issues refuse a scale](#which-issues-refuse-a-scale). A service that declares `spec.encoder` always has a service-wide issue, so `scale` [refuses it permanently](#services-with-an-encoder). |
 | `manual scale refused: selected lifecycle, migration or rollout work is active` | Lifecycle, migration or rollout work is unfinished on the component. Running work isn't required: a `Pending` Instance with no operation blocks too. [What blocks a scale](#what-blocks-a-scale) lists every condition. |
 | `manual scale is transient and requires --override-autoscaler --yes for every ownership class` | `--override-autoscaler` is missing. |
 | `manual scale replicas must be positive and within verified bounds and partitions` | `--replicas` is outside the component's [bounds](#bounds), or below the partition of its rolling update. |
@@ -128,6 +128,18 @@ A refusal changes nothing and exits `1`. [Troubleshooting](../../guides/scale-an
 | `manual scale source changed; inspect current status and prepare a new request` | The InferenceService or its runtime changed after the preview, or couldn't be read again. |
 
 A runtime sync is pending while the InferenceService's `ome.io/runtime-sync` annotation differs from `status.lastRuntimeSyncToken`. It also stays pending if you remove the annotation after OME acted on it. To clear it without a sync, set the annotation to the value of `status.lastRuntimeSyncToken`, or remove the annotation when that field is empty. [Roll forward to the latest runtime](../../concepts/runtimes/runtime-revisions.md#roll-forward-to-the-latest-runtime) explains when a value waits.
+
+### Which issues refuse a scale
+
+The rollout-status part of `action refused: controller safety evidence is stale or inconsistent` is scoped to the component you scale. The command reads the issues of the same report that [`kubectl ome rollout status`](rollout.md#status) prints in its ISSUES row, and keeps only the ones that concern the selected component:
+
+- An issue in the SERVICE column refuses every component's scale: a service-wide issue, such as the `StatusMalformed` of a [service with an encoder](#services-with-an-encoder), or a group-scoped issue that names no component, such as `GroupStatusMissing(group=0)`.
+- An issue in the selected component's column refuses its scale, with one exception below.
+- An issue in another component's column never refuses: `RevisionNameInvalid` on the decoder doesn't stop a scale of the engine.
+
+Of the issues that count, `EpochUnverifiable` and `AnalysisInconclusive` are tolerated, and any other refuses.
+
+The exception is the selected component's own `ComponentStatusMissing` with no `group=` tag. On a scale it means the component's entry in `status.components` — whose `scaleTargetRef` and autoscaler the command has already verified — carries no lifecycle revisions yet. When no rollout run is active, with `status.rollout.activeRun` unset, and the component's InferenceReplica has converged, with its `status.updateRevision` set and equal to its `status.currentRevision`, the command tolerates the issue and proceeds: the converged InferenceReplica supplies the lifecycle evidence itself, and the InferenceService's mirror lags it only for a moment, as on a fresh service that just settled. During a rollout run, or while the InferenceReplica moves its Instances, the same issue refuses.
 
 ### What blocks a scale
 
