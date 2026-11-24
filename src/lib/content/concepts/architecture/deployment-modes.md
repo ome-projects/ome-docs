@@ -190,10 +190,12 @@ It also sets these environment variables:
 | `OME_LEADER_ADDRESS` | Multi-pod Instances only. The leader's [DNS name](#pod-dns-names), `{isvc}-{component}-{index}-leader-0-i{incarnation}.{isvc}-{component}-headless` |
 | `OME_INSTANCE_POD_RANK` | Multi-pod Instances only. The pod's rank in the Instance: `0` for the leader, and `k + 1` for worker `k` |
 | `OME_INSTANCE_POD_COUNT` | Multi-pod Instances only. The number of pods in the Instance |
-| `OME_<PEER>_ENDPOINT` | With `spec.rollout.groups` only. One per other component, as in `OME_DECODER_ENDPOINT`: `{isvc}-{peer}.{namespace}.svc.cluster.local` |
-| `OME_<PEER>_REVISION_ENDPOINT` | With `spec.rollout.groups` only, when the pod pairs with a revision of the peer. That revision's Service, `{isvc}-{peer}-rev-{hash}.{namespace}.svc.cluster.local` |
+| `OME_<PEER>_ENDPOINT` | With `spec.rollout.groups` only. One per other component, as in `OME_DECODER_ENDPOINT`: `{isvc}-{peer}.{namespace}.svc.{clusterDomain}` |
+| `OME_<PEER>_REVISION_ENDPOINT` | With `spec.rollout.groups` only, when the pod pairs with a revision of the peer. That revision's Service, `{isvc}-{peer}-rev-{hash}.{namespace}.svc.{clusterDomain}` |
 
 OME sets them in all containers but the init containers, over any variable with the same name. The pods of a multi-pod Instance that request `google.com/tpu` also get `TPU_WORKER_HOSTNAMES`, `TPU_WORKER_ID` and the other `TPU_*` variables that multi-host JAX reads; the host lists carry the pods' [DNS names](#pod-dns-names), the incarnation included. A runtime written for a LeaderWorkerSet uses these instead of the `LWS_*` variables and labels: [Move from LeaderWorkerSet to OMENative](../../guides/omenative/move-from-leaderworkerset.md#step-2-make-an-omenative-copy-of-the-runtime) has the mapping.
+
+In the two peer endpoints, `{clusterDomain}` is the cluster's DNS domain from the [`clusterDomain` ingress setting](../../guides/networking/configure-ingress.md#configuration-reference), `cluster.local` with the chart's defaults. While the setting is empty, OME leaves the suffix off, as in `{isvc}-{peer}.{namespace}`.
 
 OMENative pods also have the readiness gate `ome.io/serving`. OME sets it to `False` to take the pod out of rotation without stopping it, as it does during a drain or before an in-place update.
 
