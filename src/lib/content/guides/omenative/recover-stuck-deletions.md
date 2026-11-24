@@ -22,7 +22,7 @@ OMENative gives each pod a [stable name](../../concepts/omenative/instances.md#w
 
 With the escalation on, OME force-deletes a `Terminating` pod when all three hold:
 
-1. It's more than `overdueSlack` past its `deletionTimestamp`, which already includes its grace period.
+1. It's more than `overdueSlack` past its `deletionTimestamp`, which already includes its grace period. The opt-in [skip](#skip-the-grace-period-on-an-unreachable-node) ends this wait early on a node whose kubelet stopped reporting.
 2. It has no finalizers.
 3. Its node is dead, by one of these checks:
 
@@ -42,9 +42,10 @@ These are operator settings for every OMENative component in the cluster, not fi
 | --- | --- | --- |
 | `forceDelete.overdueSlack` | Not set | How far past its `deletionTimestamp` a pod must be |
 | `forceDelete.nodeUnreachableThreshold` | Not set | How long the pod's node must have looked dead |
+| `forceDelete.skipGracePeriodOnUnreachableNode` | Not set | Whether a pod still inside that wait goes once its node's kubelet has stopped reporting. See [Skip the grace period on an unreachable node](#skip-the-grace-period-on-an-unreachable-node) |
 | `teardown.deadline` | `30m` | How long a deleted InferenceReplica waits for its pods. See [Change the teardown deadline](#change-the-teardown-deadline) |
 
-The escalation is on when both `forceDelete` durations are set and valid. Add them to your values file:
+The escalation is on when both `forceDelete` durations are set and valid; `skipGracePeriodOnUnreachableNode` is optional, and `false` when absent. Add the durations to your values file:
 
 ```yaml title="values.yaml"
 ome:
@@ -136,6 +137,56 @@ inferencereplica.ome.io/qwen3-0-6b-engine condition met
       "outcome": "force-delete-unreachable"
     }
     ```
+
+## Skip the grace period on an unreachable node
+
+The wait in [the first check](#when-it-fires) covers each pod's own grace period: the time its kubelet has to stop the containers. A kubelet that has stopped reporting can't use that time, yet with the default [grace period for serving pods](../../concepts/serving/inference-services.md#components), 600 seconds, the replacement still waits the full ten minutes plus `overdueSlack`. With `skipGracePeriodOnUnreachableNode: true`, OME force-deletes a `Terminating` pod without finalizers before that deadline, once its node shows either sign that its kubelet stopped reporting:
+
+| Evidence | The node |
+| --- | --- |
+| `node-unreachable-taint` | Has had the `node.kubernetes.io/unreachable` taint for at least `nodeUnreachableThreshold` |
+| `node-ready-unknown` | Has had its `Ready` condition `Unknown` for at least `nodeUnreachableThreshold` |
+
+When the node shows both signs, the outage counts from the later one, so a taint left from an earlier outage can't make a new outage look old. Everything else keeps the full wait:
+
+- The node's `Ready` condition is `False`: a kubelet that reports `NotReady` still reports, and can still stop the pod in time.
+- The Node object is gone, or can't be read: a missing node shows no sign whose age OME could measure.
+- The pod has finalizers, which a force-delete couldn't remove. The [`PodDeleteBlockedByFinalizer` warning](#a-poddeleteblockedbyfinalizer-event) also waits until the pod is `overdueSlack` past its `deletionTimestamp`.
+
+Add the switch to the `forceDelete` block, then upgrade the release and wait for the rollout, as in [Step 1](#step-1-turn-on-the-force-delete-escalation):
+
+```yaml title="values.yaml"
+ome:
+  controller:
+    lifecycle:
+      forceDelete:
+        overdueSlack: 2m
+        nodeUnreachableThreshold: 5m
+        skipGracePeriodOnUnreachableNode: true
+```
+
+Then check the block:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.lifecycle}' | jq .forceDelete
+```
+
+```output
+{
+  "nodeUnreachableThreshold": "5m",
+  "overdueSlack": "2m",
+  "skipGracePeriodOnUnreachableNode": true
+}
+```
+
+When the skip acts, the `PodForceDeleted` message says why OME didn't wait, and how far from its own deletion deadline the pod went. List it as in [Step 2](#step-2-check-the-recovery); the audit ConfigMap records the deletion with the same `force-delete-unreachable` outcome:
+
+```output
+OMENative component=engine instance=0: force-deleted Terminating pod qwen3-0-6b-engine-0-default-0 on node gpu-node-3 without waiting for its deletion deadline plus overdueSlack, because skipGracePeriodOnUnreachableNode is set (evidence=node-ready-unknown, 3m35s before the pod's own deletion deadline)
+```
+
+!!! warning "The containers lose their time to stop"
+    Force deletion removes only the pod object, and the skip removes it while the containers still had time to stop. On a node that's cut off from the network, or whose kubelet stopped — it crashed or hangs, its certificate expired, or someone stopped it — they keep running beside the replacement until the kubelet reaches the API server again. A kubelet that kept running then stops them within the pod's grace period; one that restarts stops them with a one-second grace period. Set `nodeUnreachableThreshold` longer than the outages that your nodes recover from.
 
 ## Change the teardown deadline
 
@@ -243,7 +294,7 @@ Then find the cause:
 
 | Cause | What to do |
 | --- | --- |
-| Less than `overdueSlack` has passed since the time in `DELETION` | Wait |
+| Less than `overdueSlack` has passed since the time in `DELETION` | Wait. [`skipGracePeriodOnUnreachableNode`](#skip-the-grace-period-on-an-unreachable-node) ends this wait early on a node whose kubelet stopped reporting |
 | The pod has finalizers | See [A PodDeleteBlockedByFinalizer event](#a-poddeleteblockedbyfinalizer-event) |
 | The node's `Ready` condition is `True` | Its kubelet is up: find out on the node why the containers don't stop |
 | The node has been `False` or `Unknown` for less than `nodeUnreachableThreshold` | Wait |
@@ -279,7 +330,7 @@ With the escalation on, OME force-deletes a pod of either shape once its node co
 OMENative component=engine instance=0: force-deleted pod qwen3-0-6b-engine-0-default-0 on node gpu-node-3, which its kubelet stopped reporting (evidence=node-unreachable-taint)
 ```
 
-A pod that's also `Terminating` follows [the usual rules](#when-it-fires) instead, `overdueSlack` included. A `Running` pod that isn't `Ready` on a node whose `Ready` condition is `True` doesn't hold the Instance: that's its kubelet catching up on a readiness write, and OME leaves the pod alone.
+A pod that's also `Terminating` follows [the usual rules](#when-it-fires) instead, `overdueSlack` and [its skip](#skip-the-grace-period-on-an-unreachable-node) included. A `Running` pod that isn't `Ready` on a node whose `Ready` condition is `True` doesn't hold the Instance: that's its kubelet catching up on a readiness write, and OME leaves the pod alone.
 
 Without the escalation, only a pod in phase `Unknown` raises `NodeUnknown`, and the Instance waits until the node comes back, or until you [force-delete the pod by hand](#manual-recovery). A `Running` pod that lost `Ready` doesn't raise it: telling a dead node from a kubelet's lag takes the node read that comes with the escalation, so the Instance just isn't `Ready`.
 
