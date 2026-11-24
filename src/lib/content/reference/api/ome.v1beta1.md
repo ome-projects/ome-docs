@@ -3029,6 +3029,91 @@ CanaryFailureReason enumerates why a canary parked Failed.
 
 Underlying type: `string`.
 
+### `CanaryForce` {#ome-io-v1beta1-CanaryForce}
+
+Used by [`CanaryStatus`](#ome-io-v1beta1-CanaryStatus).
+
+CanaryForce is one force on a canary run: the request and how it ended.
+
+<table class="doc-api-fields">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>mode</code></td>
+<td><a href="#ome-io-v1beta1-CanaryForceMode"><code>CanaryForceMode</code></a></td>
+<td>
+
+Mode is how the force replaces the old Instances.
+
+</td></tr>
+<tr><td><code>reason</code></td>
+<td><code>string</code></td>
+<td>
+
+Reason is the operator&#39;s reason, as given in ome.io/rollout-force-reason.
+
+</td></tr>
+<tr><td><code>runID</code></td>
+<td><code>string</code></td>
+<td>
+
+RunID is the rollout run the force applies to. A new run never
+inherits it.
+
+</td></tr>
+<tr><td><code>canaryRevisionHash</code></td>
+<td><code>string</code></td>
+<td>
+
+CanaryRevisionHash is the canary revision the force drove. A crash on
+that canary may find no old Instance left; a later canary toward
+another revision is not affected by this force. It is cleared when the
+canary rolls back, since the rollback brings the old Instances back.
+
+</td></tr>
+<tr><td><code>startedAt</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta"><code>Time</code></a></td>
+<td>
+
+StartedAt is when the force first applied.
+
+</td></tr>
+<tr><td><code>endedAt</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#time-v1-meta"><code>Time</code></a></td>
+<td>
+
+EndedAt is when the force ended; absent while it runs.
+
+</td></tr>
+<tr><td><code>endReason</code></td>
+<td><a href="#ome-io-v1beta1-CanaryForceEndReason"><code>CanaryForceEndReason</code></a></td>
+<td>
+
+EndReason is how the force ended; empty while it runs.
+
+</td></tr>
+</tbody>
+</table>
+
+### `CanaryForceEndReason` {#ome-io-v1beta1-CanaryForceEndReason}
+
+Used by [`CanaryForce`](#ome-io-v1beta1-CanaryForce).
+
+CanaryForceEndReason is how a force ended.
+
+Underlying type: `string`.
+
+Allowed values: `Completed`, `Crash`, `RolledBack`, `RunClosed`, `Paused`, `Removed`, `Changed`, `Expired`.
+
+### `CanaryForceMode` {#ome-io-v1beta1-CanaryForceMode}
+
+Used by [`CanaryForce`](#ome-io-v1beta1-CanaryForce).
+
+CanaryForceMode is how a force replaces the old Instances.
+
+Underlying type: `string`.
+
+Allowed values: `Disruptive`.
+
 ### `CanaryStatus` {#ome-io-v1beta1-CanaryStatus}
 
 Used by [`ComponentStatusSpec`](#ome-io-v1beta1-ComponentStatusSpec), [`InferenceServiceStatus`](#ome-io-v1beta1-InferenceServiceStatus).
@@ -3226,6 +3311,17 @@ target clears any park. A rollback request clears a capacity-timeout
 or analysis park and drains the rejected revision; a park for a
 missing stable revision refuses the request and removes it, since the
 revert it asks for is the one that could not run.
+
+</td></tr>
+<tr><td><code>forced</code></td>
+<td><a href="#ome-io-v1beta1-CanaryForce"><code>CanaryForce</code></a></td>
+<td>
+
+Forced records a force that drives the unit&#39;s open run to 100%
+(ome.io/rollout-force-mode): the mode, the reason, the run, and
+how it ended. Absent until a force applies to the unit. While it runs
+(no EndedAt) the unit has no timers or gates. An ended force keeps the
+record of what happened until the next force or a new run replaces it.
 
 </td></tr>
 </tbody>
@@ -5868,11 +5964,14 @@ controller treats each Runner.Template as opaque input. User field.
 <td>
 
 Lifecycle holds the OMENative lifecycle policies (RestartPolicy,
-UpdateStrategy, ReadyPolicy, InstanceReadyTimeout, MigrationPolicy).
+UpdateStrategy, ReadyPolicy, InstanceReadyTimeout,
+LeaderGoneGracePeriod, MigrationPolicy).
 An unset policy takes the fixed fallback its LifecycleSpec field
 names; an unset or zero instanceReadyTimeout falls back to the
 operator&#39;s lifecycle.instanceReadyTimeout on every replica, and with
-neither set operations open with no deadline. The operator&#39;s deploy
+neither set operations open with no deadline. An unset
+leaderGoneGracePeriod has no fallback on any replica: every pod keeps
+its own termination grace. The operator&#39;s deploy
 defaults are applied only to a projected replica, before the copy.
 lifecycle.minReadySeconds is not read on a replica and is rejected on
 a standalone one; set spec.minReadySeconds. On a projected replica
@@ -7568,6 +7667,52 @@ Instances use None.
 InstanceReadyTimeout is OMENative&#39;s upper bound for waiting on a
 newly-created Instance to become Ready (during migration, rollout,
 or initial creation).
+
+</td></tr>
+<tr><td><code>leaderGoneGracePeriod</code></td>
+<td><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.31/#duration-v1-meta"><code>Duration</code></a></td>
+<td>
+
+LeaderGoneGracePeriod is the most time the worker pods of a multi-pod
+Instance that are still terminating get once the Instance&#39;s leader pod
+is gone. The workers of such an Instance work through their leader: a
+worker that outlives it cannot finish the requests it holds, and one
+that does not stop by itself keeps its node until its own
+terminationGracePeriodSeconds is over. With this field set, OMENative
+deletes each such worker once more with this grace. OMENative starts no
+deletion for it: a pod that is not terminating is never touched.
+
+How long a worker then has depends on when its leader went. The API
+server counts the new grace from the first delete of the pod. When the
+leader is gone within this long of that delete, the worker&#39;s kubelet
+stops its containers this long after it learns of the new grace. When
+the leader itself took longer than this, the API server leaves the
+worker a grace of 1s, and its kubelet stops it about 2s later.
+
+Example: an Instance of 1 leader and 3 workers whose pods have a
+termination grace of 480s is rolled. Unset, the workers are gone after
+480s. With 30s and a leader whose pod is gone after 5s, the workers are
+gone after about 36s. With 30s and a leader that takes 60s, the workers
+are gone about 2s after it, 62s after their delete.
+
+While this field is set, OMENative waits longer before it treats a
+worker pod&#39;s kubelet as failed: up to the larger of this value and the
+grace the pod shows, past the pod&#39;s deletion time. That holds for every
+worker pod that shows a grace at or under this value, or under its own
+terminationGracePeriodSeconds.
+
+The field acts in every way a multi-pod Instance is taken down: a
+rollout, a scale-down, a restart of the Instance, a move to another
+node and the deletion of the service. The leader counts as gone when
+its pod object is gone or the pod has ended (phase Succeeded or
+Failed). The leader pod keeps its own grace, and so does a worker whose
+leader still runs or whose own grace ends sooner. A single-pod Instance
+has no leader, so the field does nothing there. The value must be above
+0, and a fraction of a second counts as a whole second. Unset inherits
+the ServingRuntime&#39;s value. When neither sets it, every pod keeps its
+own grace, and nothing supplies a default.
+
+Validation: leaderGoneGracePeriod must be above 0s, for example 30s. Leave it unset to keep the termination grace each pod has.
 
 </td></tr>
 <tr><td><code>minReadySeconds</code></td>
@@ -12283,8 +12428,11 @@ Template is the fully-rendered pod template for this Runner.
 Labels include ome.io/runner=&lt;name&gt;. The InferenceReplica
 controller stamps OME_RUNNER (leader|worker|default) and, for
 pods of a multi-pod Instance, OME_LEADER_ADDRESS (short-form
-DNS of the leader pod&#39;s per-incarnation hostname, matching LWS
-conventions) onto the rendered pod at create.
+DNS of the leader pod&#39;s hostname, matching LWS conventions)
+onto the rendered pod at create. The leader&#39;s hostname is its
+pod name followed by the recreation count its pod set was built
+at, or the pod name alone in a pod set whose pods already have
+that form.
 
 </td></tr>
 </tbody>
