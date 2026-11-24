@@ -179,7 +179,7 @@ kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.lifecyc
 }
 ```
 
-When the skip acts, the `PodForceDeleted` message says why OME didn't wait, and how far before its own deletion deadline the pod went. List it as in [Step 2](#step-2-check-the-recovery); the audit ConfigMap records the deletion with the same `force-delete-unreachable` outcome:
+When the skip acts, the `PodForceDeleted` message says why OME didn't wait, and how far from its own deletion deadline the pod went. List it as in [Step 2](#step-2-check-the-recovery); the audit ConfigMap records the deletion with the same `force-delete-unreachable` outcome:
 
 ```output
 OMENative component=engine instance=0: force-deleted Terminating pod qwen3-0-6b-engine-0-default-0 on node gpu-node-3 without waiting for its deletion deadline plus overdueSlack, because skipGracePeriodOnUnreachableNode is set (evidence=node-ready-unknown, 3m35s before the pod's own deletion deadline)
