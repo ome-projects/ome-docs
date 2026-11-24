@@ -294,7 +294,7 @@ spec:
     maxReplicas: 1
 ```
 
-To try it, apply the catalog runtime [`config/runtimes/srt/meta/llama-3-3-70b-instruct-pd-rt.yaml`](https://github.com/ome-projects/ome/blob/main/config/runtimes/srt/meta/llama-3-3-70b-instruct-pd-rt.yaml), and add both classes to its list, as in [Step 2](#step-2-check-the-runtimes-candidates). Its engine and decoder pods run privileged on the host network, and need RDMA networking with the profile `oci-roce`; see [PD mode](../../reference/operate-ome/ome-serving-values.md#pd-mode).
+To try it, apply the catalog runtime [`config/runtimes/srt/meta/llama-3-3-70b-instruct-pd-rt.yaml`](https://github.com/ome-projects/ome/blob/main/config/runtimes/srt/meta/llama-3-3-70b-instruct-pd-rt.yaml), and add both classes to its list, as in [Step 2](#step-2-check-the-runtimes-candidates). Its engine and decoder pods run privileged on the host network, and ask for an RDMA profile named `oci-roce`, which your cluster's own profile table must define — with no table, the pods start without their RDMA settings; see [PD mode](../../reference/operate-ome/ome-serving-values.md#pd-mode).
 
 A class name wins over any policy, so an override's `policy` has no effect while `spec.acceleratorSelector.acceleratorClass` is set. To give one component a policy, set the policy in `spec.acceleratorSelector`, and name classes in the other components' overrides, as this example does.
 
