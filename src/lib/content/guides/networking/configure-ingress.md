@@ -254,6 +254,7 @@ The settings are values of the `ome-resources` chart under `ome.controller.ingre
 | `enableGatewayAPI` | `false` | | `true` creates HTTPRoutes instead of an Ingress. Since v1.3. |
 | `domain` | `svc.cluster.local` | `ome.io/ingress-domain` | Domain of the hostnames, `.IngressDomain` in `domainTemplate`. |
 | `domainTemplate` | `{{ .Name }}.{{ .Namespace }}.{{ .IngressDomain }}` | `ome.io/ingress-domain-template` | Go template for Ingress hostnames, and for HTTPRoute hostnames when `perISVCSubdomain` is `true`. |
+| `clusterDomain` | `cluster.local` | | The cluster's own DNS domain, the suffix of the in-cluster hostnames OME renders, `<service>.<namespace>.svc.<clusterDomain>`. Empty renders the short name, `<service>.<namespace>`. |
 | `urlScheme` | `http` | `ome.io/ingress-url-scheme` | Scheme of the URLs in the InferenceService's status. Set `https` when your Ingress controller or Gateway terminates TLS. |
 | `ingressGateway.className` | `istio` | | IngressClass of the Ingress. |
 | `omeIngressGateway` | `""` | `ome.io/ingress-gateway` | Gateway for the HTTPRoutes, as `<namespace>/<name>`. Gateway API needs it. |
@@ -268,6 +269,8 @@ The settings are values of the `ome-resources` chart under `ome.controller.ingre
 Leave `ingressGateway.gateway`, `ingressGateway.gatewayService`, `pathTemplate`, `additionalIngressDomains` and `disableIstioVirtualHost` at the chart's values. OME ignores them, but a wrong value stops the controller from starting, as [The controller keeps restarting](#the-controller-keeps-restarting) describes.
 
 `domainTemplate` can use `.Name`, `.Namespace`, `.IngressDomain`, `.Annotations` and `.Labels`, and must render a valid DNS name. [Hostnames](../../concepts/rollouts-and-traffic/ingress.md#hostnames-and-urls) shows the names it renders.
+
+`clusterDomain` is the cluster's own DNS domain, not a domain your routes serve: set it when your cluster's DNS domain isn't `cluster.local`. OME appends it to the in-cluster hostnames it renders as `<service>.<namespace>.svc.<clusterDomain>`: the cluster-local address of an InferenceService with routes, in `status.address` and, with Gateway API, the `cluster-local` entry in `status.addresses`, and the `OME_<PEER>_ENDPOINT` and `OME_<PEER>_REVISION_ENDPOINT` addresses of [prefill-decode pods](../../concepts/architecture/deployment-modes.md#pod-labels-and-environment). The host of the DestinationRule that a [traffic policy](../../concepts/rollouts-and-traffic/traffic-policy.md#which-gateway-ome-writes-for) writes on Istio follows it too. The controller has no built-in value. While the key is empty, OME renders the namespaced short names, such as `llama-3-2-1b-instruct-engine.llama-demo` — the DestinationRule's host becomes the bare Service name, which Istio expands itself — and the controller logs once: `ingress.clusterDomain is not set in inferenceservice-config; in-cluster hostnames render as <service>.<namespace> without a domain suffix`.
 
 ### Per-service overrides
 
@@ -388,6 +391,7 @@ If the controller's pods restart over and over, and their logs show `Failed to i
 
 - With Kubernetes Ingress, `status.url` stays empty until OME creates the Ingress, once the component is ready.
 - A hostname under `svc.cluster.local` means that `domain` still has the chart's default. One under `example.com` that you didn't set means that `domain` is empty. Set `domain` as in Step 1.
+- An in-cluster hostname that ends in `.svc.cluster.local` on a cluster with a different DNS domain, such as the cluster-local address in the status or a pod's `OME_DECODER_ENDPOINT`, means that `clusterDomain` still has the chart's default. Set it to your cluster's domain: see [Configuration reference](#configuration-reference).
 - With Gateway API, a shared host without `llm.` means that `sharedHostPrefix` is empty, as in kustomize installs, or that the InferenceService's `ome.io/ingress-shared-host-prefix` annotation is empty.
 - If an InferenceService has a hostname of its own where you expected the shared host, or the other way around, check `perISVCSubdomain` and its annotation. See [Choose a Gateway API host scheme](gateway-host-schemes.md).
 - `invalid domain name` in the controller's logs means that `domainTemplate`, or the `ome.io/ingress-domain` or `ome.io/ingress-domain-template` annotation, renders an invalid hostname. Until you fix it, OME doesn't create or update the routes, or the serving workload of `RawDeployment` and `MultiNode` (deprecated) components.
