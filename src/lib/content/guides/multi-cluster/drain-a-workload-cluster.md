@@ -224,13 +224,26 @@ The drains hold every cluster that had a positive weight, so the gateway has now
 
 ### The TrafficMap stops changing after a hand edit
 
-Nothing validates a hand edit of `ome.io/traffic-drain` on the control-plane cluster: the webhook rule that rejects a malformed value with [`InvalidTrafficDrain`](../../reference/api/traffic-annotations.md#admission-validation) is in the InferenceService validator, the one webhook that [the control-plane role turns off](../../reference/operate-ome/controller-manager-flags.md#what-the-control-plane-role-turns-off). When the value is invalid, OME keeps the last valid TrafficMap, so drained clusters stay drained. Capacity and health changes stop reaching the TrafficMap too, and `kubectl ome traffic drain` and `undrain` refuse with `traffic action refused: existing traffic-drain annotation is malformed or unsafe`. OME logs the error:
+Nothing validates a hand edit of `ome.io/traffic-drain` on the control-plane cluster: the webhook rule that rejects a malformed value with [`InvalidTrafficDrain`](../../reference/api/traffic-annotations.md#admission-validation) is in the InferenceService validator, the one webhook that [the control-plane role turns off](../../reference/operate-ome/controller-manager-flags.md#what-the-control-plane-role-turns-off). When the value is invalid, OME keeps the last valid TrafficMap, so drained clusters stay drained. Capacity and health changes stop reaching the TrafficMap too, and `kubectl ome traffic drain` and `undrain` refuse with `traffic action refused: existing traffic-drain annotation is malformed or unsafe`.
+
+The TrafficMap reports the error itself: its [`OverrideActive` condition](../../concepts/rollouts-and-traffic/traffic-map.md#overrideactive) turns `Unknown` with reason `OverridesInvalid`, so `OVERRIDE` reads `Unknown` in `kubectl get trafficmap`, and the condition's message holds the parse error. Here an edit dropped `maintenance-a`'s `reason`:
+
+```bash
+kubectl get trafficmap chat -n prod \
+  -o jsonpath='{range .status.conditions[?(@.type=="OverrideActive")]}{.status} {.reason}: {.message}{"\n"}{end}'
+```
+
+```output
+Unknown OverridesInvalid: parse ome.io/traffic-drain: override "maintenance-a" reason must be non-empty; the last valid route table is kept until the annotation is fixed
+```
+
+The entries and the other conditions keep describing the last valid table. The same error follows `parse ome.io/traffic-drain:` in the manager's log, the only surface for a service that had no TrafficMap when the value went bad — OME creates none until the value parses:
 
 ```bash
 kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep 'parse ome.io/traffic-drain'
 ```
 
-Each line holds the parser's error after `parse ome.io/traffic-drain:`. Fix the value with `kubectl annotate --overwrite`, in the form that [How a drain is recorded](#how-a-drain-is-recorded) shows, with IDs, clusters and reasons that `kubectl ome traffic drain` accepts. Removing the annotation also works, but it ends every drain on the service.
+Fix the value with `kubectl annotate --overwrite`, in the form that [How a drain is recorded](#how-a-drain-is-recorded) shows, with IDs, clusters and reasons that `kubectl ome traffic drain` accepts. Removing the annotation also works, but it ends every drain on the service. Once the value parses, the next pass rebuilds the table, and `OverrideActive` reports the drains again.
 
 ## Next steps
 
