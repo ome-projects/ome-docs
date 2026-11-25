@@ -43,6 +43,11 @@ When only one class passes the constraints, every policy picks it, and the compa
 
 `BestFit` weights memory fit at 0.70 and compute performance at 0.30, and needs no constraints. With none set, every class gets the full memory score, so the compute score decides: a class whose `capabilities.performance` states a figure beats one that states none, the figures' size doesn't matter, and the first in the runtime's list wins a tie. To compare memory, set `minMemory`.
 
+`preferredPrecisions` sets which figure in `capabilities.performance` the compute score reads. Both policies read the first listed precision that a class states a figure for — `fp8` and `int8` read `int8Tops`, and a name other than `fp32`, `fp16`, `fp8`, `int8` or `int4` is one no class states — but they weigh the order differently:
+
+- `BestFit` halves the class's compute score for each listed precision before the one that answers: the full score when the first answers, half when the second does, a quarter when the third. When none answers, the class's `fp16Tflops` serves, halved once per listed precision; when `fp16` is itself in the list, there's no fallback, and the compute score is 0. Without `minComputePerformanceTFLOPS`, every stated figure earns the full score before the halving, so only how early a class answers counts, never the figures' sizes: with `preferredPrecisions: [fp8, fp16]`, a class stating only `int8Tops: 733` gets the full compute score, and one stating only `fp16Tflops: 989` gets half of it. With `minComputePerformanceTFLOPS`, a figure below the floor scores proportionally, and the halving applies on top.
+- `MostCapable` reads the next listed precision that states a figure, with no penalty, and weighs the figure at 0.20 against memory and bandwidth. It has no `fp16` fallback: a class that states none of the listed precisions counts zero TFLOPS. Without `preferredPrecisions`, it reads `fp16Tflops` alone.
+
 The `tier` fallback runs only when no passing class sets `spotPerHour`, `perHour` or `perMillionTokens`. `Cheapest` then picks the class with the lowest tier: `low` beats `medium`, which beats `high`, ignoring case. `tier` takes any text, and a value other than those three counts as `medium`, so `tier: premium` loses to `low`, beats `high` and ties `medium`. When two classes share the lowest tier, the one listed first in the runtime's `acceleratorClasses` wins.
 
 ## Step 1: Create the AcceleratorClasses
@@ -258,7 +263,7 @@ Constraints limit the classes that a policy picks from. Set them in `spec.accele
 | `requiredFeatures` | Its `capabilities.features` has every entry. |
 | `minArchitectureVersion` | Its `capabilities.computeCapability` is at least this version. The two compare as numbers, major then minor, so `"10.0"` is above `"9.0"`. When either isn't a dotted number, such as `"sm_90"`, they compare as text. |
 | `minComputePerformanceTFLOPS` | Always. `BestFit` scores the classes below it lower. |
-| `preferredPrecisions` | Always. `BestFit` and `MostCapable` read the TFLOPS of the first listed precision that a class has. `fp8` and `int8` read `int8Tops`. |
+| `preferredPrecisions` | Always. `BestFit` and `MostCapable` read the TFLOPS of the first listed precision that a class states a figure for, but `BestFit` halves the compute score for each listed precision before it, so the list's order can decide the pick; see [Policies](#policies). `fp8` and `int8` read `int8Tops`. |
 
 [AcceleratorConstraints](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-AcceleratorConstraints) in the API reference lists the field types.
 
