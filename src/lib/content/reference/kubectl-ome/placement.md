@@ -330,7 +330,7 @@ TrafficMap Returned, Admitted, Pages, Complete and Truncated then describe the r
 | Probe inspection | How the CLI read the entries' recorded probes. `Unavailable` when a probe is malformed or dated in the future. |
 | Condition inspect | How the CLI read the TrafficMap's conditions: `<kept>` counts the ones that the rows below show, and `<total>` all of them. |
 | Routing freshness | Whether the routing table describes the current InferenceService: the TrafficMap's `spec.observedISVCGeneration` compared with the InferenceService's `metadata.generation`. [Staleness checks](../../concepts/rollouts-and-traffic/traffic-map.md#staleness-checks) explains both generations. |
-| Traffic override | The `OverrideActive` condition, as `<status>: <reason> (<freshness>)`, for example `True: OverridesApplied (Current)`. |
+| Traffic override | The `OverrideActive` condition, as `<status>: <reason> (<freshness>)`, for example `True: OverridesApplied (Current)`. The status passes through as reported. The reasons the report reads are `OverridesApplied`, `OverridesPending` and `NoOverrides`; any other reads `OtherReportedReason`. |
 | Capacity fallback | The `CapacityFallback` condition, in the same form. |
 | Routable | The `Routable` condition, as `<status>: <reason>`. |
 | Routable freshness | The `Routable` condition's freshness and the reason for that freshness, as in `Stale: StaleGeneration`. A current condition reads `Current:`. |
@@ -339,6 +339,9 @@ TrafficMap Returned, Admitted, Pages, Complete and Truncated then describe the r
 | Publisher fresh | Whether the acknowledgement is for the TrafficMap's current generation, as a Freshness value. `Unverifiable` before the publisher records a generation, and `Invalid` when Publisher is `Invalid`. |
 
 A condition that the TrafficMap doesn't have reads `Unknown: NotRecorded (Unverifiable)`. [Conditions](../../concepts/rollouts-and-traffic/traffic-map.md#conditions) lists each condition's reasons.
+
+!!! warning "A malformed drain annotation shows `Unknown: OtherReportedReason`"
+    While the InferenceService's `ome.io/traffic-drain` annotation can't be parsed — after a hand edit, for example — the controller sets `OverrideActive` to `Unknown` with the reason `OverridesInvalid`, and only that condition changes: the TrafficMap keeps its last valid table, so the drains of the last valid value still hold their clusters at weight 0. `OverridesInvalid` isn't a reason this report reads, so Traffic override shows `Unknown: OtherReportedReason`. The OVERRIDE-REASON column of [`kubectl ome get trafficmaps -o wide`](get.md#trafficmaps-columns) passes the reason through as the controller wrote it, so it reads `OverridesInvalid` there. [The TrafficMap stops changing after a hand edit](../../guides/multi-cluster/drain-a-workload-cluster.md#the-trafficmap-stops-changing-after-a-hand-edit) shows how to read the parse error and fix the annotation.
 
 While a publish runs, Published reads `False: OtherReportedReason` and Publisher reads `Invalid`. Run the command again when the publish finishes. This is a known bug.
 
