@@ -610,6 +610,51 @@ With the block in place, a `SplitByCapacity` service places only once every matc
 
 The plan the mode produces lands in `status.placement` like any split placement, and [the placement gauges](metrics.md#watch-placement-in-the-controllers-metrics) follow it.
 
+## Notice a lost workload cluster sooner
+
+When multi-cluster is on, the control-plane cluster's manager probes every registered [WorkloadCluster](../../reference/api/ome.v1beta1.md#ome-io-v1beta1-WorkloadCluster) for reachability — one `/version` request to the member's API server with the registration's kubeconfig — and writes the result into the WorkloadCluster's `Ready` condition, which [`kubectl ome cluster status`](../../reference/kubectl-ome/cluster.md) reads. Multi-cluster placement is alpha and off by default, as [Retry a failed member read within a placement pass](#retry-a-failed-member-read-within-a-placement-pass) says. Every reconcile pass probes; when nothing else wakes the controller — a change to the WorkloadCluster, or to the kubeconfig Secret it names — the health interval paces the next probe. Two settings under `ome.multicluster.config.workloadCluster`, which the chart writes into the `workloadCluster` block of the `multicluster` entry of the `inferenceservice-config` ConfigMap, set the cadence and the tolerance:
+
+| Setting | Chart default | What it does |
+| --- | --- | --- |
+| `healthInterval` | `""` | The re-probe cadence for an otherwise-idle WorkloadCluster. Empty falls back to 1 minute. It also bounds one probe request while `workloadCluster.perCallTimeout` is empty, so a probe that hangs fails before the next one is due. |
+| `connectionGrace` | `""` | How long a cluster that holds a live connection tolerates failing probes before the manager flips `Ready` to `False` and disconnects it. Empty falls back to 2 minutes. |
+
+The grace window keeps a momentary blip from tearing down a live connection. It covers only the failures that repeating might fix — a failed probe, or a transient error reading the kubeconfig Secret from the control plane's own API server — and only while the cluster still holds its connection. From the first failed probe, `Ready` stays `True` with reason `ProbeFailedRetrying` and a message that starts with `transient probe failure, holding connection within grace period:`, the connection stays up, and placement keeps using the cluster; re-probes come at the shorter of the grace and the health interval. The first probe to run once the window has passed flips `Ready` to `False` with reason `ConnectionFailed` and drops the connection. A probe that succeeds along the way ends the failure run, and the next one to fail starts a fresh window.
+
+There's no grace without a connection. A WorkloadCluster that never connected, one already flipped, or one that is down when the manager starts turns `ConnectionFailed` on its first failed probe. The configuration reasons — `SecretNotFound`, `BadKubeConfig` and `ClusterProfileUnsupported` — never wait either: repeating can't fix them, so they're written at once. [`kubectl ome cluster status`](../../reference/kubectl-ome/cluster.md) lists all the reasons.
+
+So with the chart's defaults — probes every minute, a 2-minute grace — a workload cluster whose API server goes down is noticed like this: up to a minute until the first failed probe, then about 2 minutes of `Ready: True` with `ProbeFailedRetrying`, probed each minute, then the flip to `Ready: False` and the disconnect — about 3 minutes after the outage at worst. To notice a lost cluster sooner, lower both values:
+
+```yaml title="values.yaml"
+ome:
+  multicluster:
+    config:
+      workloadCluster:
+        healthInterval: "15s"
+        connectionGrace: "30s"
+```
+
+Upgrade with your values file, as in [Step 1](#with-a-helm-value), and check the rendered block:
+
+```bash
+kubectl get configmap inferenceservice-config -n ome -o jsonpath='{.data.multicluster}' \
+  | jq '.workloadCluster | {healthInterval, connectionGrace}'
+```
+
+```output
+{
+  "healthInterval": "15s",
+  "connectionGrace": "30s"
+}
+```
+
+The `multicluster` entry is in [the list that needs a restart](#tune-the-config-cache): the manager reads it once, when it starts, so the upgrade's restart applies the change, and a `kubectl` edit to the ConfigMap needs one. At startup, a manager with multi-cluster on refuses a stated value that isn't a positive duration and stops with `invalid multi-cluster configuration`, whose rest names the value and the rule, such as `invalid multi-cluster configuration: workloadCluster.connectionGrace: "0s" must be positive`: see [Troubleshooting](#the-manager-rollout-doesnt-finish).
+
+You can't make the first failed probe disconnect at once: the grace has no off switch. An empty `connectionGrace` means the 2-minute default, and a zero or negative duration stops the manager, as above. The closest is a grace shorter than the health interval, such as `"1s"` — the grace paces the re-probe then, so the first failed probe still writes `ProbeFailedRetrying`, and the re-probe a second later flips and disconnects.
+
+!!! warning "A short grace turns blips into disconnects"
+    The flip doesn't just mark the cluster: it tears down the control plane's connection to it, and a cluster that stays down is re-probed on a backoff that grows with its consecutive failures, not every health interval, so the reconnect after a flip isn't immediate either. Keep `connectionGrace` longer than the blips your network actually shows, and lower `healthInterval` first when all you want is to notice a real outage sooner.
+
 ## Recognize other accelerator resources
 
 The `acceleratorResources` entry of the `inferenceservice-config` ConfigMap lists the extended resource names that OME counts as accelerators when it reads a runner container's requests and limits. The count sets the `PARALLELISM_SIZE` environment variable in the engine's and the decoder's runner: the accelerators in each pod times the pods in each replica. The chart writes the entry from `ome.controller.acceleratorResources`, whose default lists only `nvidia.com/gpu`.
@@ -747,7 +792,7 @@ kubectl logs -n ome -l control-plane=ome-controller-manager --tail=-1 | grep -E 
 | --- | --- |
 | `Invalid leader election timing` | The lease values break a rule in [Lease timing](#lease-timing). The error gives the values and the rule. |
 | `invalid --multicluster-role` | Set `ome.multicluster.role` to `control-plane`, or leave it empty. |
-| `invalid multi-cluster configuration` | The `multicluster` entry of the `inferenceservice-config` ConfigMap breaks a rule, and the rest of the line says which. For `placement.memberReadRetry`, see [Retry a failed member read within a placement pass](#retry-a-failed-member-read-within-a-placement-pass); for a refused duration, such as the status pacing settings, see [Pace a placed service's status refresh](#pace-a-placed-services-status-refresh); for `placement.capacity` and `placement.memberOperatorNamespace`, see [Opt in to capacity-based placement](#opt-in-to-capacity-based-placement). |
+| `invalid multi-cluster configuration` | The `multicluster` entry of the `inferenceservice-config` ConfigMap breaks a rule, and the rest of the line says which. For `placement.memberReadRetry`, see [Retry a failed member read within a placement pass](#retry-a-failed-member-read-within-a-placement-pass); for a refused duration, such as the status pacing settings, see [Pace a placed service's status refresh](#pace-a-placed-services-status-refresh); for `placement.capacity` and `placement.memberOperatorNamespace`, see [Opt in to capacity-based placement](#opt-in-to-capacity-based-placement); for `workloadCluster.healthInterval` and `workloadCluster.connectionGrace`, see [Notice a lost workload cluster sooner](#notice-a-lost-workload-cluster-sooner). |
 | `flag provided but not defined`, `invalid value` or `invalid boolean value` | A patched argument is misspelled, isn't in your OME version, or has a bad value, such as `3d` for a duration. |
 | `Failed to initialize deployment configuration`, or the same for another entry | That entry of the `inferenceservice-config` ConfigMap is invalid, and the rest of the line says why. For `replicas` in the `deploy` entry, see [Set replica defaults](set-replica-defaults.md). For `Failed to initialize event recorder configuration`, the `eventRecorder` entry breaks a rule in [Tune the per-object event budget](#tune-the-per-object-event-budget). For `Failed to initialize lifecycle scale configuration`, a scale setting in the `lifecycle` entry breaks a rule in [Pace OMENative scale-ups and scale-downs](#pace-omenative-scale-ups-and-scale-downs). |
 
