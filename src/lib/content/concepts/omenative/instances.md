@@ -223,7 +223,7 @@ OME moves an Instance to `Failed` when an operation can't finish. The chart sets
 | Stuck pod | A container waits in a state such as `CrashLoopBackOff` or `ImagePullBackOff`, and its pod is older than the grace period. | `stuckPodGracePeriod` (`60s`) |
 | Deadline | The deadline passes before the Instance is ready, as when a large image pulls slowly or the server never passes its readiness checks. | `instanceReadyTimeout` (`30m`) |
 | No room | The scheduler can't place a pod, and the attempt has waited for placement longer than the grace period — from `operation.placementWaitSince` when the attempt first waited on a node that stopped reporting, else from the pod's own wait: see [Placement waits](#placement-waits). OME treats this as a problem with the cluster, not the revision. | `unschedulableGracePeriod` (`15m`) |
-| Rejected pods | The API server rejects the pods as invalid, or because the namespace is being deleted. | None |
+| Rejected pods | The API server rejects the pods as invalid, or because the namespace is being deleted: see [Rejected pod writes](#rejected-pod-writes). | None |
 | PodGroup name in use | Another controller holds the PodGroup name the Instance needs. | None |
 
 Without `stuckPodGracePeriod`, only the deadline catches a stuck pod. Without `unschedulableGracePeriod`, an Instance waits for room as long as it takes. OME never fails an Instance whose pods all serve, at the desired count.
@@ -231,6 +231,29 @@ Without `stuckPodGracePeriod`, only the deadline catches a stuck pod. Without `u
 While OME creates or restarts an Instance, it deletes and recreates any pod that has ended, such as one the kubelet evicted, until the operation's deadline. It records a `TerminalPodRecycled` warning event each time.
 
 OME records the most recent failure in the Instance's `lastFailure`, with the pod, container, reason, exit code and message. That includes a recycled pod or a restart, and the record stays after the Instance recovers. While an Instance is `Failed`, the InferenceReplica's `Ready` condition has the reason `InstanceFailed`, and `RolloutStalled` is `True` when the failure came during a rollout: see [Conditions](../architecture/deployment-modes.md#conditions).
+
+### Rejected pod writes
+
+When the API server permanently rejects a write to an Instance's pods — a pod create, an in-place update's patch, or another pod write, such as the patch that moves a pod into or out of rotation — OME fails the Instance at once: the same write would draw the same rejection, so there's no grace period to wait out. The attempt ends where it stands, with the operation cleared and the phase `Failed`, and `lastFailure` records the rejection under one of two reasons:
+
+- `InvalidPodSpec`: the API server ruled the pod object itself invalid, as it rules a pod rendered from a broken template. The revision made the pod what it is, so the rejection counts toward that revision's [retry backoff](#what-ome-does-with-a-failed-instance): OME retries when the backoff allows — each attempt is rejected the same way — then holds the revision until a corrected one replaces it or you [release it](../../guides/roll-out-changes/release-a-held-revision.md).
+- `NamespaceTerminating`: the namespace is being deleted, and the API server refuses to create anything in it. No revision can fix that, so none is blamed and nothing counts toward a hold. The deletion is emptying the namespace, the InferenceService included.
+
+OME records one `InstanceRejected` warning event on the InferenceService for each rejection. The message names the pod and the API server's own explanation, and ends by saying whether a revision is charged: `revision {name} held for retry`, or `no revision is blamed`. For the example's Instance 0, whose update pushed a pod template the API server rules invalid:
+
+```bash
+kubectl get events -n qwen3-0-6b --field-selector reason=InstanceRejected \
+  -o custom-columns=TYPE:.type,MESSAGE:.message
+```
+
+```output
+TYPE      MESSAGE
+Warning   OMENative component=engine instance=0: apiserver rejected pod qwen3-0-6b-engine-0-default-1 (InvalidPodSpec: Pod "qwen3-0-6b-engine-0-default-1" is invalid: spec.containers[0].resources.limits: Invalid value: "-1": must be greater than or equal to 0); revision qwen3-0-6b-engine-c7b31f28 held for retry
+```
+
+An `InvalidPodSpec` rejection charges no revision when the revision didn't make the pod what the API server refused. The replacement in a [migration](migration-and-transient-scale.md) carries node steering its revision never asked for, so its rejection blames nothing. And when the rejected write was rebuilding the revision the Instance already served — a repair [replacing lost pods](#what-ome-does-with-a-failed-instance) — the refusal is the cluster's answer, such as a policy webhook's, not the template's: no revision is charged, the Instance keeps the spent operation, and the message adds that the repair retries the create on its own schedule.
+
+A rejection is the API server's answer about the write, and it's final — unlike the [`AdmissionUnavailable` wait](#operations), where the API server couldn't consult an admission webhook at all, so the attempt keeps its operation and OME keeps retrying the write.
 
 ### What OME does with a failed Instance
 
