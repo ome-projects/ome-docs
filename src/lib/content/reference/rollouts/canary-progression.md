@@ -104,7 +104,7 @@ Each step's `capacity` applies to each component. Step 1 moves 2 of the 4 engine
 | `steps[].traffic` | Required | The new revision's weight in status, from 0 to 100. It can't fall from one step to the next, must be 100 at the last step, and above 0 needs a `capacity` above zero. |
 | `steps[].pause` | None | A `duration` makes a timed gate, and `pause: {}` a manual one. See [How a step advances](#how-a-step-advances). |
 | `steps[].analysis` | None | Prometheus checks that gate the step. See [Canary metric analysis](canary-analysis.md). |
-| `readyTimeout` | The operator's, `15m` with the chart | How long a step can wait for its new Instances. Above zero. See [`readyTimeout`](#readytimeout). |
+| `readyTimeout` | The operator's, `15m` with the chart | How long a step can wait for its new Instances, and the cutover past the last step for the Instances still rolling. Above zero. See [`readyTimeout`](#readytimeout). |
 | `scaleDownDelaySeconds` | None | The canary completes at least this many seconds after the last step's new Instances are ready. Until then, a rollback still works and a last-step analysis keeps sampling. It isn't a drain window: a `"100%"` last step has already replaced the old Instances, and a rollback doesn't wait for it. |
 | `prometheus` | The operator's default source | Where analysis queries go: `providerRef` or `serverAddress`. See [Canary metric analysis](canary-analysis.md#where-the-metrics-come-from). |
 
@@ -162,7 +162,7 @@ One force moves the canary one step, at any step:
 - The step's gate — manual, timed or analysis — opens without a separate promote, and the canary advances. The next step's capacity wait and gate apply as usual.
 - Status records the step's `traffic`, but the written [weights](#traffic-split) follow the pods that serve: while no new Instance serves, the stable revision keeps every request, so a forced step never routes traffic onto nothing.
 
-OME emits the Warning event `CanaryStepForced` on the InferenceService, naming the step, counted from 0, the revision, and how many of the step's Instances were ready, and removes the annotation once the advance is saved. On the last step, the force opens the gate into `Promoting` and stays until the canary completes: the completion waits, without parking, for every Instance to serve the new revision and for [`scaleDownDelaySeconds`](#fields), however long that takes. To force another step, wait for OME to remove the annotation, then set it again: one force is one step's. A value that isn't the current canary's revision hash does nothing, and admission rejects one that isn't lowercase letters and digits, at least 6 of them.
+OME emits the Warning event `CanaryStepForced` on the InferenceService, naming the step, counted from 0, the revision, and how many of the step's Instances were ready, and removes the annotation once the advance is saved. On the last step, the force opens the gate into `Promoting` and stays until the canary completes: the completion waits for every Instance to serve the new revision and for [`scaleDownDelaySeconds`](#fields). That wait isn't open-ended: the ready timeout bounds [the cutover](#the-cutover-after-the-last-step), and a canary whose last Instances outlast it parks at `Failed`, forced or not. To force another step, wait for OME to remove the annotation, then set it again: one force is one step's. A value that isn't the current canary's revision hash does nothing, and admission rejects one that isn't lowercase letters and digits, at least 6 of them.
 
 The force never overrides:
 
@@ -181,9 +181,9 @@ The canary's phase is in `status.components.<component>.rolloutPhase` of the gro
 | `Pending` | The step waits for its new Instances to be ready. |
 | `Canarying` | The step's new Instances are ready, and OME checks its gate. |
 | `Paused` | The canary waits at a gate before the last step, or holds after a [repin](../kubectl-ome/rollout.md#repin). |
-| `Promoting` | The last step's new Instances are ready, and the canary waits for its gate and for [`scaleDownDelaySeconds`](#fields). |
+| `Promoting` | The last step's new Instances are ready, and the canary waits for its gate, for [`scaleDownDelaySeconds`](#fields) and then for [the cutover](#the-cutover-after-the-last-step) to land on every Instance. |
 | `Stable` | The canary completed, or ended with nothing to roll after [a revert](#while-a-canary-runs). |
-| `Failed` | A step ran past its [ready timeout](#readytimeout), a canary pod kept dying after it served (see [Crash-looping canary pods](#crash-looping-canary-pods)), an analysis rollback found a [stable revision with no live Instance](canary-analysis.md#when-the-stable-revision-runs-no-instance), or a rollback found [no ControllerRevision retained for the stable revision](#while-a-canary-runs). Whatever the reason, the park holds every member's roll where it stands: see [What a `Failed` canary holds](#what-a-failed-canary-holds). |
+| `Failed` | A step or [the cutover past the last step](#the-cutover-after-the-last-step) ran past the [ready timeout](#readytimeout), a canary pod kept dying after it served (see [Crash-looping canary pods](#crash-looping-canary-pods)), an analysis rollback found a [stable revision with no live Instance](canary-analysis.md#when-the-stable-revision-runs-no-instance), or a rollback found [no ControllerRevision retained for the stable revision](#while-a-canary-runs). Whatever the reason, the park holds every member's roll where it stands: see [What a `Failed` canary holds](#what-a-failed-canary-holds). |
 | `RollingBack` | A rollback is moving Instances back to the stable revision. |
 | `RolledBack` | Every Instance is back on the stable revision. |
 
@@ -224,6 +224,7 @@ The advance event names its new step and no weight, because the [weight in statu
 | A rollback finds a component's stable revision with no live Instance | From the analysis, the rollback doesn't start: the canary parks at `Failed` where it stands, records the reason `StableRevisionMissing`, and emits the Warning event `CanaryStableRevisionEmpty`. From you, it proceeds, with the same Warning event. See [When the stable revision runs no Instance](canary-analysis.md#when-the-stable-revision-runs-no-instance). |
 | A rollback finds no ControllerRevision retained for a component's stable revision | Parks at `Failed` where it stands, from you and from the analysis alike, instead of reporting a revert that can never complete: the revert points each component's Instances at the stable revision's ControllerRevision, and a stable revision no Instance runs any more is kept only as revision history, which the [revision history limit](../api/labels-and-annotations.md#omenative-operations) caps. OME emits the Warning event `CanaryStableRevisionMissing`: `engine cannot roll back: no ControllerRevision is retained for its stable revision; parked Failed until a new target appears`. Status records the reason `StableRevisionMissing`, the same as the row above; the events tell the two parks apart. A rollback request is spent with the park — OME removes `ome.io/rollout-rollback` — and a later rollback doesn't lift the park; a resume or a new revision does. See [What a `Failed` canary holds](#what-a-failed-canary-holds). |
 | A step runs past its [ready timeout](#readytimeout) | Goes to `Failed`, and [the roll holds where it stands](#what-a-failed-canary-holds). A stalled analysis with `onInconclusive: RollbackOnStall` rolls it back instead. |
+| The cutover past the last step runs past the [ready timeout](#readytimeout) | Goes to `Failed` with the traffic staying on the new revision, and emits the Warning event `CanaryCutoverTimeout`. See [The cutover after the last step](#the-cutover-after-the-last-step). |
 | A canary pod keeps dying after it served | Parks at `Failed` where it stands, returns the step's recorded traffic to the stable revision, and emits the Warning event `CanaryPodCrashed`. See [Crash-looping canary pods](#crash-looping-canary-pods). |
 
 ## Traffic weight in status {#traffic-split}
@@ -242,7 +243,7 @@ When a step's new Instances are ready, OME records the step's `traffic` as the n
 
 ## `readyTimeout`
 
-The ready timeout bounds how long a step waits in `Pending` for its new Instances, and how long an analysis step goes without a conclusive result. The first of these that's set applies:
+The ready timeout bounds how long a step waits in `Pending` for its new Instances, how long an analysis step goes without a conclusive result, and how long the canary waits past its last step for every Instance to serve the new revision: see [The cutover after the last step](#the-cutover-after-the-last-step). The first of these that's set applies:
 
 | Order | Setting | Notes |
 | --- | --- | --- |
@@ -250,15 +251,36 @@ The ready timeout bounds how long a step waits in `Pending` for its new Instance
 | 2 | `readyTimeout` in the group's `canary` | Above zero. |
 | 3 | `defaultReadyTimeout` in the `rollout` block of the `inferenceservice-config` ConfigMap | `15m` with the ome-resources chart (`ome.controller.rollout.defaultReadyTimeout`). The kustomize manifests don't set it. |
 
-With none set, a step never times out: it waits in `Pending` until its Instances are ready, or until you [force the step](#force-a-step-past-its-capacity-wait). A [crash-looping canary pod](#crash-looping-canary-pods) still parks the canary at `Failed`, timeout or none. The timeout counts from when the step last entered `Pending`. For an analysis, it counts from the last conclusive sample, or from when the step's new Instances were ready if there's none yet.
+With none set, a step never times out — it waits in `Pending` until its Instances are ready, or until you [force the step](#force-a-step-past-its-capacity-wait) — and the cutover past the last step waits as long as it takes. A [crash-looping canary pod](#crash-looping-canary-pods) still parks the canary at `Failed`, timeout or none. The timeout counts from when the step last entered `Pending`. For an analysis, it counts from the last conclusive sample, or from when the step's new Instances were ready if there's none yet.
 
-When it expires, the phase is `Failed`. The canary keeps its Instances and its recorded traffic, the stable Instances keep serving, and `promote` refuses. No further Instance of any member moves to the canary revision, and OME announces the hold once with the Warning event `CanaryRollHeld`: see [What a `Failed` canary holds](#what-a-failed-canary-holds). A [force](#force-a-step-past-its-capacity-wait) doesn't lift the park either: it only ends a live step's wait before the timeout expires. Apply a fix that gives the group a revision other than the failed canary's and the stable one, and a fresh canary starts at step 1 toward it, with the same stable revision. A [rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) also works on a failed canary: every Instance returns to the stable revision, as [When a step never becomes ready](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#when-a-step-never-becomes-ready) shows. A [crash-looping canary pod](#crash-looping-canary-pods) parks the canary the same way, except that the step's recorded traffic returns to the stable revision at once.
+When a step's wait expires, the phase is `Failed`. The canary keeps its Instances and its recorded traffic, the stable Instances keep serving, and `promote` refuses. No further Instance of any member moves to the canary revision, and OME announces the hold once with the Warning event `CanaryRollHeld`: see [What a `Failed` canary holds](#what-a-failed-canary-holds). A [force](#force-a-step-past-its-capacity-wait) doesn't lift the park either: it only ends a live step's wait before the timeout expires. Apply a fix that gives the group a revision other than the failed canary's and the stable one, and a fresh canary starts at step 1 toward it, with the same stable revision. A [rollback](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#roll-back-the-canary) also works on a failed canary: every Instance returns to the stable revision, as [When a step never becomes ready](../../guides/roll-out-changes/promote-or-roll-back-a-canary.md#when-a-step-never-becomes-ready) shows. A [crash-looping canary pod](#crash-looping-canary-pods) parks the canary the same way, except that the step's recorded traffic returns to the stable revision at once.
+
+### The cutover after the last step
+
+When the last step's gate opens and [`scaleDownDelaySeconds`](#fields) has passed, OME puts the whole [weight](#traffic-split) on the new revision and the Instances still on another revision roll onto it — the cutover. The canary stays in `Promoting` while they roll, and completes once every Instance serves the new revision. The ready timeout bounds this wait too, counting from when OME first finds those Instances still rolling, and a cutover that outlasts it parks the canary at `Failed` past its last step:
+
+- `status.components.<component>.canary.failed.reason` records `CapacityTimeout`, the same reason as a step's ready-timeout park and a [crash park](#crash-looping-canary-pods); the events tell the parks apart.
+- The traffic split stays where the cutover put it — 100 recorded for the new revision — and unlike a step's park, no Instance is held on the stable revision.
+- OME emits the Warning event `CanaryCutoverTimeout` on the InferenceService: how many of the primary's Instances serve the new revision against the count it is scaled to, the timeout, where the traffic stays, and the Instances of every member that don't serve their new revision yet, each with the phase it reports — or `none observed`, when no member reports one. The shared `CanaryRollHeld` follows, naming the step as the step count, one past the last step's index.
+
+For the [example](#example), parked with two of its four engine Instances serving the new revision:
+
+```bash
+kubectl get events -n prod --field-selector reason=CanaryCutoverTimeout -o custom-columns=TYPE:.type,OBJECT:.involvedObject.name,MESSAGE:.message
+```
+
+```output
+TYPE      OBJECT   MESSAGE
+Warning   chat     engine canary stopped after its last step: 2 of 4 engine Instances serve revision bbbbbbbb after the ready timeout of 20m0s; the traffic stays on the new revision and the unit reads Failed (CapacityTimeout) until a new revision, a rollback or a resume; Instances not serving their new revision: engine: Instance 0 (Updating), Instance 3 (Pending)
+```
+
+The park holds the group's roll the way every `Failed` park does, and ends the same ways — a rollback, a resume or a new revision: see [What a `Failed` canary holds](#what-a-failed-canary-holds).
 
 ## Crash-looping canary pods
 
 A canary pod that keeps dying after its Instance served parks the canary where it stands. OME reads the crash before the step's capacity, its ready timeout and its gate, so the park happens at any step, with or without a [ready timeout](#readytimeout) set:
 
-- The phase goes to `Failed` at the current step, and `status.components.<component>.canary.failed.reason` records `CapacityTimeout`, the same reason as a ready-timeout park. The event tells the two apart.
+- The phase goes to `Failed` at the current step, and `status.components.<component>.canary.failed.reason` records `CapacityTimeout`, the same reason as a ready-timeout park at a step or [at the cutover](#the-cutover-after-the-last-step). The events tell the parks apart.
 - The step's recorded traffic returns to the stable revision: status records 0% for the new revision, where a ready-timeout park keeps the step's [weight](#traffic-split).
 - OME emits the Warning event `CanaryPodCrashed` on the InferenceService, naming the component, the pod, its termination detail and the step, counted from 0. In a group of several components, a crash in any member's canary pod parks the group's canary.
 
@@ -277,14 +299,14 @@ OME reads a crash loop only from the pods of the new revision, and only from the
 
 ## What a `Failed` canary holds
 
-Whatever parks the canary at `Failed` — a [ready timeout](#readytimeout), a [crash-looping canary pod](#crash-looping-canary-pods), a rollback that finds [no stable Instance to return to](canary-analysis.md#when-the-stable-revision-runs-no-instance) or one that finds [no ControllerRevision retained for the stable revision](#while-a-canary-runs) — the park stops the whole group's roll where it stands:
+Whatever parks the canary at `Failed` — a [ready timeout](#readytimeout) at a step or [at the cutover](#the-cutover-after-the-last-step), a [crash-looping canary pod](#crash-looping-canary-pods), a rollback that finds [no stable Instance to return to](canary-analysis.md#when-the-stable-revision-runs-no-instance) or one that finds [no ControllerRevision retained for the stable revision](#while-a-canary-runs) — the park stops the whole group's roll where it stands:
 
 - From the pass the canary parks, OME holds every Instance of every member on the revision it runs: the step's new Instances keep the canary revision, the rest keep the stable one, and no further Instance of any member moves to the parked canary's revision.
 - One kind of move finishes: an Instance whose rebuild onto the canary revision is already in flight completes it, since holding it would strand its replacement pods. OME starts no new move, so a member that was still staging its step's capacity stops short of it.
 - A held Instance that loses its pods is rebuilt on the revision it runs, canary or stable: the [Instance restart policy](../../concepts/omenative/instance-restart-policy.md) repairs it where it stands, it doesn't move it.
-- The traffic split stays as the park left it: a ready-timeout park keeps the step's recorded [weight](#traffic-split), where a crash park has already returned it to the stable revision.
+- The traffic split stays as the park left it: a ready-timeout park keeps the recorded [weight](#traffic-split) — the step's, or [the cutover's](#the-cutover-after-the-last-step) 100 for the new revision — where a crash park has already returned it to the stable revision.
 
-OME announces the hold once, on the pass that records the park, with the Warning event `CanaryRollHeld` on the InferenceService — after the event that names the cause's own detail where there is one, such as `CanaryPodCrashed`, `CanaryStableRevisionEmpty` or `CanaryStableRevisionMissing`. The message names the group's primary component, the step, counted from 0, the reason that `status.components.<component>.canary.failed.reason` records — `CapacityTimeout`, `AnalysisStalled` or `StableRevisionMissing` — and how far each member's roll had come: its ready Instances on the canary revision against the Instance count it is scaled to, the primary first and the other members by name. For the [prefill-decode example](#canary-prefill-and-decode-together), parked by a ready timeout at its first step with one engine Instance and one decoder Instance ready:
+OME announces the hold once, on the pass that records the park, with the Warning event `CanaryRollHeld` on the InferenceService — after the event that names the cause's own detail where there is one, such as `CanaryPodCrashed`, `CanaryCutoverTimeout`, `CanaryStableRevisionEmpty` or `CanaryStableRevisionMissing`. The message names the group's primary component, the step, counted from 0, the reason that `status.components.<component>.canary.failed.reason` records — `CapacityTimeout`, `AnalysisStalled` or `StableRevisionMissing` — and how far each member's roll had come: its ready Instances on the canary revision against the Instance count it is scaled to, the primary first and the other members by name. For the [prefill-decode example](#canary-prefill-and-decode-together), parked by a ready timeout at its first step with one engine Instance and one decoder Instance ready:
 
 ```bash
 kubectl get events -n prod --field-selector reason=CanaryRollHeld -o custom-columns=TYPE:.type,OBJECT:.involvedObject.name,MESSAGE:.message
