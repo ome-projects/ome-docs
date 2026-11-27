@@ -4,7 +4,7 @@ description: Apply an edit to spec.rollout or a RolloutPolicy to the active roll
 since: v1.3
 ---
 
-When you edit a rollout's steps or analysis mid-run, `kubectl ome rollout repin` moves the run in progress onto the edited plan, and the run keeps its progress. Without a repin, a run keeps the plan it pinned when it started, and an edit to `spec.rollout` or a RolloutPolicy waits for the next run. The command works only on components that use OMENative: [Deployment modes and OMENative](../../concepts/architecture/deployment-modes.md) shows which components use it by default and how to opt others in.
+When you edit a rollout's steps or analysis mid-run, a repin moves the run in progress onto the edited plan, and the run keeps its progress. Without a repin, a run keeps the plan it pinned when it started, and an edit to `spec.rollout` or a RolloutPolicy waits for the next run. `kubectl ome rollout repin` is the command for it, but it refuses every drifted run — a known bug that [Step 2](#step-2-repin-the-run) explains — so this guide repins with the `ome.io/rollout-repin` annotation, which the bug doesn't affect. A repin works only on components that use OMENative: [Deployment modes and OMENative](../../concepts/architecture/deployment-modes.md) shows which components use it by default and how to opt others in.
 
 !!! note "Alpha"
     This command is alpha. Its flags and behavior can change between releases.
@@ -55,33 +55,20 @@ To compare the plans, run `kubectl ome rollout explain chat -n prod`. `Effective
 
 ## Step 2: Repin the run
 
-Run `repin`. It checks that a repin is safe, previews the `ome.io/rollout-repin` annotation it sets, and asks `Confirm this exact action? [y/N]`:
+`kubectl ome rollout repin` is meant to do this step: check that a repin is safe, preview the `ome.io/rollout-repin` annotation it sets, and ask `Confirm this exact action? [y/N]`. On the current controller it never gets that far — it refuses every drifted run:
 
 ```bash
 kubectl ome rollout repin chat -n prod
 ```
 
-Answer `y`. The command prints the result:
-
 ```output
-FIELD                   VALUE
-action                  rollout repin
-target                  InferenceService/prod/chat
-dry-run                 none
-accepted                Yes
-applied                 Yes
-run-id                  chat-0123456789ab
-pinned-plan-digest      rp1:56fe0ddd6edd
-requested-plan-digest   rp1:1d153db2a5df
-group-count             1
-message                 API accepted repin annotation; controller consumption...
-follow-up               kubectl ome rollout explain chat -n prod --context=pr...
-hint                    Use -o json or -o yaml for full values.
+error: rollout repin refused: controller plan evidence is missing, stale or inconsistent
 ```
 
-`applied` means the API server stored the annotation, not that the controller acted on it. The annotation carries the digest of the plan you previewed, and the controller rejects the repin if the plan changed after the preview. The result's digests cover the whole plan, so they differ from each group's digest.
+!!! warning "The command refuses every drifted run"
+    `repin` accepts the `RolloutPlanDrift` condition only when its message matches the controller's old wording, `live render ... differs from pinned ...`, word for word. The controller now writes `differs from recorded`, so the check fails on every genuine drift, before the preview and in every `--dry-run` mode, and the refusal never clears, however long you wait. This is a known bug in the command. The controller's side of a repin is unaffected: it re-renders the plan and checks only the digest in the annotation.
 
-Add `--dry-run server` to have the API server check the request without storing it. Scripts pass `--yes` to skip the prompt. [Guarded actions](../../reference/kubectl-ome/guarded-actions.md) covers the prompt, dry runs and errors.
+Set the annotation yourself instead, as [Repin by annotation](#repin-by-annotation) shows, then check the result in [Step 3](#step-3-check-the-result).
 
 ## Step 3: Check the result
 
@@ -105,11 +92,11 @@ PLAN-READY   DRIFT
 Pinned       InSync
 ```
 
-If DRIFT is still `True`, see [DRIFT stays True after the repin](#drift-stays-true-after-the-repin). Then explain the rollout again: the `Effective` view shows the new plan. The controller counts outcomes in the metric `ome_rollout_repin_total`, by `namespace` and `outcome` (`applied` or `rejected`).
+If DRIFT is still `True`, the controller rejected the repin or hasn't acted on it yet: see [The controller rejects the repin](#the-controller-rejects-the-repin). Then explain the rollout again: the `Effective` view shows the new plan. The controller counts outcomes in the metric `ome_rollout_repin_total`, by `namespace` and `outcome` (`applied` or `rejected`).
 
 ## Repin by annotation
 
-Without the plugin, or when the command refuses a plan of more than three groups or a group of more than three components, set the `ome.io/rollout-repin` annotation yourself, to the digest of the current plan. The controller re-renders the plan with no size bound, and only its digest check guards this path. First check that DRIFT is `True`, the groups kept [their shape](#what-a-repin-can-change), and no promote or rollback waits. With more than one canary group, the controller fits only the first to its new steps, so another group's traffic weight can rise without a hold.
+While [the command refuses every drifted run](#step-2-repin-the-run), setting the `ome.io/rollout-repin` annotation yourself, to the digest of the current plan, is the way to repin. It's also the way without the plugin, and for the plans the command's bounds never pass: more than three groups, or a group of more than three components. The controller re-renders the plan with no size bound, and only its digest check guards this path. First check that DRIFT is `True`, the groups kept [their shape](#what-a-repin-can-change), and no promote or rollback waits. With more than one canary group, the controller fits only the first to its new steps, so another group's traffic weight can rise without a hold.
 
 Get the digest the controller reports for each group, after the group's index:
 
@@ -176,10 +163,10 @@ A refused `repin` changes nothing and exits `1`, and a conflict exits `3`. [Refu
 
 | Message | Cause | Fix |
 | --- | --- | --- |
-| `rollout repin refused: controller plan evidence is missing, stale or inconsistent` | The controller hasn't reported your edit yet — or the plan is larger than the command supports: more than three groups, or a group of more than three components, though the API allows four of each. | Within those bounds, wait a few seconds and retry; if the refusal stays, check the group's rollout policy, the spec, and your computer's clock against the cluster's. A larger plan never passes, however long you wait: [repin by annotation](#repin-by-annotation) instead. |
+| `rollout repin refused: controller plan evidence is missing, stale or inconsistent` | On a drifted run, always: the command accepts the `RolloutPlanDrift` condition's message only in the controller's old wording, `differs from pinned`, and the controller writes `differs from recorded`, so the check never passes — the known bug [Step 2](#step-2-repin-the-run) explains. The same refusal covers a plan of more than three groups, or a group of more than three components, though the API allows four of each. | Don't wait and retry: the refusal never clears. [Repin by annotation](#repin-by-annotation) instead. |
 | `rollout repin refused: live and pinned rollout topology differ` | The edit changed [the groups' shape](#what-a-repin-can-change). | Undo those changes to repin the rest now, or let the edit wait for the next run. |
 | `rollout repin refused: a rollout action mailbox is already present` | A repin, promote or rollback annotation is on the InferenceService. | Wait for the controller to act on a repin or promote, and retry. Remove a rollback annotation yourself before you apply a fix, as [Roll back the canary](promote-or-roll-back-a-canary.md#roll-back-the-canary) shows. |
-| `rollout repin refused: the current plan is already pinned` | The run already follows the current plan. | If DRIFT is `True`, see [DRIFT stays True after the repin](#drift-stays-true-after-the-repin). |
+| `rollout repin refused: the current plan is already pinned` | The run already follows the current plan. | If DRIFT is `True`, the live plan matches the pin again, as after undoing an edit, and the controller returns DRIFT to `False/InSync` on its next pass. Explain the rollout again. |
 | `rollout repin refused: no active pinned run` | No rollout run is in progress. | None needed: the next run pins the current plan. |
 | `rollout repin refused: empty live plans are not supported by this command` | `spec.rollout` is gone, or has no groups left. | The command can't close a run. To close it at once, set the annotation yourself, as [Close the run after removing `spec.rollout`](#close-the-run) shows. |
 | `rollout repin refused: this command supports at most one canary group` | The spec has more than one canary group. | Let the edit wait for the next run. |
@@ -189,7 +176,7 @@ A refused `repin` changes nothing and exits `1`, and a conflict exits `3`. [Refu
 
 ### The controller rejects the repin
 
-A Warning `RolloutRepinRejected` event means the run kept its pinned plan. `expected render digest ... (a concurrent edit landed; re-issue with the current digest)` means the plan changed after your preview. Explain the rollout, and repin again if you still want the current plan. `the current source does not render` names the problem, for example `PolicyNotFound`. Fix it, then repin again.
+A Warning `RolloutRepinRejected` event means the run kept its pinned plan. `expected render digest ... (a concurrent edit landed; re-issue with the current digest)` means the plan changed after you computed the digest. Explain the rollout, and repin again if you still want the current plan. `the current source does not render` names the problem, for example `PolicyNotFound`. Fix it, then repin again.
 
 ### The canary holds after the repin {#what-the-controller-does-next}
 
@@ -204,10 +191,6 @@ inferenceservice.ome.io/chat annotated
 ```
 
 The controller ends the hold and records the step's weight, and the step's gate then applies as usual. To back out instead, [roll the canary back](promote-or-roll-back-a-canary.md#roll-back-the-canary).
-
-### DRIFT stays True after the repin
-
-DRIFT stays `True`, or turns `True` again right after a repin, and the `RolloutPlanDrift` condition's message contains `live render (unresolvable) differs from pinned rp1:cca45ec1fb0f`. Set `blueGreen: {}` on the group that sets no progression and names no rollout policy: the plan stays the same, and DRIFT returns to `False/InSync`. This is a known bug.
 
 ## Next steps
 
