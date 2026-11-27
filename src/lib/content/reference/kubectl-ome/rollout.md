@@ -780,6 +780,9 @@ kubectl ome rollout repin INFERENCESERVICE [flags]
 
 A run pins its plan when it starts. An edit to the rollout spec or a rollout policy then waits for the next run, and [`explain`](#explain) shows DRIFT. Run `repin` to move the active run to the current plan now. It sets the `ome.io/rollout-repin` annotation to the current plan's digest, and the controller repins only if its own render of the plan has that digest.
 
+!!! warning "`repin` refuses every drifted run"
+    Before the preview, the command checks the `RolloutPlanDrift` condition's message against the controller's old wording, `live render ... differs from pinned ...`, word for word. The controller now writes `differs from recorded`, so the check fails on every genuine drift, and the command refuses with `rollout repin refused: controller plan evidence is missing, stale or inconsistent` — in every `--dry-run` mode, however long you wait. This is a known bug in the command; the controller's digest check on the annotation is unaffected. [Repin by annotation](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#repin-by-annotation) instead.
+
 The controller removes the annotation and reports the outcome as an event on the InferenceService:
 
 | Event | Type | Meaning |
@@ -794,7 +797,7 @@ An annotation left when a run closes stays until the next run opens. Set by hand
 
 When `spec.rollout` was removed mid-run, only the annotation closes the run: the command refuses an empty plan. [Close the run after removing `spec.rollout`](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#close-the-run) shows the value to set.
 
-The live plan must keep the pinned topology: the same number of groups, and the same progression, components, order, soak and ratio in each. [Repin a drifted rollout plan](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md) shows the command in use.
+The live plan must keep the pinned topology: the same number of groups, and the same progression, components, order, soak and ratio in each. [Repin a drifted rollout plan](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md) shows a repin end to end.
 
 `repin` follows the [guarded flow](#how-the-actions-run), with these differences:
 
@@ -821,7 +824,7 @@ Besides the refusals [every action shares](guarded-actions.md#target-checks), `r
 | --- | --- |
 | `rollout repin refused: no active pinned run` | No run is active. |
 | `rollout repin refused: empty live plans are not supported by this command` | `spec.rollout` is gone, or has no groups. To close the run instead, [set the annotation yourself](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#close-the-run). |
-| `rollout repin refused: controller plan evidence is missing, stale or inconsistent` | The run, READY or DRIFT doesn't show a pinned, drifted plan the CLI can check, or the live spec fails validation. The command also bounds the plan more tightly than the API: a plan of more than 3 groups, or a group of more than 3 components, never passes this check, though `spec.rollout` allows 4 of each. To repin such a plan, [set the annotation yourself](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#repin-by-annotation): the controller re-renders the plan and checks only its digest. |
+| `rollout repin refused: controller plan evidence is missing, stale or inconsistent` | On a drifted run, always: the command accepts the DRIFT condition's message only in the controller's old `differs from pinned` wording, and the controller writes `differs from recorded`, so the check never passes — see [the warning above](#repin). Otherwise: the run, READY or DRIFT doesn't show a pinned, drifted plan the CLI can check, or the live spec fails validation. The command also bounds the plan more tightly than the API: a plan of more than 3 groups, or a group of more than 3 components, never passes this check, though `spec.rollout` allows 4 of each. Whatever the cause, [set the annotation yourself](../../guides/roll-out-changes/repin-a-drifted-rollout-plan.md#repin-by-annotation): the controller re-renders the plan and checks only its digest. |
 | `rollout repin refused: the current plan is already pinned` | DRIFT is `False/InSync`, or the live plan has the pinned digest. |
 | `rollout repin refused: live and pinned rollout topology differ` | The groups changed shape. |
 | `rollout repin refused: this command supports at most one canary group` | The live spec has more than one canary group. |
@@ -829,7 +832,7 @@ Besides the refusals [every action shares](guarded-actions.md#target-checks), `r
 
 ### Examples {#repin-examples}
 
-Have the API server check the repin without storing it:
+On a drifted run, the [drift-message check](#repin) stops both of these examples before the preview, with `error: rollout repin refused: controller plan evidence is missing, stale or inconsistent` on stderr; against a controller that still writes the old `differs from pinned` drift wording, they run as shown. Have the API server check the repin without storing it:
 
 ```bash
 kubectl ome rollout repin chat -n prod --dry-run server --yes
