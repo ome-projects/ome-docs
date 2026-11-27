@@ -60,6 +60,12 @@ Plus the standard kubeconfig flags, such as `-n` and `--context`.
 
 A NAME can't be combined with `-A` or `-l`. For a cluster-scoped resource, `get` ignores `-n`, and ignores `-A` with a warning on stderr. `-o wide` adds the Wide columns in [Output fields](#output-fields), where a resource has any. `-o json` and `-o yaml` print Kubernetes objects, not a report. With a NAME, that's the object; otherwise it's a `List` with `apiVersion: v1`, whose items carry their own `apiVersion` and `kind`.
 
+## Paged lists
+
+Without a NAME, `get` reads the list in pages of 500 items, the chunk size `kubectl get` uses by default, so no single request asks the API server for the whole collection. The pages read one snapshot of the API server's state, and the server can expire that snapshot between pages, refusing the next request with HTTP 410. `get` then discards the pages it has and lists again from the start, once, so a table never mixes rows from two snapshots. When the second snapshot expires too, the list fails with the `Expired` error in [Errors](#errors); run the command again.
+
+A failed list never prints a partial table: whichever page fails, and for whatever reason, `get` prints only the error. A [merged view](#merged-views) runs one paged list per kind, each reading its own snapshot and restarting after an expired one on its own.
+
 ## Output fields
 
 Every table starts with NAME and, by default, ends with AGE, the time since the object was created, such as `3h`. With `-A`, namespaced resources get a NAMESPACE column before NAME, which shows `-` for the cluster-scoped rows of a merged view. A text cell shows `-` when its field isn't set, and rows marked Wide are the columns that `-o wide` adds.
@@ -328,6 +334,7 @@ An API error names the operation, the resource and the object or namespace, then
 | `get inferenceservices team-a/missing: NotFound` | The namespace has no object of that name. |
 | `list clusterbasemodels: Forbidden` | You can't list the resource. See [Required RBAC](overview.md#required-rbac). |
 | `list inferenceservices team-a: Unauthorized` | The API server didn't accept your credentials. |
+| `list inferenceservices: Expired` | The list's snapshot expired on the API server. `get` [restarts an expired list](#paged-lists) once by itself; run the command again. |
 | `list autoscalerpolicies team-a: OMEAPIMissing (install OME first)` | OME isn't installed or, for AutoscalerPolicies, the feature is off. |
 | `list rolloutpolicies team-a: Unavailable` | The CLI can't reach the API server or, for RolloutPolicies, the feature is off. |
 
