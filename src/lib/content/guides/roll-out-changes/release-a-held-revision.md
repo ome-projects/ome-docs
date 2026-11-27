@@ -35,6 +35,8 @@ With the ome-resources chart, `ome.controller.lifecycle.updateRetry` gives a rev
 
 When OME holds a revision, it records a `RetryHeld` warning event on the InferenceService, and the component's rollout hold shows the gate `Held`, as [When a rollout doesn't move](../../concepts/architecture/omenative-update-strategies.md#when-a-rollout-doesnt-move) describes.
 
+A block outlives its revision. When yet another change replaces a failing revision as the target, OME stops trying the old revision — superseded, it needs no release — but its block stays in `status.retryBlocks` as a record of the failure. With the ome-resources chart, `ome.controller.lifecycle.retryBlockHistoryLimit` keeps 3 blocks of superseded revisions: each time OME writes a component's retry blocks, it drops the ones over that cap, oldest first by `lastFailureAt`, and a block without `lastFailureAt` before any other. The block of the current target revision never counts against the cap and is never dropped, whatever its state or age. OME itself sets no cap: a manifest install, or a chart with the value removed, keeps every block, and a zero or negative value is invalid, which also keeps every block.
+
 ??? note "How `chat` got a held revision"
     The `chat` in these examples got its held revision when someone set its engine image to a tag that doesn't exist:
 
@@ -233,6 +235,10 @@ inferencereplica.ome.io/chat-engine annotated
 ### OME skips the release
 
 A `RetryBlockReleaseSkipped` event means that OME answered a request without removing a block, and deleted the annotation. When no block matches the value, its message ends with `release requested for revision "<value>" but no retryBlock exists for it; nothing to release`. When the block is `Backoff` or `RetryInProgress`, so OME is still retrying the revision, it ends with `retryBlock for revision <name> is <state>, not Held; nothing to release`. Send a new request if `retry-blocks` still shows the revision as held.
+
+### An old held revision is gone from `retry-blocks`
+
+When a component has failed on several revisions, the oldest blocks are pruned, not released: past the chart's cap of 3 blocks for superseded revisions, each write of the retry blocks drops the oldest, as [How a revision gets held](#how-holds-and-releases-work) describes. No event records the pruning. There's nothing left to release, and nothing to fix: the hold only ever stopped updates toward its own revision, which stopped being the target when a newer revision replaced it. OME keeps no memory of a dropped block: if its revision ever becomes the target again, it starts over with a new block and a fresh set of attempts.
 
 ### The revision is held again
 
